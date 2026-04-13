@@ -1,4 +1,6 @@
 # filament_feed.py - Stealth Autoloader (Happy Hare style config)
+# Reads all configurable values from parameters.cfg and follows your full flow chart
+
 import logging
 
 class FilamentFeed:
@@ -6,6 +8,7 @@ class FilamentFeed:
         self.printer = config.get_printer()
         self.name = config.get_name().split()[-1] or "tool0"
         
+        # Load per-toolhead sections from hardware.cfg
         self.feed_stepper_name = config.get('feed_stepper')
         self.entry_sensor_name = config.get('entry_sensor')
         self.extruder_sensor_name = config.get('extruder_sensor')
@@ -13,7 +16,7 @@ class FilamentFeed:
         self.buffer_tension_name = config.get('buffer_tension_sensor')
         self.buffer_compression_name = config.get('buffer_compression_sensor')
         
-        # Load parameters from parameters.cfg
+        # Load all configurable values from parameters.cfg
         self.tube_length = config.getfloat('tube_length', 800.0)
         self.sensor_delay = config.getfloat('sensor_polling_frequency', 0.2)
         self.buffer_slide = config.getfloat('buffer_slide_distance', 15.0)
@@ -22,10 +25,10 @@ class FilamentFeed:
         self.purge_length = config.getfloat('purge_length', 30.0)
         
         self.gcode = self.printer.lookup_object('gcode')
-        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD)
-        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD)
+        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD, desc="Full load using your flow chart")
+        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD, desc="Unload to roll")
         
-        logging.info(f"Stealth Autoloader '{self.name}' loaded from parameters.cfg")
+        logging.info(f"Stealth Autoloader '{self.name}' initialized - tube_length={self.tube_length}mm")
 
     def get_sensor(self, sensor_name):
         try:
@@ -38,20 +41,20 @@ class FilamentFeed:
         gcmd.respond_info(f"Loading Filament - {self.name}")
         self.gcode.run_script_from_command(f"SET_STEPPER_ENABLE STEPPER={self.feed_stepper_name} ENABLE=1")
         
-        # LOOP while extruder_sensor == false
+        # LOOP while extruder_sensor == false (push feed motor until filament reaches extruder sensor)
         while not self.get_sensor(self.extruder_sensor_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=10 SPEED=50")
             self.gcode.run_script_from_command("M400")
             self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + self.sensor_delay)
         
         gcmd.respond_info("Feeding to Toolhead")
-        # Push until buffer compression
+        # Push until buffer compression sensor triggers
         while not self.get_sensor(self.buffer_compression_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=5 SPEED=30")
             self.gcode.run_script_from_command("M400")
             self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + self.sensor_delay)
         
-        # Toolhead extruder loop
+        # Enable toolhead extruder and feed until toolhead_sensor triggers
         self.gcode.run_script_from_command("SET_STEPPER_ENABLE STEPPER=extruder ENABLE=1")
         while not self.get_sensor(self.toolhead_sensor_name):
             self.gcode.run_script_from_command("G1 E10 F300")
