@@ -16,7 +16,7 @@ fi
 if [ "$EUID" -eq 0 ]; then echo "[ERROR] Do not run as root!"; exit 1; fi
 
 echo "[INSTALL] Copying stealth-autoloader folder to config..."
-cp -r "${INSTALL_PATH}" "${CONFIG_DIR}/"
+cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 
 echo "[INSTALL] Linking Python backend..."
 ln -sfn "${INSTALL_PATH}/klipper/extras/filament_feed.py" "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
