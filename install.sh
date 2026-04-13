@@ -4,6 +4,8 @@ INSTALL_PATH="${HOME}/stealth-autoloader"
 CONFIG_DIR="${HOME}/printer_data/config"
 
 set -eu
+
+# ====================== UNINSTALL ======================
 if [ "$1" = "--uninstall" ]; then
     echo "[UNINSTALL] Removing Stealth Autoloader..."
     rm -f "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
@@ -13,9 +15,15 @@ if [ "$1" = "--uninstall" ]; then
     sudo systemctl restart klipper
     exit 0
 fi
+# =======================================================
+
 if [ "$EUID" -eq 0 ]; then echo "[ERROR] Do not run as root!"; exit 1; fi
 
-echo "[INSTALL] Copying stealth-autoloader folder to config..."
+echo "[INSTALL] Pulling latest from GitHub..."
+git -C "${INSTALL_PATH}" pull origin main
+
+echo "[INSTALL] Removing old folder and copying fresh version..."
+rm -rf "${CONFIG_DIR}/stealth-autoloader" 2>/dev/null || true
 cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 
 echo "[INSTALL] Linking Python backend..."
