@@ -19,7 +19,7 @@ fi
 
 if [ "$EUID" -eq 0 ]; then echo "[ERROR] Do not run as root!"; exit 1; fi
 
-# Suppress git pull warning forever
+# Stop git pull warning forever
 git config --global pull.rebase false
 
 echo "[INSTALL] Pulling latest from GitHub..."
@@ -32,9 +32,9 @@ cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 echo "[INSTALL] Linking Python backend..."
 ln -sfn "${INSTALL_PATH}/klipper/extras/filament_feed.py" "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
 
-# Create moonraker folder + config file (no heredoc issues)
+# Create moonraker folder + config file (simple echo - no heredoc)
 mkdir -p "${HOME}/.moonraker/config"
-cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << EOF2
+cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << 'ENDOFINI'
 [update_manager stealth-autoloader]
 type: git_repo
 channel: dev
@@ -42,7 +42,7 @@ path: ${INSTALL_PATH}
 origin: https://github.com/Cstm3DBldr/stealth-autoloader.git
 managed_services: klipper
 primary_branch: main
-EOF2
+ENDOFINI
 
 echo "✅ Stealth Autoloader synced and installed!"
 echo "   Next: Make sure [include stealth-autoloader/*.cfg] is in printer.cfg"
