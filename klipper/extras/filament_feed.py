@@ -1,6 +1,4 @@
-# filament_feed.py - Stealth Autoloader (Happy Hare style config)
-# Reads all configurable values from parameters.cfg and follows your full flow chart
-
+# filament_feed.py - Stealth Autoloader (Happy Hare style + per-tool encoder tracking)
 import logging
 
 class FilamentFeed:
@@ -8,15 +6,16 @@ class FilamentFeed:
         self.printer = config.get_printer()
         self.name = config.get_name().split()[-1] or "tool0"
         
-        # Load per-toolhead sections from hardware.cfg
+        # Hardware names from hardware.cfg
         self.feed_stepper_name = config.get('feed_stepper')
         self.entry_sensor_name = config.get('entry_sensor')
         self.extruder_sensor_name = config.get('extruder_sensor')
         self.toolhead_sensor_name = config.get('toolhead_sensor')
         self.buffer_tension_name = config.get('buffer_tension_sensor')
         self.buffer_compression_name = config.get('buffer_compression_sensor')
+        self.encoder_name = config.get('encoder', f"filament_encoder encoder_{self.name}")  # per-tool encoder
         
-        # Load all configurable values from parameters.cfg
+        # Load parameters from parameters.cfg
         self.tube_length = config.getfloat('tube_length', 800.0)
         self.sensor_delay = config.getfloat('sensor_polling_frequency', 0.2)
         self.buffer_slide = config.getfloat('buffer_slide_distance', 15.0)
@@ -25,10 +24,10 @@ class FilamentFeed:
         self.purge_length = config.getfloat('purge_length', 30.0)
         
         self.gcode = self.printer.lookup_object('gcode')
-        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD, desc="Full load using your flow chart")
-        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD, desc="Unload to roll")
+        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD)
+        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD)
         
-        logging.info(f"Stealth Autoloader '{self.name}' initialized - tube_length={self.tube_length}mm")
+        logging.info(f"Stealth Autoloader '{self.name}' initialized with per-tool encoder tracking")
 
     def get_sensor(self, sensor_name):
         try:
@@ -37,24 +36,33 @@ class FilamentFeed:
         except:
             return False
 
+    def get_encoder_distance(self):
+        try:
+            enc = self.printer.lookup_object(self.encoder_name)
+            return enc.get_distance()
+        except:
+            return 0.0
+
     def cmd_FILAMENT_LOAD(self, gcmd):
         gcmd.respond_info(f"Loading Filament - {self.name}")
         self.gcode.run_script_from_command(f"SET_STEPPER_ENABLE STEPPER={self.feed_stepper_name} ENABLE=1")
         
-        # LOOP while extruder_sensor == false (push feed motor until filament reaches extruder sensor)
+        start_encoder = self.get_encoder_distance()
+        
+        # LOOP while extruder_sensor == false
         while not self.get_sensor(self.extruder_sensor_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=10 SPEED=50")
             self.gcode.run_script_from_command("M400")
             self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + self.sensor_delay)
         
         gcmd.respond_info("Feeding to Toolhead")
-        # Push until buffer compression sensor triggers
+        # Push until buffer compression
         while not self.get_sensor(self.buffer_compression_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=5 SPEED=30")
             self.gcode.run_script_from_command("M400")
             self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + self.sensor_delay)
         
-        # Enable toolhead extruder and feed until toolhead_sensor triggers
+        # Toolhead extruder loop
         self.gcode.run_script_from_command("SET_STEPPER_ENABLE STEPPER=extruder ENABLE=1")
         while not self.get_sensor(self.toolhead_sensor_name):
             self.gcode.run_script_from_command("G1 E10 F300")
@@ -69,6 +77,11 @@ class FilamentFeed:
         self.gcode.run_script_from_command("_CLEAN_NOZZLE")
         self.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
         gcmd.respond_info("LOAD COMPLETE")
+
+        # Filament tracking check
+        moved = self.get_encoder_distance() - start_encoder
+        if moved < self.tube_length * 0.8:
+            gcmd.respond_info("WARNING: Possible clog or tangle - moved only %.1fmm of expected %.1fmm" % (moved, self.tube_length))
 
     def cmd_FILAMENT_UNLOAD(self, gcmd):
         gcmd.respond_info(f"Starting UNLOAD for {self.name}")
