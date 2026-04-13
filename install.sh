@@ -3,10 +3,10 @@ KLIPPER_PATH="${HOME}/klipper"
 INSTALL_PATH="${HOME}/stealth-autoloader"
 CONFIG_DIR="${HOME}/printer_data/config"
 
-set -eu
+set -e   # safe mode - only exit on real errors
 
 # ====================== UNINSTALL ======================
-if [ "$1" = "--uninstall" ]; then
+if [ "${1:-}" = "--uninstall" ]; then
     echo "[UNINSTALL] Removing Stealth Autoloader..."
     rm -f "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
     rm -rf "${CONFIG_DIR}/stealth-autoloader" 2>/dev/null || true
