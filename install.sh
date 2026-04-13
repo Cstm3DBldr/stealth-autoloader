@@ -3,7 +3,7 @@ KLIPPER_PATH="${HOME}/klipper"
 INSTALL_PATH="${HOME}/stealth-autoloader"
 CONFIG_DIR="${HOME}/printer_data/config"
 
-set -e   # safe mode - only exit on real errors
+set -e
 
 # ====================== UNINSTALL ======================
 if [ "${1:-}" = "--uninstall" ]; then
@@ -29,8 +29,10 @@ cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 echo "[INSTALL] Linking Python backend..."
 ln -sfn "${INSTALL_PATH}/klipper/extras/filament_feed.py" "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
 
+# Create moonraker folder first
 mkdir -p "${HOME}/.moonraker/config"
-cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" <<EOF
+
+cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << 'EOF2'
 [update_manager stealth-autoloader]
 type: git_repo
 channel: dev
@@ -38,3 +40,8 @@ path: ${INSTALL_PATH}
 origin: https://github.com/Cstm3DBldr/stealth-autoloader.git
 managed_services: klipper
 primary_branch: main
+EOF2
+
+echo "✅ Stealth Autoloader synced and installed!"
+echo "   Next: Make sure [include stealth-autoloader/*.cfg] is in printer.cfg"
+sudo systemctl restart klipper
