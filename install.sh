@@ -20,7 +20,7 @@ fi
 
 if [ "$EUID" -eq 0 ]; then echo "[ERROR] Do not run as root!"; exit 1; fi
 
-# Copy macros into your normal config folder (editable in web GUI)
+# FORCE copy macros into your config folder (editable in web GUI)
 echo "[INSTALL] Copying stealth-autoloader.cfg to config folder..."
 cp -f "${INSTALL_PATH}/stealth-autoloader.cfg" "${CONFIG_DIR}/stealth-autoloader.cfg"
 
