@@ -1,6 +1,4 @@
-# filament_feed.py - Stealth Autoloader (follows YOUR full flow chart)
-# Reads all configurable values from hardware.cfg
-
+# filament_feed.py - Stealth Autoloader (Happy Hare style config)
 import logging
 
 class FilamentFeed:
@@ -8,7 +6,6 @@ class FilamentFeed:
         self.printer = config.get_printer()
         self.name = config.get_name().split()[-1] or "tool0"
         
-        # Load per-toolhead sections
         self.feed_stepper_name = config.get('feed_stepper')
         self.entry_sensor_name = config.get('entry_sensor')
         self.extruder_sensor_name = config.get('extruder_sensor')
@@ -16,7 +13,7 @@ class FilamentFeed:
         self.buffer_tension_name = config.get('buffer_tension_sensor')
         self.buffer_compression_name = config.get('buffer_compression_sensor')
         
-        # Load configurable variables from hardware.cfg
+        # Load parameters from parameters.cfg
         self.tube_length = config.getfloat('tube_length', 800.0)
         self.sensor_delay = config.getfloat('sensor_polling_frequency', 0.2)
         self.buffer_slide = config.getfloat('buffer_slide_distance', 15.0)
@@ -25,10 +22,10 @@ class FilamentFeed:
         self.purge_length = config.getfloat('purge_length', 30.0)
         
         self.gcode = self.printer.lookup_object('gcode')
-        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD, desc="Full load using your flow chart")
-        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD, desc="Unload to roll")
+        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD)
+        self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD)
         
-        logging.info(f"Stealth Autoloader '{self.name}' initialized with tube_length={self.tube_length}mm")
+        logging.info(f"Stealth Autoloader '{self.name}' loaded from parameters.cfg")
 
     def get_sensor(self, sensor_name):
         try:
