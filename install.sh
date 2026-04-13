@@ -19,6 +19,9 @@ fi
 
 if [ "$EUID" -eq 0 ]; then echo "[ERROR] Do not run as root!"; exit 1; fi
 
+# Suppress git pull warning forever
+git config --global pull.rebase false
+
 echo "[INSTALL] Pulling latest from GitHub..."
 git -C "${INSTALL_PATH}" pull origin main
 
@@ -29,10 +32,9 @@ cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 echo "[INSTALL] Linking Python backend..."
 ln -sfn "${INSTALL_PATH}/klipper/extras/filament_feed.py" "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
 
-# Create moonraker folder first
+# Create moonraker folder + config file (no heredoc issues)
 mkdir -p "${HOME}/.moonraker/config"
-
-cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << 'EOF2'
+cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << EOF2
 [update_manager stealth-autoloader]
 type: git_repo
 channel: dev
