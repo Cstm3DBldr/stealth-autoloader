@@ -1,9 +1,5 @@
-# filament_feed.py - Stealth Autoloader for Voron Stealth Changer
-# 1 path now → easy copy-paste for all 6 later
-# Uses your existing extruder + sensors + new manual_stepper
-
+# filament_feed.py - Stealth Autoloader (follows YOUR full flow chart)
 import logging
-from klippy import configfile
 
 class FilamentFeed:
     def __init__(self, config):
@@ -12,39 +8,59 @@ class FilamentFeed:
         
         self.extruder_name = config.get('extruder', 'extruder')
         self.feed_stepper_name = config.get('feed_stepper', 'manual_stepper feed_motor')
-        self.entry_sensor_name = config.get('entry_sensor', 'filament_switch_sensor entry_sensor')
+        self.entry_sensor_name = config.get('entry_sensor')
+        self.extruder_sensor_name = config.get('extruder_sensor')
+        self.toolhead_sensor_name = config.get('toolhead_sensor')
+        self.buffer_tension_name = config.get('buffer_tension_sensor')
+        self.buffer_compression_name = config.get('buffer_compression_sensor')
         
         self.gcode = self.printer.lookup_object('gcode')
-        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD, desc="Load to hotend using sensors")
+        self.gcode.register_command('FILAMENT_LOAD', self.cmd_FILAMENT_LOAD, desc="Full load using YOUR flow chart")
         self.gcode.register_command('FILAMENT_UNLOAD', self.cmd_FILAMENT_UNLOAD, desc="Unload to roll")
         
         logging.info(f"Stealth Autoloader '{self.name}' initialized")
 
-    def get_sensor_state(self, sensor_name):
+    def get_sensor(self, sensor_name):
         try:
-            sensor = self.printer.lookup_object(sensor_name)
-            return sensor.get_status(self.printer.get_reactor().monotonic())['filament_detected']
+            s = self.printer.lookup_object(sensor_name)
+            return s.get_status(self.printer.get_reactor().monotonic())['filament_detected']
         except:
             return False
 
     def cmd_FILAMENT_LOAD(self, gcmd):
-        gcmd.respond_info(f"Starting LOAD for {self.name}")
+        gcmd.respond_info(f"Loading Filament - {self.name}")
         self.gcode.run_script_from_command(f"SET_STEPPER_ENABLE STEPPER={self.feed_stepper_name} ENABLE=1")
         
-        while not self.get_sensor_state(self.entry_sensor_name):
+        # LOOP while extruder_sensor == false
+        while not self.get_sensor(self.extruder_sensor_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=10 SPEED=50")
             self.gcode.run_script_from_command("M400")
         
-        gcmd.respond_info("Filament at hotend - parking")
-        self.gcode.run_script_from_command("M83\nG1 E50 F300\nM400")
+        # Once extruder_sensor true, push until buffer compression
+        gcmd.respond_info("Feeding to Toolhead")
+        while not self.get_sensor(self.buffer_compression_name):
+            self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=5 SPEED=30")
+            self.gcode.run_script_from_command("M400")
+        
+        # Enable toolhead extruder and feed until toolhead_sensor true
+        self.gcode.run_script_from_command(f"SET_STEPPER_ENABLE STEPPER=extruder ENABLE=1")
+        while not self.get_sensor(self.toolhead_sensor_name):
+            self.gcode.run_script_from_command("G1 E10 F300")
+            self.gcode.run_script_from_command("M400")
+        
+        # Extrude calibrated amount into hotend
+        self.gcode.run_script_from_command("M83\nG1 E50 F300\nM400")   # change 50 to your calibrated value
+        
+        gcmd.respond_info("Purging Nozzle")
+        self.gcode.run_script_from_command("_CLEAN_NOZZLE")   # your existing macro
+        self.gcode.run_script_from_command("PARK_ON_COOLING_PAD")     # your existing macro
         gcmd.respond_info("LOAD COMPLETE")
 
     def cmd_FILAMENT_UNLOAD(self, gcmd):
         gcmd.respond_info(f"Starting UNLOAD for {self.name}")
-        self.gcode.run_script_from_command(f"SET_STEPPER_ENABLE STEPPER={self.feed_stepper_name} ENABLE=1")
+        # Simple retract for now - expand later if needed
         self.gcode.run_script_from_command("M83\nG1 E-50 F300\nM400")
-        
-        while self.get_sensor_state(self.entry_sensor_name):
+        while self.get_sensor(self.entry_sensor_name):
             self.gcode.run_script_from_command(f"MANUAL_STEPPER {self.feed_stepper_name} MOVE=-10 SPEED=50")
             self.gcode.run_script_from_command("M400")
         gcmd.respond_info("UNLOAD COMPLETE")
