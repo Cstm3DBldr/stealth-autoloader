@@ -121,7 +121,8 @@ class FilamentFeed:
 
         # Wait for hotend to reach load temperature before extruding
         self.gcode.run_script_from_command(
-            "TEMPERATURE_WAIT SENSOR=extruder MINIMUM=%.0f" % self.load_temperature)
+            "TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.0f"
+            % (self.extruder_name, self.load_temperature))
 
         # Extrude until toolhead sensor triggers
         gcmd.respond_info("Feeding to Toolhead")
