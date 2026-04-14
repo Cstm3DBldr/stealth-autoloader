@@ -31,9 +31,10 @@ cp -r "${INSTALL_PATH}/stealth-autoloader" "${CONFIG_DIR}/"
 echo "[INSTALL] Linking Python backend..."
 ln -sfn "${INSTALL_PATH}/klipper/extras/filament_feed.py" "${KLIPPER_PATH}/klippy/extras/filament_feed.py"
 
-# Create the FULL moonraker path (this was the missing piece)
+# Create moonraker folder
 mkdir -p "${HOME}/.moonraker/config/update_manager"
 
+# Add post_update_script so Update Manager automatically syncs files
 cat > "${HOME}/.moonraker/config/update_manager/stealth-autoloader.ini" << 'ENDOFINI'
 [update_manager stealth-autoloader]
 type: git_repo
@@ -42,8 +43,9 @@ path: ${INSTALL_PATH}
 origin: https://github.com/Cstm3DBldr/stealth-autoloader.git
 managed_services: klipper
 primary_branch: main
+post_update_script: ${INSTALL_PATH}/post_update.sh
 ENDOFINI
 
-echo "✅ Stealth Autoloader synced and installed!"
+echo "✅ Stealth Autoloader installed with automatic sync!"
 echo "   Next: Make sure [include stealth-autoloader/*.cfg] is in printer.cfg"
 sudo systemctl restart klipper
