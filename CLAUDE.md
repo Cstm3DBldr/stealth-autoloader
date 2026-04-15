@@ -2,11 +2,18 @@
 
 ## What This Project Is
 A filament auto-load and auto-unload system for a Voron StealthChanger 3D printer
-with 6 independent toolheads. Each toolhead has its own complete filament path with
-dedicated motors and sensors. This project bolts on top of klipper-toolchanger as a
-clean add-on — no core klipper or toolchanger files are modified.
+with 6 independent toolheads. Each toolhead has its own filament path; this system
+automates loading when a roll runs out and swapping filament color between prints.
 
 This is a NEW original project. It is NOT a port or fork of any existing project.
+
+**Use case:** Multi-toolhead printer. Tool changes are handled by the toolchanger
+(mechanical head swap). This system only acts when:
+- A roll runs out → auto-load new filament to that toolhead
+- Manual swap between prints → unload old, load new filament
+
+**NOT an MMU:** Filament never leaves the path during a tool change. No gate
+selector that moves to filament. No color changes mid-print on a single toolhead.
 
 ---
 
@@ -18,7 +25,7 @@ This is a NEW original project. It is NOT a port or fork of any existing project
 ## GitHub
 - Repo: https://github.com/Cstm3DBldr/stealth-autoloader.git
 - Branch: main
-- Always commit and push after any change that works on the printer
+- Commit and push after any change that works on the printer
 
 ---
 
@@ -27,292 +34,245 @@ This is a NEW original project. It is NOT a port or fork of any existing project
 | File | Purpose |
 |---|---|
 | `stealth-autoloader/stealth-autoloader.cfg` | Main entry point — only file included in printer.cfg |
-| `stealth-autoloader/pin_aliases.cfg` | ONLY place real pin names are entered. One [board_pins] block per MCU |
-| `stealth-autoloader/hardware.cfg` | MCU definitions + all stepper/sensor/encoder/filament_feed sections |
-| `stealth-autoloader/macros.cfg` | User-facing gcode macros. Thin wrappers that call the Python backend |
-| `stealth-autoloader/parameters.cfg` | Reference doc for all tunable variable names and what they do |
-| `klipper/extras/filament_feed.py` | Python backend. All load/unload logic lives here |
-| `klipper/extras/sa_encoder.py` | Rotary encoder (Binky-style) driver. Counts pulses → mm |
-| `References/hardware_pinouts/` | Pinout images and README for all boards — local + GitHub only, NOT on printer |
-| `install.sh` | Install and uninstall script |
-| `post_update.sh` | Run by moonraker update manager after a git pull |
-| `README.md` | End-user install and config guide — keep this updated |
-| `CLAUDE.md` | This file — project instructions for Claude Code |
+| `stealth-autoloader/pin_aliases.cfg` | ONLY place real pin names are entered. One [board_pins] per MCU |
+| `stealth-autoloader/hardware.cfg` | MCU + all hardware sections + [stealth_autoloader] config |
+| `stealth-autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
+| `klipper/extras/stealth_autoloader.py` | **Main controller** — all sequences, state, commands |
+| `klipper/extras/sa_encoder.py` | Encoder driver — pulse counting via Klipper buttons module |
+| `References/hardware_pinouts/` | Board pinout images — local + GitHub only, NOT on printer |
+| `CLAUDE.md` | This file |
+
+On the printer, Python extras are symlinked:
+- `~/klipper/klippy/extras/stealth_autoloader.py` → `~/stealth-autoloader/klipper/extras/stealth_autoloader.py`
+- `~/klipper/klippy/extras/sa_encoder.py` → `~/stealth-autoloader/klipper/extras/sa_encoder.py`
 
 ---
 
-## Hardware Per Filament Path (x6 toolheads)
+## Motion System Architecture
 
-Each toolhead has this exact hardware chain — NO buffer, NO mid-path switches:
+ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 
 ```
-[Filament Roll]
-      |
-Entry Sensor        — filament_switch_sensor, detects filament inserted at roll end
-      |
-Feed Motor          — manual_stepper (BTT MMB CAN V2.0 M1/M2/M3)
-      |
-Binky Encoder       — sa_encoder, single-pulse hall-effect sensor just after feed motor
-      |               tracks actual filament movement in mm (mm_per_pulse × pulse count)
-Long PTFE Tube      — up to 1 meter
-      |
-Extruder Motor      — on the toolhead, driven by klipper extruder config
-      |
-Hotend + Nozzle
+[Filament Roll 0]  [Roll 1]  ...  [Roll N]
+        |               |                |
+   Entry Sensor 0  Entry Sensor 1  Entry Sensor N
+        |               |                |
+        └───────────────┴────────────────┘
+                        |
+                  Selector Motor
+                  (positions carriage)
+                        |
+                  Drive Gear ←── Engage Servo ──► ENGAGED (driven)
+                        |                          DISENGAGED (neutral)
+                  Drive Encoder
+                  (single, on drive gear output shaft)
+                        |
+               PTFE Tube (selected path)
+                        |
+               Extruder Motor (toolhead)
+                        |
+               Hotend + Nozzle
 ```
 
-The encoder replaces ALL mid-path sensors (extruder sensor, toolhead sensor,
-buffer tension/compression). Distance to any point in the path is tracked by
-counting encoder pulses × mm_per_pulse.
+### Components
+| Component | Klipper Object | Role |
+|---|---|---|
+| Selector motor | `manual_stepper sa_selector` (M2) | Positions drive carriage to active path |
+| Drive motor | `manual_stepper sa_drive` (M1) | Moves filament through selected path |
+| Engage servo | `servo sa_engage` | Engages (driven) or releases (neutral) drive gear |
+| Drive encoder | `sa_encoder` | Single encoder on drive gear shaft; measures all movement |
+| Entry sensors | `filament_switch_sensor entry_sensor_N` | Per-path; fixed position at roll end |
+
+### Engage vs Neutral
+- **Engaged** (servo at `servo_engaged_angle`) — drive gear grips filament; drive motor moves it
+- **Neutral** (servo at `servo_disengaged_angle`) — drive gear releases; filament flows freely
+  ("neutral" like a car transmission — no force transmitted)
 
 ---
 
 ## MCU Layout
 
-| MCU name | Board | Tools | UUID / Serial |
+| MCU name | Board | Role | UUID |
 |---|---|---|---|
-| `mcu` | BTT Manta M8P | Main printer | defined in printer.cfg — do not redefine here |
-| `autoloader_a` | BTT MMB CAN V2.0 | Tools 0, 1, 2 | canbus_uuid: 329ce333239a |
-| `autoloader_b` | BTT MMB CAN V2.0 | Tools 3, 4, 5 | second board pending arrival |
+| `mcu` | BTT Manta M8P | Main printer (in printer.cfg — do not redefine) | — |
+| `autoloader` | BTT MMB CAN V2.0 | All 6 paths on one board | 329ce333239a |
 
 ---
 
-## Pin Assignments — BTT MMB CAN V2.0
+## Pin Assignments — BTT MMB CAN V2.0 (`autoloader`)
 
-Each board has identical hardware. autoloader_a = Tools 0-2, autoloader_b = Tools 3-5.
+| Alias | Physical Pin | Role |
+|---|---|---|
+| SA_DRIVE_STEP/DIR/EN/UART | M1: PD4/PD3/PD5/PB5 | Drive motor (moves filament) |
+| SA_SELECTOR_STEP/DIR/EN/UART | M2: PC9/PC8/PD2/PB4 | Selector motor (positions carriage) |
+| SA_SELECTOR_STOP | STOP1: PA15 | Selector endstop for homing |
+| SA_SERVO | STOP2: PA10 | Engage servo PWM signal |
+| SA_ENCODER | 2x7 col0 high: PC7 | Drive gear encoder (single) |
+| SA_ENTRY_0..5 | 2x7 low: PC6,PA8,PB11,PB2,PB0,PC4 | Entry sensors per path |
 
-### Feed motors
-| Driver | Tool (board A) | Tool (board B) | STEP | DIR | EN | UART |
-|---|---|---|---|---|---|---|
-| M1 | T0 | T3 | PD4 | PD3 | PD5 | PB5 |
-| M2 | T1 | T4 | PC9 | PC8 | PD2 | PB4 |
-| M3 | T2 | T5 | PC15 | PC11 | PC10 | PB3 |
-
-### 2×7 Header — entry sensor (low pin) + encoder (high pin)
-| Tool | Board | Entry Pin | Encoder Pin |
-|---|---|---|---|
-| T0 | autoloader_a | PC6 | PC7 |
-| T1 | autoloader_a | PA8 | PA9 |
-| T2 | autoloader_a | PB11 | PB12 |
-| T3 | autoloader_b | PB2 | PB10 |
-| T4 | autoloader_b | PB0 | PB1 |
-| T5 | autoloader_b | PC4 | PC5 |
+Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when empty on this hardware.
 
 ---
 
 ## Klipper Config Rules — Strict
 
-These rules must never be broken:
-
-1. `[board_pins]` requires ONE block per MCU. The block name AND the `mcu:` value
-   must exactly match a real `[mcu name]` section. This is the source of the
-   "Unknown pin chip name" error if violated.
-
-2. Pin polarity (`^` pull-up, `!` invert) goes in hardware.cfg on the line that
-   USES the pin — never inside the alias definition in pin_aliases.cfg.
-
-3. The last alias entry in each `[board_pins]` block has NO trailing comma.
-   Every other alias line has a comma. A trailing comma on the last entry
-   will cause a klipper parse error.
-
-4. Include order in stealth-autoloader.cfg is fixed:
-   pin_aliases.cfg must load before hardware.cfg (aliases must exist before use).
-
-5. Never duplicate an [mcu] section. The main [mcu] lives in printer.cfg only.
-
-6. All tunable distance and timing values live inside the [filament_feed toolX]
-   section in hardware.cfg — not scattered across separate files.
-
-7. The `[board_pins autoloader_b]` block in pin_aliases.cfg will fail to parse if
-   the `[mcu autoloader_b]` section is commented out in hardware.cfg. Keep both
-   commented out or both active together.
+1. `[board_pins]` block name MUST exactly match the `[mcu name]`. Wrong name → "Unknown pin chip name" error.
+2. Pin polarity (`^` pull-up, `!` invert) goes in hardware.cfg on the USE line — never in pin_aliases.cfg.
+3. Last alias entry in a `[board_pins]` block has NO trailing comma.
+4. Include order is fixed: pin_aliases.cfg → hardware.cfg → macros.cfg.
+5. Never duplicate an `[mcu]` section — main `[mcu]` lives in printer.cfg only.
+6. Step pins on secondary MCU: do NOT use `^` prefix — step pins are outputs. `^chip:pin` fails; `chip:pin` works.
+7. Input pins (sensors, endstops): `^!autoloader:SA_ENTRY_0` works — `^` and `!` are stripped before chip name lookup.
 
 ---
 
-## Variable Reference
-These are the configurable values inside each [filament_feed toolX] section.
+## Python Backend — stealth_autoloader.py
 
-| Variable | Unit | Description |
+Single `[stealth_autoloader]` config section, single class instance, controls everything.
+
+### Config Parameters
+
+| Parameter | Default | Description |
 |---|---|---|
-| `tube_length` | mm | Encoder distance target for "filament reached extruder" |
-| `sensor_polling_frequency` | sec | Delay between encoder/sensor checks in feed loops |
-| `nozzle_distance` | mm | Extruder gears → nozzle tip (extruded after heating) |
-| `purge_length` | mm | Extra extrusion after nozzle is loaded |
-| `load_temperature` | °C | Minimum hotend temp before any extrusion is attempted |
-| `feed_step_size` | mm | Feed motor movement per loop iteration |
-| `extruder_step_size` | mm | Extruder movement per loop iteration |
-| `engage_max_distance` | mm | Max feed before expecting encoder motion (jam detect) |
-| `slip_tolerance` | % | Warn if encoder vs stepper differ by more than this % |
+| `drive_stepper` | — | manual_stepper name for drive motor |
+| `selector_stepper` | — | manual_stepper name for selector |
+| `servo` | — | servo object name for engage/disengage |
+| `encoder` | — | sa_encoder object name |
+| `num_paths` | 6 | Number of filament paths (1–32) |
+| `entry_sensor_N` | — | filament_switch_sensor name for path N |
+| `selector_position_N` | N×21mm | Selector position in mm from home for path N |
+| `extruder_N` | extruder / extruderN | Extruder name for heating during load |
+| `servo_engaged_angle` | 30 | Servo angle when drive gear grips filament |
+| `servo_disengaged_angle` | 160 | Servo angle when path is neutral |
+| `tube_length` | 800 | Encoder target for "filament reached extruder" |
+| `nozzle_distance` | 50 | Extruder gears → nozzle tip (mm) |
+| `purge_length` | 30 | Extra extrusion after nozzle loaded (mm) |
+| `load_temperature` | 200 | Min hotend temp before extruding |
+| `engage_max_distance` | 60 | Max drive travel before expecting encoder motion |
+| `slip_tolerance` | 15 | Warn if encoder vs stepper differ by > this % |
+| `feed_speed` | 50 | Drive motor speed (mm/s) |
+| `selector_speed` | 200 | Selector motor speed (mm/s) |
+| `feed_step_size` | 10 | Drive motor step per loop iteration (mm) |
+| `sensor_polling_delay` | 0.2 | Seconds between sensor checks in loops |
+| `servo_move_delay` | 0.3 | Seconds to wait after servo command |
 
-Encoder-specific (per [sa_encoder toolX]):
+### GCode Commands (all registered by Python)
 
-| Variable | Unit | Description |
-|---|---|---|
-| `mm_per_pulse` | mm | Filament mm per encoder pulse — calibrate with SA_CALIBRATE_ENCODER |
-
----
-
-## Load Sequence (encoder-based — source of truth)
-
-```
-Entry sensor triggers OR user calls FILAMENT_LOAD TOOL=toolX
-↓
-Print: "Loading Filament — toolX"
-Enable feed motor, set encoder direction=forward, reset encoder
-↓
---- Phase 1: Engage ---
-LOOP: feed +feed_step_size → check encoder distance
-repeat until encoder_distance >= 3 × mm_per_pulse  OR  fed >= engage_max_distance
-If max distance reached with no encoder motion → ERROR (no filament / encoder fault)
-↓
-Print: "Filament engaged — feeding to extruder..."
-↓
---- Phase 2: Feed to extruder ---
-LOOP: feed +feed_step_size → check encoder distance → check slip
-repeat until encoder_distance >= tube_length
-↓
-Print: "Filament at extruder — Xmm fed (encoder: Ymm)"
-↓
---- Phase 3: Heat and extrude ---
-TEMPERATURE_WAIT SENSOR=extruder MINIMUM=load_temperature
-Print: "Feeding through extruder to nozzle tip..."
-G1 E{nozzle_distance} F300 (relative mode M83)
-↓
---- Phase 4: Purge ---
-Print: "Purging nozzle..."
-G1 E{purge_length} F300
-↓
-_CLEAN_NOZZLE
-PARK_ON_COOLING_PAD
-Print: "LOAD COMPLETE — toolX"
-```
-
----
-
-## Unload Sequence
-
-```
-User calls FILAMENT_UNLOAD TOOL=toolX
-↓
-Print: "Unloading Filament — toolX"
-M83 → G1 E-{nozzle_distance + purge_length} F300 (retract from nozzle)
-↓
-Enable feed motor, set encoder direction=reverse, reset encoder
-↓
-LOOP: feed -feed_step_size → check entry sensor
-repeat until entry_sensor == False (filament cleared)
-↓
-Print: "UNLOAD COMPLETE — toolX (encoder: Xmm retracted)"
-```
-
----
-
-## Calibration Commands
-
-| Command | Purpose |
+| Command | Description |
 |---|---|
-| `SA_BUZZ_M1` | Buzz M1 driver (PD4/PD3/PD5) — confirm which driver your wiring uses |
-| `SA_BUZZ_M3` | Buzz M3 driver (PC15/PC11/PC10) — confirm which driver your wiring uses |
-| `SA_CALIBRATE_ENCODER TOOL=tool0` | Instructions + `SA_CALIBRATE_ENCODER_RUN` to measure mm_per_pulse |
-| `SA_CALIBRATE_ENCODER_RUN TOOL=tool0 DISTANCE=100` | Feed 100mm, report encoder vs stepper, calculate mm_per_pulse |
-| `SA_CALIBRATE_TUBE TOOL=tool0` | Slow-feed to find tube_length — stop when filament reaches extruder |
+| `SA_HOME` | Home selector motor to endstop, zero position |
+| `SA_SELECT TOOL=N` | Move selector to path N (servo stays neutral) |
+| `SA_ENGAGE` | Engage drive servo (grip filament) |
+| `SA_DISENGAGE` | Disengage drive servo (neutral) |
+| `SA_LOAD TOOL=N` | Full load sequence for path N |
+| `SA_UNLOAD TOOL=N` | Full unload sequence for path N |
+| `SA_STATUS` | Print state for all paths |
+| `SA_BUZZ_DRIVE` | Test drive motor |
+| `SA_BUZZ_SELECTOR` | Test selector motor |
+| `SA_CALIBRATE_ENCODER [DISTANCE=100]` | Measure mm_per_pulse |
+| `SA_CALIBRATE_SELECTOR TOOL=N` | Instructions for recording selector position |
+| `SA_SET_SELECTOR_HOME` | Zero selector position at current location |
+| `SA_SET_STATE TOOL=N STATE=<state>` | Override path state (loaded/empty/partial/unknown) |
 
----
+### Load Sequence
 
-## Gcode Command Structure
+```
+SA_LOAD TOOL=N
+↓ Check entry_sensor_N — filament present?
+↓ _select_path(N) → servo disengage → selector move → (update current_path)
+↓ _servo_engage()
+↓ encoder.set_direction(forward=True), encoder.reset_distance()
+↓ Phase 1: feed +step until encoder moves (engage_max_distance limit)
+↓ Phase 2: feed until encoder >= tube_length (slip check each step)
+↓ _servo_disengage()
+↓ TEMPERATURE_WAIT extruder_N >= load_temperature
+↓ G1 E{nozzle_distance} F300 (extruder drives filament to nozzle)
+↓ G1 E{purge_length} F300
+↓ _CLEAN_NOZZLE → PARK_ON_COOLING_PAD
+↓ path_states[N] = 'loaded'
+```
 
-| Command | What it does |
-|---|---|
-| `FILAMENT_LOAD` | Loads on the currently active toolhead |
-| `FILAMENT_LOAD_T0` … `T5` | Loads a specific toolhead directly |
-| `FILAMENT_UNLOAD` | Unloads the currently active toolhead |
-| `FILAMENT_UNLOAD_T0` … `T5` | Unloads a specific toolhead directly |
-| `SA_FILAMENT_LOAD TOOL=tool0` | Direct Python backend call (used internally by macros) |
-| `SA_FILAMENT_UNLOAD TOOL=tool0` | Direct Python backend call (used internally by macros) |
+### Unload Sequence
 
----
-
-## Python Backend Rules (filament_feed.py + sa_encoder.py)
-
-- One instance of FilamentFeed is created per [filament_feed toolX] section
-- One instance of SAEncoder is created per [sa_encoder toolX] section
-- Commands are registered as SA_FILAMENT_LOAD / SA_FILAMENT_UNLOAD with a TOOL= parameter
-  so all 6 tool instances can coexist without command name conflicts
-- All hardware is resolved at runtime via printer.lookup_object() — not at init time
-- Encoder uses Klipper's buttons module for interrupt-driven pulse counting
-- Feed motor moves use MANUAL_STEPPER gcode via run_script_from_command()
-- Extruder moves use G1 E in relative mode (M83)
-- All configurable values are read from the [filament_feed] config section
-- Do not hardcode any distances, speeds, or temperatures
+```
+SA_UNLOAD TOOL=N
+↓ G1 E-{nozzle_distance + purge_length} F300 (retract from nozzle)
+↓ _select_path(N) → selector move
+↓ _servo_engage()
+↓ encoder.set_direction(forward=False), encoder.reset_distance()
+↓ Drive -step until entry_sensor_N == False
+↓ _servo_disengage()
+↓ path_states[N] = 'empty'
+```
 
 ---
 
 ## Deploy Workflow
 
-After making and testing a change:
-
 ```bash
-# 1. Push changed config files to printer
-scp stealth-autoloader/hardware.cfg pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/pin_aliases.cfg pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/macros.cfg pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/stealth-autoloader.cfg pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+# 1. Push config files to printer
+scp stealth-autoloader/hardware.cfg      pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/pin_aliases.cfg   pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/macros.cfg        pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/stealth-autoloader.cfg  pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 
-# 2. Push Python backend if changed
-scp klipper/extras/filament_feed.py pi@192.168.1.214:~/klipper/klippy/extras/
-scp klipper/extras/sa_encoder.py    pi@192.168.1.214:~/klipper/klippy/extras/
+# 2. Push Python extras (to repo copy — symlinks pick it up)
+scp klipper/extras/stealth_autoloader.py  pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
+scp klipper/extras/sa_encoder.py          pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
 
 # 3. Restart Klipper
-ssh pi@192.168.1.214 "sudo systemctl restart klipper"
+ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart klipper"
 
-# 4. Commit and push to GitHub
-git add -A
-git commit -m "description of what changed"
-git push origin main
+# 4. Commit and push
+git add -A && git commit -m "..." && git push origin main
 ```
 
-Note: References/hardware_pinouts/ is local + GitHub only — never SCP to printer.
+**Important:** Always SCP Python extras to `~/stealth-autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks.
+
+On first install, create symlinks:
+```bash
+ln -sf ~/stealth-autoloader/klipper/extras/stealth_autoloader.py ~/klipper/klippy/extras/stealth_autoloader.py
+ln -sf ~/stealth-autoloader/klipper/extras/sa_encoder.py           ~/klipper/klippy/extras/sa_encoder.py
+```
 
 ---
 
-## Happy Hare — Reference Only
+## Calibration Sequence (first-time setup)
+
+1. **`SA_BUZZ_DRIVE`** — confirm drive motor wires are correct (motor should move)
+2. **`SA_BUZZ_SELECTOR`** — confirm selector motor wires are correct
+3. **`SA_HOME`** — home selector to endstop
+4. **`SA_SELECT TOOL=0`** then `SA_ENGAGE` — manually position to path 0, adjust `selector_position_0`
+5. Repeat step 4 for each path, recording selector positions
+6. **`SA_CALIBRATE_ENCODER DISTANCE=100`** — with filament loaded past drive gear
+7. Update `mm_per_pulse` in `[sa_encoder]` and `selector_position_N` values in `[stealth_autoloader]`
+
+---
+
+## Happy Hare — Reference Rules
 
 Happy Hare (https://github.com/moggieuk/Happy-Hare) is referenced for:
-- Config file style and structure (how variables are named and organized)
-- The [board_pins] alias pattern for clean pin management
-- The pattern of one Python extra class per hardware unit
-- How to keep all user-editable values in .cfg files, not hardcoded in Python
-- The Binky encoder concept (single-pulse hall-effect, mm_per_pulse calibration)
+- ERCF V2 mechanical topology (selector + drive gear + servo)
+- Encoder calibration concept (mm_per_pulse, single encoder for all paths)
+- Config file style and Python extra class patterns
 
-Happy Hare is NOT to be copied, ported, or used as a code source.
-This project does not need Happy Hare's selector, gate logic, tip forming,
-spoolman integration, LED control, or any MMU-specific functionality.
-If a solution resembles Happy Hare too closely, rewrite it to be simpler
-and specific to this project's single-path-per-tool architecture.
+Do NOT copy Happy Hare code. This project does not need:
+- Gate/selector that moves encoder position
+- Tip forming, spoolman, LED, servo retract sequences
+- Multi-color on single toolhead (it's a multi-toolhead printer)
+- Any MMU-specific logic
 
----
-
-## README.md Update Rules
-
-Update README.md whenever:
-- A new gcode command is added
-- An install or uninstall step changes
-- A new config variable is added
-- A new hardware component is added to the path
-- A sequence (load/unload) changes behavior
-
-Do not update README.md for internal refactors that don't affect the user.
+If code resembles Happy Hare too closely, simplify it for single-path-per-tool architecture.
 
 ---
 
 ## What Not To Do
 
-- Do not modify printer.cfg, klipper-toolchanger files, or any core klipper files
-- Do not add buffer/tension/compression sensor sections — those were removed by design
-- Do not add functionality from Happy Hare that isn't in the flow chart
-- Do not implement state persistence until load/unload works on hardware
-- Do not rename variables that are defined in the variable reference table
-- Do not split tunable values back out into a separate parameters.cfg — they live in hardware.cfg
-- Do not add a trailing comma to the last alias entry in a [board_pins] block
-- Do not define [mcu] sections that are already defined in printer.cfg
-- Do not SCP References/ folder to printer — it is local + GitHub only
+- Do not modify printer.cfg, klipper-toolchanger, or core klipper files
+- Do not put load/unload sequences in macros — they live in stealth_autoloader.py
+- Do not add per-path feed motors — there is ONE drive motor for all paths
+- Do not use `^` before a chip name on output pins (step pins) — only valid on input pins
+- Do not define `[mcu autoloader]` in printer.cfg — it's in hardware.cfg
+- Do not add trailing comma to last alias in `[board_pins]`
+- Do not SCP `References/` folder to printer
+- Do not create separate `[filament_feed toolN]` sections — replaced by `[stealth_autoloader]`

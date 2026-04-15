@@ -21,7 +21,9 @@ import logging
 class SAEncoder:
     def __init__(self, config):
         self.printer  = config.get_printer()
-        self.name     = config.get_name().split()[-1]   # "tool0" … "tool5"
+        # Name is the suffix after "sa_encoder" or just "sa_encoder" for single instance
+        parts = config.get_name().split()
+        self.name = parts[-1] if len(parts) > 1 else 'main'
 
         # mm of filament per encoder pulse — calibrate with SA_CALIBRATE_ENCODER
         # Binky default: 23 mm wheel circumference / ~48 pulses per rev ≈ 0.48 mm/pulse
@@ -75,8 +77,16 @@ class SAEncoder:
         }
 
     @staticmethod
+    def load_config(config):
+        return SAEncoder(config)
+
+    @staticmethod
     def load_config_prefix(config):
         return SAEncoder(config)
+
+# Support both [sa_encoder] (single) and [sa_encoder name] (named) sections
+def load_config(config):
+    return SAEncoder(config)
 
 def load_config_prefix(config):
     return SAEncoder(config)
