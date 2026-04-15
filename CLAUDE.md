@@ -103,9 +103,9 @@ ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 
 | Alias | Physical Pin | Role |
 |---|---|---|
-| SA_DRIVE_STEP/DIR/EN | M1: PD4/PD3/PD5 | Drive motor step/dir/enable |
+| SA_DRIVE_STEP/DIR/EN | M3: PC15/PC11/PC10 | Drive motor step/dir/enable |
 | SA_DRIVE_CS | PB3 | Drive motor TMC5160 SPI chip-select |
-| SA_SELECTOR_STEP/DIR/EN | M2: PC9/PC8/PD2 | Selector motor step/dir/enable |
+| SA_SELECTOR_STEP/DIR/EN | M1: PD4/PD3/PD5 | Selector motor step/dir/enable |
 | SA_SELECTOR_CS | PB5 | Selector motor TMC5160 SPI chip-select |
 | SA_SELECTOR_STOP | PA15 (STOP1) | Selector endstop for homing |
 | SA_SERVO | PA1 | Engage servo PWM signal |

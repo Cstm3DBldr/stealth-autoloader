@@ -173,17 +173,22 @@ class StealthAutoloader:
         return self.servo_name.split()[-1]
 
     def _servo_engage(self):
+        sn = self._servo_short_name()
         self.gcode.run_script_from_command(
-            "SET_SERVO SERVO=%s ANGLE=%.1f"
-            % (self._servo_short_name(), self.servo_engaged_angle))
+            "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, self.servo_engaged_angle))
         self.reactor.pause(self.reactor.monotonic() + self.servo_move_delay)
+        # Latching servo — cut PWM after it reaches position.
+        # Latch holds mechanically; no need to keep driving the coil.
+        self.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
         self._servo_is_engaged = True
 
     def _servo_disengage(self):
+        sn = self._servo_short_name()
         self.gcode.run_script_from_command(
-            "SET_SERVO SERVO=%s ANGLE=%.1f"
-            % (self._servo_short_name(), self.servo_disengaged_angle))
+            "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, self.servo_disengaged_angle))
         self.reactor.pause(self.reactor.monotonic() + self.servo_move_delay)
+        # Latching servo — cut PWM after it reaches position.
+        self.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
         self._servo_is_engaged = False
 
     # ══════════════════════════════════════════════════════════════════════
@@ -587,23 +592,40 @@ class StealthAutoloader:
         lines.append("╚════════════════════════════════════════════════╝")
         gcmd.respond_info("\n".join(lines))
 
-    def _cmd_buzz_drive(self, gcmd):
-        dn = self._drv_name()
-        gcmd.respond_info("SA: Buzzing drive motor (%s)..." % dn)
-        for move in [5, -5, 5, -5]:
+    def _buzz_stepper(self, gcmd, stepper_name, distance, speed, reps=3):
+        """
+        Generic buzz routine for any manual_stepper.
+        Enables the stepper, zeroes its position counter, then oscillates
+        ±distance mm `reps` times at `speed` mm/s, then disables.
+        Each move is waited on with M400 so motion is sequential and visible.
+        """
+        sn = stepper_name
+        gcmd.respond_info(
+            "SA: Buzzing %s — ±%.0fmm × %d reps @ %.0fmm/s" % (sn, distance, reps, speed))
+        # Enable and zero position so moves are predictable
+        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        for _ in range(reps):
             self.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=%d SPEED=10" % (dn, move))
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % dn)
-        gcmd.respond_info("SA: Drive buzz done. Did a motor move?")
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn,  distance, speed))
+            self.gcode.run_script_from_command("M400")
+            self.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, -distance, speed))
+            self.gcode.run_script_from_command("M400")
+        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % sn)
+        gcmd.respond_info("SA: Buzz complete — did the motor move?")
+
+    def _cmd_buzz_drive(self, gcmd):
+        dist  = gcmd.get_float('DISTANCE',  5.0, minval=1.0, maxval=50.0)
+        speed = gcmd.get_float('SPEED',    10.0, minval=1.0, maxval=100.0)
+        reps  = gcmd.get_int(  'REPS',        3, minval=1,   maxval=10)
+        self._buzz_stepper(gcmd, self._drv_name(), dist, speed, reps)
 
     def _cmd_buzz_selector(self, gcmd):
-        sn = self._sel_name()
-        gcmd.respond_info("SA: Buzzing selector motor (%s)..." % sn)
-        for move in [10, -10, 10, -10]:
-            self.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=%d SPEED=50" % (sn, move))
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % sn)
-        gcmd.respond_info("SA: Selector buzz done. Did a motor move?")
+        dist  = gcmd.get_float('DISTANCE', 10.0, minval=1.0, maxval=100.0)
+        speed = gcmd.get_float('SPEED',    50.0, minval=1.0, maxval=300.0)
+        reps  = gcmd.get_int(  'REPS',        3, minval=1,   maxval=10)
+        self._buzz_stepper(gcmd, self._sel_name(), dist, speed, reps)
 
     def _cmd_calibrate_encoder(self, gcmd):
         path     = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
