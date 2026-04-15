@@ -103,12 +103,17 @@ ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 
 | Alias | Physical Pin | Role |
 |---|---|---|
-| SA_DRIVE_STEP/DIR/EN/UART | M1: PD4/PD3/PD5/PB5 | Drive motor (moves filament) |
-| SA_SELECTOR_STEP/DIR/EN/UART | M2: PC9/PC8/PD2/PB4 | Selector motor (positions carriage) |
-| SA_SELECTOR_STOP | STOP1: PA15 | Selector endstop for homing |
-| SA_SERVO | STOP2: PA10 | Engage servo PWM signal |
-| SA_ENCODER | 2x7 col0 high: PC7 | Drive gear encoder (single) |
-| SA_ENTRY_0..5 | 2x7 low: PC6,PA8,PB11,PB2,PB0,PC4 | Entry sensors per path |
+| SA_DRIVE_STEP/DIR/EN | M1: PD4/PD3/PD5 | Drive motor step/dir/enable |
+| SA_DRIVE_CS | PB3 | Drive motor TMC5160 SPI chip-select |
+| SA_SELECTOR_STEP/DIR/EN | M2: PC9/PC8/PD2 | Selector motor step/dir/enable |
+| SA_SELECTOR_CS | PB5 | Selector motor TMC5160 SPI chip-select |
+| SA_SELECTOR_STOP | PA15 (STOP1) | Selector endstop for homing |
+| SA_SERVO | PA1 | Engage servo PWM signal |
+| SA_ENCODER_0..5 | PC7,PA9,PB12,PB10,PB1,PC5 | Per-path encoders (2x7 high pins) |
+| SA_ENTRY_0..5 | PC6,PA8,PB11,PB2,PB0,PC4 | Entry sensors (2x7 low pins) |
+
+**TMC5160 SPI bus** (shared M1+M2): software SPI — MISO=PB14, MOSI=PB15, SCK=PB13
+`sense_resistor: 0.075` — hardware SPI (spi_bus: spi1/spi2) fails on this MCU; software SPI required.
 
 Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when empty on this hardware.
 
