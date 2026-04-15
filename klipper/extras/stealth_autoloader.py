@@ -381,6 +381,10 @@ class StealthAutoloader:
         for name, fn, desc in [
             ('SA_HOME',               self._cmd_home,
              "Home selector motor to endstop, zero position"),
+            ('SA_ENCODER_QUERY',      self._cmd_encoder_query,
+             "Snapshot of all encoder distances. [TOOL=N] for one path. [RESET=1] to zero first."),
+            ('SA_ENCODER_WATCH',      self._cmd_encoder_watch,
+             "Live encoder delta stream. [TOOL=N] highlights one path. [DURATION=30] [INTERVAL=0.5]"),
             ('SA_SELECT',             self._cmd_select,
              "Position selector to path N. TOOL=N"),
             ('SA_ENGAGE',             self._cmd_engage,
@@ -409,6 +413,110 @@ class StealthAutoloader:
             self.gcode.register_command(name, fn, desc=desc)
 
     # ── Command handlers ──────────────────────────────────────────────────
+
+    def _cmd_encoder_query(self, gcmd):
+        """
+        SA_ENCODER_QUERY              — snapshot of all 6 encoders
+        SA_ENCODER_QUERY TOOL=N       — snapshot of one encoder
+        SA_ENCODER_QUERY RESET=1      — zero all/one encoder first, then print
+        SA_ENCODER_QUERY TOOL=N RESET=1
+        """
+        tool  = gcmd.get_int('TOOL', -1)           # -1 = all paths
+        reset = gcmd.get_int('RESET', 0)
+
+        paths = [tool] if tool >= 0 else list(range(self.num_paths))
+
+        if reset:
+            for i in paths:
+                try:
+                    self._encoder(i).reset_distance()
+                except Exception:
+                    pass
+
+        lines = ["SA encoder snapshot%s%s:"
+                 % (" (path %d)" % tool if tool >= 0 else " (all paths)",
+                    " — counters zeroed first" if reset else ""),
+                 "  Path  Distance    mm/pulse  Entry"]
+        for i in paths:
+            dist  = self._encoder_distance(i)
+            mpp   = self._encoder_mm_per_pulse(i)
+            entry = "FILAMENT" if self._entry_sensor_active(i) else "empty"
+            dist_s = ("%.3fmm" % dist) if dist is not None else "n/a"
+            mpp_s  = ("%.4f"   % mpp)  if mpp  is not None else "n/a"
+            marker = "  ◄ active" if i == self.current_path else ""
+            lines.append("  [%d]   %-10s  %-8s  %s%s"
+                         % (i, dist_s, mpp_s, entry, marker))
+        gcmd.respond_info("\n".join(lines))
+
+    def _cmd_encoder_watch(self, gcmd):
+        """
+        SA_ENCODER_WATCH                        — watch all paths, 30s, 0.5s interval
+        SA_ENCODER_WATCH TOOL=N                 — highlight one path in output
+        SA_ENCODER_WATCH DURATION=60 INTERVAL=1 — custom timing
+        SA_ENCODER_WATCH TOOL=2 DURATION=10
+
+        Prints a line every INTERVAL seconds showing the delta movement on each
+        encoder since the previous tick. Move filament by hand (or run a load)
+        to confirm which encoder responds to each path.
+        Any path with movement > 0.01mm is marked with *.
+        """
+        tool     = gcmd.get_int('TOOL',     -1)            # -1 = watch all
+        duration = gcmd.get_float('DURATION',  30.0, minval=1.0,  maxval=300.0)
+        interval = gcmd.get_float('INTERVAL',   0.5, minval=0.05, maxval=10.0)
+
+        paths = list(range(self.num_paths))   # always monitor all, highlight if TOOL given
+
+        # Capture baselines
+        prev = []
+        for i in paths:
+            d = self._encoder_distance(i)
+            prev.append(d if d is not None else 0.0)
+
+        header = "  t(s)  " + "  ".join("[%d]     " % i for i in paths)
+        gcmd.respond_info(
+            "SA encoder watch — %.0fs, every %.2fs. Move filament by hand to test.\n"
+            "Paths marked * are moving. CTRL+C in SSH or ESTOP to abort early.\n%s"
+            % (duration, interval, header))
+
+        end_time  = self.reactor.monotonic() + duration
+        elapsed   = 0.0
+
+        while self.reactor.monotonic() < end_time:
+            self.reactor.pause(self.reactor.monotonic() + interval)
+            elapsed += interval
+
+            cur = []
+            for i in paths:
+                d = self._encoder_distance(i)
+                cur.append(d if d is not None else 0.0)
+
+            cols = []
+            any_motion = False
+            for i in paths:
+                delta = cur[i] - prev[i]
+                moving = abs(delta) > 0.01
+                if moving:
+                    any_motion = True
+                mark = "*" if moving else " "
+                # Highlight the watched TOOL path if specified
+                if tool >= 0 and i == tool:
+                    cols.append("%s[%d]%+.3f" % (mark, i, delta))
+                else:
+                    cols.append("%s[%d]%+.3f" % (mark, i, delta))
+
+            prev = cur
+            line = "%6.1f  %s" % (elapsed, "  ".join(cols))
+            gcmd.respond_info(line)
+
+        # Final totals
+        totals = []
+        for i in paths:
+            d = self._encoder_distance(i)
+            cur_d = d if d is not None else 0.0
+            totals.append("[%d]: %.3fmm" % (i, cur_d))
+        gcmd.respond_info(
+            "SA watch complete. Current encoder distances:\n  " +
+            "  ".join(totals))
 
     def _cmd_home(self, gcmd):
         gcmd.respond_info("SA: Homing selector...")
