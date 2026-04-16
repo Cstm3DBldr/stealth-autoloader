@@ -1,92 +1,108 @@
-# stealth_autoloader.py - Stealth Autoloader main controller
+# stealth_autoloader.py — Stealth Autoloader main controller
 #
-# Single [stealth_autoloader] config section controls the entire system.
+# Single [stealth_autoloader] Klipper config section that instantiates and
+# wires together all subsystems:
+#   sa_motion.py        — motion primitives (servo, selector, drive)
+#   sa_sequences.py     — load / unload sequences
+#   sa_calibration.py   — all calibration routines
 #
 # Motion topology:
 #   Selector motor  : moves drive gear carriage to align with the active path
 #   Drive motor     : single gear that moves filament once path is selected
 #   Engage servo    : clamps drive gear into active path (driven) or releases (neutral)
 #   Per-path encoder: one fixed encoder per path — never moves, always counting
-#                     Klipper's buttons module fires interrupt callbacks for each
-#                     encoder independently; all 6 accumulate simultaneously with
-#                     no data loss (reactor event queue serialises the callbacks)
 #   Entry sensor    : one fixed sensor per path at the roll end
+#   Toolhead sensor : detects filament at the nozzle end of each Bowden tube
+#   Extruder sensor : detects filament arriving at extruder gears per toolhead
 #
-# Encoder strategy
-# ─────────────────
-# Each encoder lives permanently inside its filament path, between the drive
-# engagement point and the extruder. When path N is selected and the servo is
-# engaged, only encoder N is in the active filament line. Pulses on any other
-# encoder during that time indicate ambient vibration, not filament movement.
+# Path states
+# ───────────
+#   unknown  — not confirmed (after boot or explicit reset)
+#   empty    — no filament in path
+#   partial  — filament in tube but not loaded to nozzle
+#   loaded   — filament loaded all the way to nozzle tip
 #
-# Path state
-# ──────────
-#   unknown  – state not confirmed (after boot or explicit reset)
-#   empty    – no filament in path (entry sensor off, or confirmed by unload)
-#   partial  – filament is in the tube but not loaded to the nozzle
-#   loaded   – filament loaded all the way to the nozzle tip
-#
-# The entry sensor provides real-time "filament present at roll end" status.
-# The path state tracks "loaded to nozzle" status and persists across moves.
-#
-# GCode commands (all registered by Python — not in macros):
-#   SA_HOME                                 Home selector motor to endstop
-#   SA_SELECT TOOL=N                        Position selector to path N (neutral)
-#   SA_ENGAGE                               Engage drive servo
-#   SA_DISENGAGE                            Disengage drive servo (neutral)
-#   SA_LOAD   TOOL=N                        Full load sequence for path N
-#   SA_UNLOAD TOOL=N                        Full unload sequence for path N
-#   SA_STATUS                               Print all path states + encoder distances
-#   SA_BUZZ_DRIVE                           Test drive motor
-#   SA_BUZZ_SELECTOR                        Test selector motor
-#   SA_CALIBRATE_ENCODER TOOL=N [DIST=100]  Measure mm_per_pulse for path N encoder
-#   SA_CALIBRATE_SELECTOR TOOL=N            Print current selector position for config
-#   SA_SET_SELECTOR_HOME                    Zero selector at current location
-#   SA_SET_STATE TOOL=N STATE=<state>       Manually override path state
+# GCode commands registered here:
+#   SA_HOME
+#   SA_SELECT     TOOL=N
+#   SA_ENGAGE
+#   SA_DISENGAGE
+#   SA_LOAD       TOOL=N
+#   SA_UNLOAD     TOOL=N
+#   SA_STATUS
+#   SA_BUZZ_DRIVE      [DISTANCE SPEED REPS]
+#   SA_BUZZ_SELECTOR   [DISTANCE SPEED REPS]
+#   SA_CALIBRATE_SELECTOR          (automated, no TOOL param)
+#   SA_CALIBRATE_DRIVE
+#   SA_CALIBRATE_ENCODER  TOOL=N
+#   SA_CALIBRATE_BOWDEN   TOOL=N
+#   SA_ENCODER_QUERY   [TOOL RESET]
+#   SA_ENCODER_WATCH   [TOOL DURATION INTERVAL]
+#   SA_SET_STATE  TOOL=N STATE=x
+#   SA_RESPOND    VALUE=x
+
+import sys, os as _os
+_extras_dir = _os.path.dirname(_os.path.abspath(__file__))
+if _extras_dir not in sys.path:
+    sys.path.insert(0, _extras_dir)
 
 import logging
+from sa_motion      import SAMotion
+from sa_sequences   import SASequences
+from sa_calibration import SACalibration
+
+# ══════════════════════════════════════════════════════════════════════════════
+# StealthAutoloader
+# ══════════════════════════════════════════════════════════════════════════════
 
 class StealthAutoloader:
 
-    # ── Path states ───────────────────────────────────────────────────────
+    # ── Path states ───────────────────────────────────────────────────────────
     STATE_UNKNOWN = 'unknown'
     STATE_EMPTY   = 'empty'
     STATE_PARTIAL = 'partial'
     STATE_LOADED  = 'loaded'
 
     def __init__(self, config):
-        self.printer  = config.get_printer()
-        self.gcode    = self.printer.lookup_object('gcode')
-        self.reactor  = self.printer.get_reactor()
+        self.printer = config.get_printer()
+        self.gcode   = self.printer.lookup_object('gcode')
+        self.reactor = self.printer.get_reactor()
 
-        # ── Shared motion hardware names ──────────────────────────────────
+        # ── Shared motion hardware names ──────────────────────────────────────
         self.drive_stepper_name    = config.get('drive_stepper')
         self.selector_stepper_name = config.get('selector_stepper')
         self.servo_name            = config.get('servo')
 
-        # ── Servo positions ───────────────────────────────────────────────
+        # ── Servo angles ──────────────────────────────────────────────────────
         self.servo_engaged_angle    = config.getfloat('servo_engaged_angle',    30.0)
         self.servo_disengaged_angle = config.getfloat('servo_disengaged_angle', 160.0)
 
-        # ── Path count ────────────────────────────────────────────────────
+        # ── Path count ────────────────────────────────────────────────────────
         self.num_paths = config.getint('num_paths', 6)
         if not 1 <= self.num_paths <= 32:
             raise config.error("num_paths must be between 1 and 32")
 
-        # ── Per-path config ───────────────────────────────────────────────
-        self._encoder_names      = []
-        self._entry_sensor_names = []
-        self._selector_positions = []
-        self._extruder_names     = []
+        # ── Per-path config ───────────────────────────────────────────────────
+        self._encoder_names         = []
+        self._entry_sensor_names    = []
+        self._toolhead_sensor_names = []
+        self._extruder_sensor_names = []
+        self._selector_positions    = []
+        self._extruder_names        = []
+        self._bowden_lengths        = []
 
         for i in range(self.num_paths):
-            # Each path has its own fixed encoder
-            default_enc = 'sa_encoder %d' % i
             self._encoder_names.append(
-                config.get('encoder_%d' % i, default_enc))
+                config.get('encoder_%d' % i, 'sa_encoder %d' % i))
 
             self._entry_sensor_names.append(
                 config.get('entry_sensor_%d' % i, None))
+
+            self._toolhead_sensor_names.append(
+                config.get('toolhead_sensor_%d' % i, None))
+
+            self._extruder_sensor_names.append(
+                config.get('extruder_sensor_%d' % i, None))
 
             self._selector_positions.append(
                 config.getfloat('selector_position_%d' % i, float(i) * 21.0))
@@ -95,340 +111,270 @@ class StealthAutoloader:
             self._extruder_names.append(
                 config.get('extruder_%d' % i, default_ext))
 
-        # ── Motion parameters ─────────────────────────────────────────────
-        self.tube_length         = config.getfloat('tube_length',           800.0)
-        self.nozzle_distance     = config.getfloat('nozzle_distance',        50.0)
-        self.purge_length        = config.getfloat('purge_length',           30.0)
-        self.load_temperature    = config.getfloat('load_temperature',      200.0)
-        self.engage_max_distance = config.getfloat('engage_max_distance',    60.0)
-        self.slip_tolerance      = config.getfloat('slip_tolerance',         15.0)
-        self.feed_speed          = config.getfloat('feed_speed',             50.0)
-        self.feed_step_size      = config.getfloat('feed_step_size',         10.0)
-        self.selector_speed      = config.getfloat('selector_speed',        200.0)
-        self.sensor_delay        = config.getfloat('sensor_polling_delay',    0.2)
-        self.servo_move_delay    = config.getfloat('servo_move_delay',        0.3)
+            self._bowden_lengths.append(
+                config.getfloat('bowden_length_%d' % i, 800.0))
 
-        # ── Runtime state ─────────────────────────────────────────────────
+        # ── Motion parameters ─────────────────────────────────────────────────
+        self.tube_length             = config.getfloat('tube_length',             800.0)
+        self.nozzle_distance         = config.getfloat('nozzle_distance',          50.0)
+        self.purge_length            = config.getfloat('purge_length',             30.0)
+        self.load_temperature        = config.getfloat('load_temperature',        200.0)
+        self.engage_max_distance     = config.getfloat('engage_max_distance',      60.0)
+        self.slip_tolerance          = config.getfloat('slip_tolerance',           15.0)
+        self.feed_speed              = config.getfloat('feed_speed',               50.0)
+        self.feed_step_size          = config.getfloat('feed_step_size',           10.0)
+        self.selector_speed          = config.getfloat('selector_speed',          200.0)
+        self.sensor_delay            = config.getfloat('sensor_polling_delay',      0.2)
+        self.servo_move_delay        = config.getfloat('servo_move_delay',          0.3)
+        self.stepper_timeout         = config.getfloat('stepper_timeout',         120.0)
+        self.selector_max_travel     = config.getfloat('selector_max_travel',     200.0)
+        self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
+        self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
+
+        # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
         self._servo_is_engaged = False
         self.path_states       = [self.STATE_UNKNOWN] * self.num_paths
 
-        # ── Startup ───────────────────────────────────────────────────────
+        # SA_RESPOND mailbox (used by calibration routines)
+        self._pending_response = None
+        self._response_ready   = False
+
+        # ── Subsystems ────────────────────────────────────────────────────────
+        self.motion      = SAMotion(self)
+        self.sequences   = SASequences(self)
+        self.calibration = SACalibration(self)
+
+        # ── Startup ───────────────────────────────────────────────────────────
         self._register_commands()
         self.printer.register_event_handler('klippy:ready', self._on_ready)
-        logging.info("StealthAutoloader: initialized — %d paths, %d encoders",
-                     self.num_paths, self.num_paths)
+        logging.info("StealthAutoloader: initialized — %d paths", self.num_paths)
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # Klipper lifecycle
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _on_ready(self):
         self.reactor.register_callback(self._init_hardware)
 
     def _init_hardware(self, eventtime):
-        try:
-            self._servo_disengage()
-            logging.info("StealthAutoloader: servo disengaged at startup")
-        except Exception as e:
-            logging.warning("StealthAutoloader: servo init failed: %s", e)
+        self.motion.on_ready()
 
-    # ══════════════════════════════════════════════════════════════════════
-    # Hardware accessors
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    # Hardware name helpers
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _drv_name(self):
+        """Short name for drive stepper (last word of drive_stepper_name)."""
+        return self.drive_stepper_name.split()[-1]
+
+    def _sel_name(self):
+        """Short name for selector stepper (last word of selector_stepper_name)."""
+        return self.selector_stepper_name.split()[-1]
+
+    def _servo_short_name(self):
+        """Short name for servo (last word of servo_name)."""
+        return self.servo_name.split()[-1]
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Hardware sensor accessors
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _encoder(self, path):
-        """Return the sa_encoder object for the given path."""
+        """Return the sa_encoder object for *path*."""
         return self.printer.lookup_object(self._encoder_names[path])
 
     def _entry_sensor_active(self, path):
-        """True if filament is present at the entry of path N."""
+        """True if filament is detected at the entry of *path*."""
         name = self._entry_sensor_names[path]
         if not name:
             return False
         try:
-            return self.printer.lookup_object(name).get_status(
-                self.reactor.monotonic())['filament_detected']
+            return bool(self.printer.lookup_object(name).get_status(
+                self.reactor.monotonic())['filament_detected'])
+        except Exception:
+            return False
+
+    def _toolhead_sensor_active(self, path):
+        """True if filament is detected at the toolhead (nozzle end) of *path*."""
+        name = self._toolhead_sensor_names[path]
+        if not name:
+            return False
+        try:
+            return bool(self.printer.lookup_object(name).get_status(
+                self.reactor.monotonic())['filament_detected'])
+        except Exception:
+            return False
+
+    def _extruder_sensor_active(self, path):
+        """True if filament has arrived at the extruder gears for *path*."""
+        name = self._extruder_sensor_names[path]
+        if not name:
+            return False
+        try:
+            return bool(self.printer.lookup_object(name).get_status(
+                self.reactor.monotonic())['filament_detected'])
         except Exception:
             return False
 
     def _encoder_distance(self, path):
-        """Return current encoder distance for path, or None on error."""
+        """Current encoder distance for *path*, or None on error."""
         try:
             return self._encoder(path).get_distance()
         except Exception:
             return None
 
     def _encoder_mm_per_pulse(self, path):
+        """mm_per_pulse for encoder *path*, or None on error."""
         try:
             return self._encoder(path).mm_per_pulse
         except Exception:
             return None
 
-    # ══════════════════════════════════════════════════════════════════════
-    # Servo control
-    # ══════════════════════════════════════════════════════════════════════
-
-    def _servo_short_name(self):
-        return self.servo_name.split()[-1]
-
-    def _servo_engage(self):
-        sn = self._servo_short_name()
-        self.gcode.run_script_from_command(
-            "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, self.servo_engaged_angle))
-        self.reactor.pause(self.reactor.monotonic() + self.servo_move_delay)
-        # Latching servo — cut PWM after it reaches position.
-        # Latch holds mechanically; no need to keep driving the coil.
-        self.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
-        self._servo_is_engaged = True
-
-    def _servo_disengage(self):
-        sn = self._servo_short_name()
-        self.gcode.run_script_from_command(
-            "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, self.servo_disengaged_angle))
-        self.reactor.pause(self.reactor.monotonic() + self.servo_move_delay)
-        # Latching servo — cut PWM after it reaches position.
-        self.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
-        self._servo_is_engaged = False
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Selector motor
-    # ══════════════════════════════════════════════════════════════════════
-
-    def _sel_name(self):
-        return self.selector_stepper_name.split()[-1]
-
-    def _drv_name(self):
-        return self.drive_stepper_name.split()[-1]
-
-    def _selector_home(self):
-        sn = self._sel_name()
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
-        self.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=-250 SPEED=%.1f STOP_ON_ENDSTOP=1"
-            % (sn, self.selector_speed * 0.5))
-        self.gcode.run_script_from_command("M400")
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
-        self.current_path = -1
-
-    def _selector_move_to(self, position_mm):
-        sn = self._sel_name()
-        self.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=%.3f SPEED=%.1f"
-            % (sn, position_mm, self.selector_speed))
-        self.gcode.run_script_from_command("M400")
-
-    def _select_path(self, path):
-        """Disengage servo, then move selector carriage to path N."""
-        self._servo_disengage()
-        self._selector_move_to(self._selector_positions[path])
-        self.current_path = path
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Drive motor
-    # ══════════════════════════════════════════════════════════════════════
-
-    def _drive_move(self, distance_mm, speed=None):
-        if speed is None:
-            speed = self.feed_speed
-        dn = self._drv_name()
-        self.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=%.3f SPEED=%.1f"
-            % (dn, distance_mm, speed))
-        self.gcode.run_script_from_command("M400")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Encoder helpers
-    # ══════════════════════════════════════════════════════════════════════
-
-    def _motion_threshold(self, path):
-        """Minimum encoder distance that means filament is actually moving."""
-        mpp = self._encoder_mm_per_pulse(path)
-        return (mpp * 3.0) if mpp else 1.5
-
-    def _check_slip(self, gcmd, path, encoder_dist, stepper_dist):
-        if stepper_dist < 50.0:
-            return
-        pct = abs(encoder_dist - stepper_dist) / stepper_dist * 100.0
-        if pct > self.slip_tolerance:
-            gcmd.respond_info(
-                "SA WARNING path %d: slip — stepper=%.1fmm encoder=%.1fmm (%.1f%%)"
-                % (path, stepper_dist, encoder_dist, pct))
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Load sequence
-    # ══════════════════════════════════════════════════════════════════════
-
-    def do_load(self, gcmd, path):
-        enc = self._encoder(path)
-
-        gcmd.respond_info("SA: === LOAD path %d ===" % path)
-
-        # Entry sensor check
-        if not self._entry_sensor_active(path):
-            gcmd.respond_info(
-                "SA: ERROR — no filament at entry of path %d. "
-                "Insert filament roll and retry." % path)
-            return
-
-        # Position selector, engage drive
-        gcmd.respond_info("SA: Selecting path %d (selector → %.1fmm)..."
-                          % (path, self._selector_positions[path]))
-        self._select_path(path)
-        self._servo_engage()
-
-        # Prepare this path's encoder
-        enc.set_direction(forward=True)
-        enc.reset_distance()
-
-        # ── Phase 1: Engage ───────────────────────────────────────────────
-        gcmd.respond_info("SA: Phase 1 — engaging filament with drive gear...")
-        driven    = 0.0
-        threshold = self._motion_threshold(path)
-
-        while enc.get_distance() < threshold and driven < self.engage_max_distance:
-            self._drive_move(self.feed_step_size)
-            driven += self.feed_step_size
-            self.reactor.pause(self.reactor.monotonic() + self.sensor_delay)
-
-        if enc.get_distance() < threshold:
-            self._servo_disengage()
-            gcmd.respond_info(
-                "SA: ERROR — encoder %d saw no motion after %.0fmm. "
-                "Check filament is past the drive gear engagement point."
-                % (path, driven))
-            return
-
-        gcmd.respond_info("SA: Encoder %d engaged — %.2fmm measured, feeding to extruder..."
-                          % (path, enc.get_distance()))
-
-        # ── Phase 2: Feed through tube ────────────────────────────────────
-        driven_total = driven
-        while enc.get_distance() < self.tube_length:
-            self._drive_move(self.feed_step_size)
-            driven_total += self.feed_step_size
-            self.reactor.pause(self.reactor.monotonic() + self.sensor_delay)
-            self._check_slip(gcmd, path, enc.get_distance(), driven_total)
-
-        gcmd.respond_info(
-            "SA: Path %d — filament at extruder. "
-            "Stepper=%.1fmm  Encoder=%.1fmm"
-            % (path, driven_total, enc.get_distance()))
-
-        # Release drive — extruder takes over
-        self._servo_disengage()
-        self.path_states[path] = self.STATE_PARTIAL
-
-        # ── Phase 3: Heat and extrude to nozzle ───────────────────────────
-        extruder = self._extruder_names[path]
-        gcmd.respond_info("SA: Heating %s to %.0f°C..." % (extruder, self.load_temperature))
-        self.gcode.run_script_from_command(
-            "TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.0f" % (extruder, self.load_temperature))
-
-        gcmd.respond_info("SA: Extruding to nozzle tip (%.1fmm)..." % self.nozzle_distance)
-        self.gcode.run_script_from_command("M83")
-        self.gcode.run_script_from_command("G1 E%.2f F300" % self.nozzle_distance)
-        self.gcode.run_script_from_command("M400")
-
-        # ── Phase 4: Purge ────────────────────────────────────────────────
-        gcmd.respond_info("SA: Purging (%.1fmm)..." % self.purge_length)
-        self.gcode.run_script_from_command("G1 E%.2f F300" % self.purge_length)
-        self.gcode.run_script_from_command("M400")
-
-        self.gcode.run_script_from_command("_CLEAN_NOZZLE")
-        self.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
-
-        self.path_states[path] = self.STATE_LOADED
-        gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
-
-    # ══════════════════════════════════════════════════════════════════════
-    # Unload sequence
-    # ══════════════════════════════════════════════════════════════════════
-
-    def do_unload(self, gcmd, path):
-        enc = self._encoder(path)
-
-        gcmd.respond_info("SA: === UNLOAD path %d ===" % path)
-
-        # Retract from nozzle tip
-        retract = self.nozzle_distance + self.purge_length
-        gcmd.respond_info("SA: Retracting %.1fmm from nozzle..." % retract)
-        self.gcode.run_script_from_command("M83")
-        self.gcode.run_script_from_command("G1 E-%.2f F300" % retract)
-        self.gcode.run_script_from_command("M400")
-        self.path_states[path] = self.STATE_PARTIAL
-
-        # Select path, engage drive in reverse
-        gcmd.respond_info("SA: Selecting path %d and pulling filament back to entry..."
-                          % path)
-        self._select_path(path)
-        self._servo_engage()
-
-        enc.set_direction(forward=False)
-        enc.reset_distance()
-
-        while self._entry_sensor_active(path):
-            self._drive_move(-self.feed_step_size)
-            self.reactor.pause(self.reactor.monotonic() + self.sensor_delay)
-
-        self._servo_disengage()
-        self.path_states[path] = self.STATE_EMPTY
-        gcmd.respond_info(
-            "SA: === UNLOAD COMPLETE — path %d (%.1fmm retracted) ==="
-            % (path, abs(enc.get_distance())))
-
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # GCode command registration
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _register_commands(self):
-        for name, fn, desc in [
-            ('SA_HOME',               self._cmd_home,
-             "Home selector motor to endstop, zero position"),
-            ('SA_ENCODER_QUERY',      self._cmd_encoder_query,
-             "Snapshot of all encoder distances. [TOOL=N] for one path. [RESET=1] to zero first."),
-            ('SA_ENCODER_WATCH',      self._cmd_encoder_watch,
-             "Live encoder delta stream. [TOOL=N] highlights one path. [DURATION=30] [INTERVAL=0.5]"),
-            ('SA_SELECT',             self._cmd_select,
-             "Position selector to path N. TOOL=N"),
-            ('SA_ENGAGE',             self._cmd_engage,
-             "Engage drive servo (grip filament in selected path)"),
-            ('SA_DISENGAGE',          self._cmd_disengage,
+        cmds = [
+            ('SA_HOME',
+             self._cmd_home,
+             "Home selector to endstop (double-touch)"),
+            ('SA_SELECT',
+             self._cmd_select,
+             "Position selector to path N (no servo change). TOOL=N"),
+            ('SA_ENGAGE',
+             self._cmd_engage,
+             "Engage drive servo — grip filament in selected path"),
+            ('SA_DISENGAGE',
+             self._cmd_disengage,
              "Disengage drive servo — path returns to neutral"),
-            ('SA_LOAD',               self._cmd_load,
+            ('SA_LOAD',
+             self._cmd_load,
              "Full load sequence. TOOL=N"),
-            ('SA_UNLOAD',             self._cmd_unload,
+            ('SA_UNLOAD',
+             self._cmd_unload,
              "Full unload sequence. TOOL=N"),
-            ('SA_STATUS',             self._cmd_status,
-             "Print status for all paths including encoder and entry sensor"),
-            ('SA_BUZZ_DRIVE',         self._cmd_buzz_drive,
-             "Test drive motor — confirm motor moves"),
-            ('SA_BUZZ_SELECTOR',      self._cmd_buzz_selector,
-             "Test selector motor — confirm motor moves"),
-            ('SA_CALIBRATE_ENCODER',  self._cmd_calibrate_encoder,
-             "Calibrate encoder for path N. TOOL=N [DISTANCE=100]"),
-            ('SA_CALIBRATE_SELECTOR', self._cmd_calibrate_selector,
-             "Print current selector position for TOOL=N config entry"),
-            ('SA_SET_SELECTOR_HOME',  self._cmd_set_selector_home,
-             "Zero selector position at current location"),
-            ('SA_SET_STATE',          self._cmd_set_state,
+            ('SA_STATUS',
+             self._cmd_status,
+             "Print status for all paths including encoders and sensors"),
+            ('SA_BUZZ_DRIVE',
+             self._cmd_buzz_drive,
+             "Test drive motor. [DISTANCE=5] [SPEED=10] [REPS=3]"),
+            ('SA_BUZZ_SELECTOR',
+             self._cmd_buzz_selector,
+             "Test selector motor. [DISTANCE=10] [SPEED=50] [REPS=3]"),
+            ('SA_CALIBRATE_SELECTOR',
+             self._cmd_calibrate_selector,
+             "Automated selector position calibration (interactive)"),
+            ('SA_CALIBRATE_DRIVE',
+             self._cmd_calibrate_drive,
+             "Interactive drive motor rotation_distance calibration"),
+            ('SA_CALIBRATE_ENCODER',
+             self._cmd_calibrate_encoder,
+             "Interactive encoder mm_per_pulse calibration. TOOL=N"),
+            ('SA_CALIBRATE_BOWDEN',
+             self._cmd_calibrate_bowden,
+             "Guided Bowden tube length calibration. TOOL=N"),
+            ('SA_ENCODER_QUERY',
+             self._cmd_encoder_query,
+             "Snapshot all encoder distances. [TOOL=N] [RESET=1]"),
+            ('SA_ENCODER_WATCH',
+             self._cmd_encoder_watch,
+             "Live encoder delta stream. [TOOL=N] [DURATION=30] [INTERVAL=0.5]"),
+            ('SA_SET_STATE',
+             self._cmd_set_state,
              "Override path state. TOOL=N STATE=loaded/empty/partial/unknown"),
-        ]:
+            ('SA_RESPOND',
+             self._cmd_respond,
+             "Send a value back to a waiting calibration routine. VALUE=x"),
+        ]
+        for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
 
-    # ── Command handlers ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # Command handlers — motion
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _cmd_home(self, gcmd):
+        gcmd.respond_info("SA: Homing selector...")
+        self.motion.selector_home()
+        gcmd.respond_info("SA: Selector homed — position 0.0mm.")
+
+    def _cmd_select(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.motion.servo_disengage()
+        self.motion.selector_move_to(self._selector_positions[path])
+        self.current_path = path
+        gcmd.respond_info(
+            "SA: Path %d selected (%.3fmm from home)."
+            % (path, self._selector_positions[path]))
+
+    def _cmd_engage(self, gcmd):
+        self.motion.servo_engage()
+        gcmd.respond_info("SA: Drive engaged (%.1f°)." % self.servo_engaged_angle)
+
+    def _cmd_disengage(self, gcmd):
+        self.motion.servo_disengage()
+        gcmd.respond_info(
+            "SA: Drive disengaged — neutral (%.1f°)." % self.servo_disengaged_angle)
+
+    def _cmd_load(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.sequences.do_load(gcmd, path)
+
+    def _cmd_unload(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.sequences.do_unload(gcmd, path)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Command handlers — status and diagnostics
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _cmd_status(self, gcmd):
+        sel_str = ("path %d" % self.current_path
+                   if self.current_path >= 0 else "none / unhomed")
+        lines = [
+            "╔══ Stealth Autoloader Status ══════════════════════════════╗",
+            "  Paths    : %d configured" % self.num_paths,
+            "  Selector : %s" % sel_str,
+            "  Drive    : %s" % ("ENGAGED" if self._servo_is_engaged else "neutral"),
+            "╠══ [N] Entry   TH    Ext  State      Encoder  mm/pulse ═══╣",
+        ]
+        for i in range(self.num_paths):
+            entry   = self._entry_sensor_active(i)
+            toolhd  = self._toolhead_sensor_active(i)
+            extsens = self._extruder_sensor_active(i)
+            state   = self.path_states[i]
+            dist    = self._encoder_distance(i)
+            mpp     = self._encoder_mm_per_pulse(i)
+
+            if state == self.STATE_LOADED:
+                state_str = "loaded   "
+            elif state == self.STATE_PARTIAL:
+                state_str = "partial  "
+            elif state == self.STATE_EMPTY:
+                state_str = "empty    "
+            else:
+                state_str = "unknown  "
+
+            entry_str = "FIL" if entry   else "---"
+            th_str    = "FIL" if toolhd  else "---"
+            ext_str   = "FIL" if extsens else "---"
+            dist_str  = ("%.2fmm" % dist) if dist is not None else "n/a   "
+            mpp_str   = ("%.4f"   % mpp)  if mpp  is not None else "n/a"
+            marker    = " <" if i == self.current_path else ""
+
+            lines.append(
+                "  [%d] %-5s  %-5s %-5s %-10s %-8s %s%s"
+                % (i, entry_str, th_str, ext_str, state_str, dist_str, mpp_str, marker))
+
+        lines.append("╚══════════════════════════════════════════════════════════╝")
+        gcmd.respond_info("\n".join(lines))
 
     def _cmd_encoder_query(self, gcmd):
-        """
-        SA_ENCODER_QUERY              — snapshot of all 6 encoders
-        SA_ENCODER_QUERY TOOL=N       — snapshot of one encoder
-        SA_ENCODER_QUERY RESET=1      — zero all/one encoder first, then print
-        SA_ENCODER_QUERY TOOL=N RESET=1
-        """
-        tool  = gcmd.get_int('TOOL', -1)           # -1 = all paths
+        tool  = gcmd.get_int('TOOL', -1)
         reset = gcmd.get_int('RESET', 0)
-
         paths = [tool] if tool >= 0 else list(range(self.num_paths))
 
         if reset:
@@ -438,38 +384,32 @@ class StealthAutoloader:
                 except Exception:
                     pass
 
-        lines = ["SA encoder snapshot%s%s:"
-                 % (" (path %d)" % tool if tool >= 0 else " (all paths)",
-                    " — counters zeroed first" if reset else ""),
-                 "  Path  Distance    mm/pulse  Entry"]
+        lines = [
+            "SA encoder snapshot%s%s:" % (
+                (" (path %d)" % tool) if tool >= 0 else " (all paths)",
+                " — counters zeroed" if reset else ""),
+            "  Path  Distance    mm/pulse  Entry   TH      Extruder",
+        ]
         for i in paths:
-            dist  = self._encoder_distance(i)
-            mpp   = self._encoder_mm_per_pulse(i)
-            entry = "FILAMENT" if self._entry_sensor_active(i) else "empty"
-            dist_s = ("%.3fmm" % dist) if dist is not None else "n/a"
-            mpp_s  = ("%.4f"   % mpp)  if mpp  is not None else "n/a"
-            marker = "  ◄ active" if i == self.current_path else ""
-            lines.append("  [%d]   %-10s  %-8s  %s%s"
-                         % (i, dist_s, mpp_s, entry, marker))
+            dist    = self._encoder_distance(i)
+            mpp     = self._encoder_mm_per_pulse(i)
+            entry   = "FILAMENT" if self._entry_sensor_active(i)   else "empty"
+            th      = "FILAMENT" if self._toolhead_sensor_active(i) else "empty"
+            ext     = "FILAMENT" if self._extruder_sensor_active(i) else "empty"
+            dist_s  = ("%.3fmm" % dist) if dist is not None else "n/a"
+            mpp_s   = ("%.4f"   % mpp)  if mpp  is not None else "n/a"
+            marker  = "  <- active" if i == self.current_path else ""
+            lines.append(
+                "  [%d]   %-10s  %-8s  %-8s  %-8s  %s%s"
+                % (i, dist_s, mpp_s, entry, th, ext, marker))
         gcmd.respond_info("\n".join(lines))
 
     def _cmd_encoder_watch(self, gcmd):
-        """
-        SA_ENCODER_WATCH                        — watch all paths, 30s, 0.5s interval
-        SA_ENCODER_WATCH TOOL=N                 — highlight one path in output
-        SA_ENCODER_WATCH DURATION=60 INTERVAL=1 — custom timing
-        SA_ENCODER_WATCH TOOL=2 DURATION=10
-
-        Prints a line every INTERVAL seconds showing the delta movement on each
-        encoder since the previous tick. Move filament by hand (or run a load)
-        to confirm which encoder responds to each path.
-        Any path with movement > 0.01mm is marked with *.
-        """
-        tool     = gcmd.get_int('TOOL',     -1)            # -1 = watch all
+        tool     = gcmd.get_int(  'TOOL',      -1)
         duration = gcmd.get_float('DURATION',  30.0, minval=1.0,  maxval=300.0)
         interval = gcmd.get_float('INTERVAL',   0.5, minval=0.05, maxval=10.0)
 
-        paths = list(range(self.num_paths))   # always monitor all, highlight if TOOL given
+        paths = list(range(self.num_paths))
 
         # Capture baselines
         prev = []
@@ -479,130 +419,44 @@ class StealthAutoloader:
 
         header = "  t(s)  " + "  ".join("[%d]     " % i for i in paths)
         gcmd.respond_info(
-            "SA encoder watch — %.0fs, every %.2fs. Move filament by hand to test.\n"
-            "Paths marked * are moving. CTRL+C in SSH or ESTOP to abort early.\n%s"
+            "SA encoder watch — %.0fs, every %.2fs. Move filament to test.\n%s"
             % (duration, interval, header))
 
-        end_time  = self.reactor.monotonic() + duration
-        elapsed   = 0.0
+        end_time = self.reactor.monotonic() + duration
+        elapsed  = 0.0
 
         while self.reactor.monotonic() < end_time:
             self.reactor.pause(self.reactor.monotonic() + interval)
             elapsed += interval
-
-            cur = []
+            cur  = []
             for i in paths:
                 d = self._encoder_distance(i)
                 cur.append(d if d is not None else 0.0)
-
             cols = []
-            any_motion = False
             for i in paths:
-                delta = cur[i] - prev[i]
+                delta  = cur[i] - prev[i]
                 moving = abs(delta) > 0.01
-                if moving:
-                    any_motion = True
-                mark = "*" if moving else " "
-                # Highlight the watched TOOL path if specified
-                if tool >= 0 and i == tool:
-                    cols.append("%s[%d]%+.3f" % (mark, i, delta))
-                else:
-                    cols.append("%s[%d]%+.3f" % (mark, i, delta))
-
+                mark   = "*" if moving else " "
+                cols.append("%s[%d]%+.3f" % (mark, i, delta))
             prev = cur
-            line = "%6.1f  %s" % (elapsed, "  ".join(cols))
-            gcmd.respond_info(line)
+            gcmd.respond_info("%6.1f  %s" % (elapsed, "  ".join(cols)))
 
-        # Final totals
         totals = []
         for i in paths:
             d = self._encoder_distance(i)
-            cur_d = d if d is not None else 0.0
-            totals.append("[%d]: %.3fmm" % (i, cur_d))
+            totals.append("[%d]: %.3fmm" % (i, d if d is not None else 0.0))
         gcmd.respond_info(
-            "SA watch complete. Current encoder distances:\n  " +
-            "  ".join(totals))
+            "SA watch complete. Encoder totals:\n  " + "  ".join(totals))
 
-    def _cmd_home(self, gcmd):
-        gcmd.respond_info("SA: Homing selector...")
-        self._selector_home()
-        gcmd.respond_info("SA: Selector homed — position zeroed.")
+    # ══════════════════════════════════════════════════════════════════════════
+    # Command handlers — motor buzz tests
+    # ══════════════════════════════════════════════════════════════════════════
 
-    def _cmd_select(self, gcmd):
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        self._select_path(path)
-        gcmd.respond_info("SA: Path %d selected (%.1fmm from home)."
-                          % (path, self._selector_positions[path]))
-
-    def _cmd_engage(self, gcmd):
-        self._servo_engage()
-        gcmd.respond_info("SA: Drive engaged (%.1f°)." % self.servo_engaged_angle)
-
-    def _cmd_disengage(self, gcmd):
-        self._servo_disengage()
-        gcmd.respond_info("SA: Drive disengaged — neutral (%.1f°)."
-                          % self.servo_disengaged_angle)
-
-    def _cmd_load(self, gcmd):
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        self.do_load(gcmd, path)
-
-    def _cmd_unload(self, gcmd):
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        self.do_unload(gcmd, path)
-
-    def _cmd_status(self, gcmd):
-        # Header
-        sel_str = ("path %d" % self.current_path
-                   if self.current_path >= 0 else "none / unhomed")
-        lines = [
-            "╔══ Stealth Autoloader Status ════════════════════╗",
-            "  Paths    : %d configured" % self.num_paths,
-            "  Selector : %s" % sel_str,
-            "  Drive    : %s" % ("ENGAGED" if self._servo_is_engaged else "neutral"),
-            "╠══ Path  Entry       State      Encoder dist ════╣",
-        ]
-
-        for i in range(self.num_paths):
-            entry      = self._entry_sensor_active(i)
-            state      = self.path_states[i]
-            enc_dist   = self._encoder_distance(i)
-            mpp        = self._encoder_mm_per_pulse(i)
-
-            # Filament presence indicator
-            # entry sensor + loaded state → definitive; entry only → at roll end
-            if state == self.STATE_LOADED:
-                filament_str = "LOADED ✓"
-            elif state == self.STATE_PARTIAL:
-                filament_str = "partial"
-            elif state == self.STATE_EMPTY:
-                filament_str = "empty"
-            elif entry:
-                filament_str = "at entry"
-            else:
-                filament_str = "unknown"
-
-            entry_str  = "FILAMENT" if entry else "empty   "
-            enc_str    = ("%.2fmm" % enc_dist if enc_dist is not None else "n/a")
-            marker     = " ◄" if i == self.current_path else ""
-            lines.append("  [%d]   %-8s  %-10s  %-8s  %s%s"
-                         % (i, entry_str, filament_str, enc_str,
-                            ("mpp=%.4f" % mpp if mpp else ""), marker))
-
-        lines.append("╚════════════════════════════════════════════════╝")
-        gcmd.respond_info("\n".join(lines))
-
-    def _buzz_stepper(self, gcmd, stepper_name, distance, speed, reps=3):
-        """
-        Generic buzz routine for any manual_stepper.
-        Enables the stepper, zeroes its position counter, then oscillates
-        ±distance mm `reps` times at `speed` mm/s, then disables.
-        Each move is waited on with M400 so motion is sequential and visible.
-        """
-        sn = stepper_name
+    def _buzz_stepper(self, gcmd, stepper_short_name, distance, speed, reps):
+        sn = stepper_short_name
         gcmd.respond_info(
-            "SA: Buzzing %s — ±%.0fmm × %d reps @ %.0fmm/s" % (sn, distance, reps, speed))
-        # Enable and zero position so moves are predictable
+            "SA: Buzzing %s — +/-%.0fmm x %d reps @ %.0fmm/s"
+            % (sn, distance, reps, speed))
         self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         for _ in range(reps):
@@ -627,65 +481,25 @@ class StealthAutoloader:
         reps  = gcmd.get_int(  'REPS',        3, minval=1,   maxval=10)
         self._buzz_stepper(gcmd, self._sel_name(), dist, speed, reps)
 
-    def _cmd_calibrate_encoder(self, gcmd):
-        path     = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        distance = gcmd.get_float('DISTANCE', 100.0, minval=10.0)
-        enc      = self._encoder(path)
-        dn       = self._drv_name()
-
-        gcmd.respond_info(
-            "SA: Calibrating encoder %d — commanding %.1fmm drive.\n"
-            "Ensure filament is loaded past drive gear and selector is on path %d."
-            % (path, distance, path))
-
-        # Select path and engage
-        self._select_path(path)
-        self._servo_engage()
-
-        enc.set_direction(forward=True)
-        enc.reset_distance()
-
-        self.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=%.1f SPEED=%.1f"
-            % (dn, distance, self.feed_speed * 0.5))
-        self.gcode.run_script_from_command("M400")
-
-        self._servo_disengage()
-
-        enc_dist = enc.get_distance()
-        if enc_dist < 1.0:
-            gcmd.respond_info(
-                "SA: ERROR — encoder %d measured < 1mm. "
-                "Check encoder wiring and that filament is gripped." % path)
-            return
-
-        suggested = enc.mm_per_pulse * (distance / enc_dist)
-        gcmd.respond_info(
-            "SA: Encoder %d calibration result:\n"
-            "  Stepper commanded : %.2fmm\n"
-            "  Encoder measured  : %.2fmm\n"
-            "  Current  mm_per_pulse : %.4f\n"
-            "  Suggested mm_per_pulse: %.4f\n"
-            "\nUpdate [sa_encoder %d].mm_per_pulse in hardware.cfg and restart."
-            % (path, distance, enc_dist, enc.mm_per_pulse, suggested, path))
+    # ══════════════════════════════════════════════════════════════════════════
+    # Command handlers — calibration (delegate to SACalibration)
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _cmd_calibrate_selector(self, gcmd):
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        sn   = self._sel_name()
-        gcmd.respond_info(
-            "SA: Selector calibration for path %d.\n"
-            "1. Jog selector to path %d position:\n"
-            "     MANUAL_STEPPER STEPPER=%s ENABLE=1 MOVE=<mm> SPEED=30\n"
-            "2. Run: SA_SET_SELECTOR_HOME  (if this is path 0, zeros here)\n"
-            "   OR note the current position and update selector_position_%d\n"
-            "   in [stealth_autoloader] in hardware.cfg."
-            % (path, path, sn, path))
+        self.calibration.calibrate_selector_auto(gcmd)
 
-    def _cmd_set_selector_home(self, gcmd):
-        sn = self._sel_name()
-        self.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
-        self.current_path = -1
-        gcmd.respond_info("SA: Selector position zeroed at current location.")
+    def _cmd_calibrate_drive(self, gcmd):
+        self.calibration.calibrate_drive(gcmd)
+
+    def _cmd_calibrate_encoder(self, gcmd):
+        self.calibration.calibrate_encoder(gcmd)
+
+    def _cmd_calibrate_bowden(self, gcmd):
+        self.calibration.calibrate_bowden(gcmd)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Command handlers — state management
+    # ══════════════════════════════════════════════════════════════════════════
 
     def _cmd_set_state(self, gcmd):
         path  = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
@@ -693,39 +507,57 @@ class StealthAutoloader:
         valid = [self.STATE_UNKNOWN, self.STATE_EMPTY,
                  self.STATE_PARTIAL, self.STATE_LOADED]
         if state not in valid:
-            gcmd.respond_info("SA: Invalid STATE '%s'. Valid: %s" % (state, valid))
+            gcmd.respond_info(
+                "SA: Invalid STATE '%s'. Valid values: %s" % (state, ', '.join(valid)))
             return
         self.path_states[path] = state
-        gcmd.respond_info("SA: Path %d state → '%s'." % (path, state))
+        gcmd.respond_info("SA: Path %d state set to '%s'." % (path, state))
 
-    # ══════════════════════════════════════════════════════════════════════
+    def _cmd_respond(self, gcmd):
+        """SA_RESPOND VALUE=x — deliver a console response to a waiting calibration routine."""
+        value = gcmd.get('VALUE')
+        self._pending_response = value
+        self._response_ready   = True
+        gcmd.respond_info("SA: Response received: '%s'" % value)
+
+    # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
-    # ══════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
 
     def get_status(self, eventtime):
-        enc_distances   = []
-        entry_filament  = []
-        filament_loaded = []
+        enc_distances    = []
+        entry_filament   = []
+        toolhead_filament = []
+        extruder_filament = []
+        filament_loaded  = []
 
         for i in range(self.num_paths):
             d = self._encoder_distance(i)
             enc_distances.append(round(d, 2) if d is not None else -1.0)
-
-            has_entry = self._entry_sensor_active(i)
-            entry_filament.append(has_entry)
-
-            # Simple boolean: "is filament loaded to nozzle on this path?"
+            entry_filament.append(self._entry_sensor_active(i))
+            toolhead_filament.append(self._toolhead_sensor_active(i))
+            extruder_filament.append(self._extruder_sensor_active(i))
             filament_loaded.append(self.path_states[i] == self.STATE_LOADED)
 
+        sel_pos = (self._selector_positions[self.current_path]
+                   if self.current_path >= 0 else -1.0)
+
         return {
-            'num_paths'      : self.num_paths,
-            'current_path'   : self.current_path,
-            'servo_engaged'  : self._servo_is_engaged,
-            'path_states'    : list(self.path_states),
-            'encoder_dist'   : enc_distances,
-            'entry_filament' : entry_filament,      # True = filament present at roll end
-            'filament_loaded': filament_loaded,     # True = loaded all the way to nozzle
+            'num_paths'         : self.num_paths,
+            'current_path'      : self.current_path,
+            'servo_engaged'     : self._servo_is_engaged,
+            'path_states'       : list(self.path_states),
+            'encoder_dist'      : enc_distances,
+            'entry_filament'    : entry_filament,
+            'toolhead_filament' : toolhead_filament,
+            'extruder_filament' : extruder_filament,
+            'filament_loaded'   : filament_loaded,
+            'selector_position' : sel_pos,
         }
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Klipper entry point
+    # ══════════════════════════════════════════════════════════════════════════
 
     @staticmethod
     def load_config(config):
