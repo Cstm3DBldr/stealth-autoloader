@@ -133,11 +133,10 @@ class SAMotion:
         Sequence
         --------
         1. Disengage servo (never home with filament gripped).
-        2. Enable stepper, set a positive reference position so that MOVE toward
-           the endstop is always in the negative direction.
+        2. Enable stepper, cancel any pending idle timeout.
         3. Fast approach at selector_homing_speed — STOP_ON_ENDSTOP=1.
         4. SET_POSITION=0 immediately after first touch (establishes zero).
-        5. Back off selector_homing_backoff mm (positive move, endstop clears).
+        5. Back off selector_homing_backoff mm (negative move, endstop clears).
         6. Slow re-approach at selector_homing_speed/4 — STOP_ON_ENDSTOP=1.
         7. SET_POSITION=0 at second (accurate) touch.
         8. Arm idle timeout.
@@ -150,6 +149,9 @@ class SAMotion:
 
         # Safety: release drive gear first
         self.servo_disengage()
+
+        # Cancel any pending idle timeout before starting
+        self._cancel_timeout(sn)
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         # Start from 0; MOVE=-(mt+20) guarantees we cross the endstop wherever it is
