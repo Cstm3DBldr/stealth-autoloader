@@ -130,6 +130,10 @@ class StealthAutoloader:
         self.selector_max_travel     = config.getfloat('selector_max_travel',     200.0)
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
+        # Sensorless calibration (SA_CALIBRATE_SELECTOR)
+        self.selector_stall_threshold = config.getint(  'selector_stall_threshold',  1)
+        self.selector_stall_current   = config.getfloat('selector_stall_current',    0.3)
+        self.selector_stall_speed     = config.getfloat('selector_stall_speed',     30.0)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1

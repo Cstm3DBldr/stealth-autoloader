@@ -125,52 +125,64 @@ class SAMotion:
     # ══════════════════════════════════════════════════════════════════════════
 
     def selector_home(self):
-        """Double-touch selector homing sequence.
+        """Double-touch selector homing — physical endstop switch only.
 
-        1. Disengage servo (safety — never home with filament gripped).
-        2. Enable stepper, zero position counter.
-        3. Fast approach: move toward endstop at selector_homing_speed; stop on trigger.
-        4. Back off by selector_homing_backoff mm.
-        5. Slow re-approach at selector_homing_speed/4; stop on trigger.
-        6. Zero position after slow touch.
-        7. Arm idle timeout.
-        8. Update owner.current_path = -1 and self._selector_position = 0.0.
-        9. Persist position if save_variables available.
+        Uses SA_SELECTOR_STOP (physical switch).  Does NOT use stallguard.
+        Call SA_CALIBRATE_SELECTOR for one-time sensorless far-end detection.
+
+        Sequence
+        --------
+        1. Disengage servo (never home with filament gripped).
+        2. Enable stepper, set a positive reference position so that MOVE toward
+           the endstop is always in the negative direction.
+        3. Fast approach at selector_homing_speed — STOP_ON_ENDSTOP=1.
+        4. SET_POSITION=0 immediately after first touch (establishes zero).
+        5. Back off selector_homing_backoff mm (positive move, endstop clears).
+        6. Slow re-approach at selector_homing_speed/4 — STOP_ON_ENDSTOP=1.
+        7. SET_POSITION=0 at second (accurate) touch.
+        8. Arm idle timeout.
         """
         owner = self.owner
-        sn = self._owner_sel_name()
-        hs = owner.selector_homing_speed
-        bo = owner.selector_homing_backoff
+        sn    = self._owner_sel_name()
+        hs    = owner.selector_homing_speed
+        bo    = owner.selector_homing_backoff
+        mt    = owner.selector_max_travel
 
         # Safety: release drive gear first
         self.servo_disengage()
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+        # Start from 0; MOVE=-(mt+20) guarantees we cross the endstop wherever it is
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
-        # Fast approach toward endstop
+        # ── Fast approach ─────────────────────────────────────────────────────
         owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=-300 SPEED=%.1f STOP_ON_ENDSTOP=1" % (sn, hs))
+            "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+            % (sn, mt + 20.0, hs))
         owner.gcode.run_script_from_command("M400")
 
-        # Back off
+        # Zero here — critical so back-off and second approach use a clean reference
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+        # ── Back off ──────────────────────────────────────────────────────────
         owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.3f SPEED=%.1f" % (sn, bo, hs / 2.0))
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, bo, hs))
         owner.gcode.run_script_from_command("M400")
 
-        # Slow re-approach
+        # ── Slow re-approach ─────────────────────────────────────────────────
+        # Move to -(bo*4) — well past position 0 where the endstop lives
         owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.3f SPEED=%.1f STOP_ON_ENDSTOP=1"
-            % (sn, -(bo * 2.0), hs / 4.0))
+            "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+            % (sn, bo * 4.0, hs / 4.0))
         owner.gcode.run_script_from_command("M400")
 
-        # Zero position at endstop
+        # Final zero at accurate second touch
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
         self._arm_timeout(sn)
         owner.current_path = -1
         self._selector_position = 0.0
-        logging.info("SAMotion: selector homed")
+        logging.info("SAMotion: selector homed (double-touch)")
         self.save_position()
 
     def selector_move_to(self, position_mm):
@@ -191,29 +203,6 @@ class SAMotion:
         self._arm_timeout(sn)
         self._selector_position = position_mm
         logging.debug("SAMotion: selector moved to %.3fmm", position_mm)
-
-    def selector_find_far_end(self, gcmd):
-        """Move selector slowly to selector_max_travel to find the mechanical far end.
-
-        Returns the actual distance traveled (always selector_max_travel because
-        MANUAL_STEPPER has no position feedback; the caller checks physical travel).
-        Re-homes after the sweep.
-        """
-        owner = self.owner
-        sn = self._owner_sel_name()
-        max_travel = owner.selector_max_travel
-        speed = owner.selector_homing_speed / 2.0
-
-        self.servo_disengage()
-        self._cancel_timeout(sn)
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, max_travel, speed))
-        owner.gcode.run_script_from_command("M400")
-
-        gcmd.respond_info("SAMotion: selector at far-end (%.0fmm commanded). Returning home..." % max_travel)
-        self.selector_home()
-        return max_travel
 
     # ══════════════════════════════════════════════════════════════════════════
     # Drive motor

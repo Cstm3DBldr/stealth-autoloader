@@ -350,111 +350,201 @@ class SACalibration:
             gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Automated selector calibration
+    # Sensorless selector calibration  (SA_CALIBRATE_SELECTOR)
     # ══════════════════════════════════════════════════════════════════════════
 
     def calibrate_selector_auto(self, gcmd):
-        """SA_CALIBRATE_SELECTOR — automated selector position calibration.
+        """SA_CALIBRATE_SELECTOR — one-time sensorless far-end detection.
 
-        1. Homes the selector (double-touch).
-        2. Moves slowly to the far end (selector_max_travel) and asks the user
-           to confirm or correct the travel distance.
-        3. Auto-calculates evenly-spaced positions for all num_paths paths.
-        4. Saves all selector_position_N values.
+        Uses the TMC5160 stallguard (M1 DIAG pin = PB9) to find the mechanical
+        far-end of the selector travel.  Run this ONCE after initial assembly or
+        any mechanical change.  SA_HOME uses only the physical endstop switch and
+        never runs this logic.
+
+        Flow
+        ----
+        1. Home to physical endstop (double-touch).
+        2. Lower run_current to selector_stall_current so the motor stalls on
+           contact with the hard stop without grinding.
+        3. Enable stallguard output on DIAG1 via SET_TMC_FIELD.
+        4. Sweep in selector_stall_speed mm/s increments.  After each step,
+           check the [gcode_button selector_stall] state.  Stop on first PRESSED.
+        5. Record far-end position, calculate even path spacing.
+        6. Restore normal run_current and disable DIAG1 stall routing.
+        7. Confirm with user, save positions via SAVE_CONFIG.
+
+        Tuning
+        ------
+        If false stall triggers mid-travel:  raise selector_stall_threshold (less sensitive).
+        If it runs past the hard stop:       lower selector_stall_threshold (more sensitive)
+                                             OR lower selector_stall_current.
         """
         owner  = self.owner
         motion = owner.motion
         sn     = owner._sel_name()
 
         gcmd.respond_info(
-            "SA SELECTOR AUTO-CALIBRATION\n"
-            "============================\n"
-            "Will home the selector, then sweep to the far end and calculate\n"
-            "evenly-spaced positions for all %d paths.\n"
+            "SA SELECTOR SENSORLESS CALIBRATION\n"
+            "====================================\n"
+            "ONE-TIME setup — only repeat after mechanical changes.\n"
+            "\n"
+            "The selector will sweep to the far mechanical stop using the TMC5160\n"
+            "stallguard (DIAG1 pin).  When the motor stalls, path positions are\n"
+            "calculated automatically.\n"
             "\n"
             "Requirements:\n"
-            "  - Selector endstop wired and working (test with SA_HOME first).\n"
-            "  - No filament loaded — drive servo must be free to move."
-            % owner.num_paths)
+            "  - SA_HOME must work correctly first (test it before running this).\n"
+            "  - No filament loaded — servo must be free.\n"
+            "  - [gcode_button selector_stall] in hardware.cfg (pin ^!autoloader:SA_SELECTOR_DIAG).\n"
+            "\n"
+            "Tuning if behaviour is wrong:\n"
+            "  Stalls before far end → raise selector_stall_threshold or selector_stall_current\n"
+            "  Overshoots far end    → lower selector_stall_threshold or selector_stall_current\n")
 
-        # ── Step 1: home ──────────────────────────────────────────────────────
-        gcmd.respond_info("SA CAL: Homing selector (double-touch)...")
+        # ── Find and validate the stall button ────────────────────────────────
+        stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
+        if stall_btn is None:
+            raise gcmd.error(
+                "SA CAL: [gcode_button selector_stall] not found in config.\n"
+                "Add to hardware.cfg:\n"
+                "  [gcode_button selector_stall]\n"
+                "  pin: ^!autoloader:SA_SELECTOR_DIAG\n"
+                "  press_gcode:\n"
+                "  release_gcode:")
+
+        if not self._prompt_yes_no(gcmd, "Ready to proceed?"):
+            gcmd.respond_info("SA CAL: Calibration aborted.")
+            return
+
+        # ── Step 1: home to physical endstop ─────────────────────────────────
+        gcmd.respond_info("SA CAL: Homing to physical endstop (double-touch)...")
         motion.selector_home()
-        gcmd.respond_info("SA CAL: Selector homed at position 0.0mm.")
+        gcmd.respond_info("SA CAL: Homed at 0.0mm.")
 
-        # ── Step 2: sweep to far end ──────────────────────────────────────────
-        max_travel = owner.selector_max_travel
-        speed      = owner.selector_homing_speed * 0.5
+        # ── Step 2: configure stallguard ──────────────────────────────────────
+        threshold = owner.selector_stall_threshold
+        stall_current = owner.selector_stall_current
+        stall_speed   = owner.selector_stall_speed
 
         gcmd.respond_info(
-            "SA CAL: Moving carriage to far end (%.0fmm max travel at %.0fmm/s).\n"
-            "Watch the carriage. It will stop after %.0fmm."
-            % (max_travel, speed, max_travel))
+            "SA CAL: Configuring stallguard — SGT=%d, current=%.2fA, speed=%.0fmm/s"
+            % (threshold, stall_current, stall_speed))
+
+        # Set stallguard threshold
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+        # Route stall result to DIAG1 output
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+        # Lower current so the motor stalls on contact, not on inertia
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
+
+        # Brief settle — let driver stabilise at new current before sweeping
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
+        # Verify DIAG pin starts RELEASED (no false stall at rest)
+        status = stall_btn.get_status(owner.reactor.monotonic())
+        if status.get('state') == 'PRESSED':
+            # Restore and abort
+            self._restore_selector_current(gcmd, sn)
+            raise gcmd.error(
+                "SA CAL: selector_stall button is PRESSED before sweep started.\n"
+                "Check DIAG1 wiring or raise selector_stall_threshold.")
+
+        # ── Step 3: sweep toward far end in small steps ───────────────────────
+        gcmd.respond_info(
+            "SA CAL: Sweeping to far end at %.0fmm/s.  Watch the carriage..."
+            % stall_speed)
+
+        step         = 3.0   # mm per increment
+        total_travel = 0.0
+        stall_found  = False
+        max_steps    = int((owner.selector_max_travel + 30.0) / step) + 1
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f"
-            % (sn, max_travel, speed))
-        owner.gcode.run_script_from_command("M400")
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
-        gcmd.respond_info(
-            "SA CAL: Carriage stopped after %.0fmm.\n"
-            "  - If the carriage IS at the last path, enter 'ok'.\n"
-            "  - If it stopped short, measure the actual distance and enter that value."
-            % max_travel)
+        for _ in range(max_steps):
+            total_travel += step
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f"
+                % (sn, total_travel, stall_speed))
+            owner.gcode.run_script_from_command("M400")
 
-        travel_str = self._wait_for_value(
-            gcmd,
-            "Actual travel to last path, or 'ok' if %.0fmm is correct" % max_travel,
-            "ok   or   105.0")
+            # Brief settle so the driver updates SG_RESULT and DIAG pin
+            owner.reactor.pause(owner.reactor.monotonic() + 0.05)
 
-        if travel_str.lower() in ('ok', 'yes'):
-            total_travel = max_travel
-        else:
-            try:
-                total_travel = float(travel_str)
-            except ValueError:
-                raise gcmd.error("SA CAL: Invalid travel distance '%s'" % travel_str)
-            if total_travel <= 0.0:
-                raise gcmd.error("SA CAL: Travel distance must be > 0")
+            status = stall_btn.get_status(owner.reactor.monotonic())
+            if status.get('state') == 'PRESSED':
+                stall_found = True
+                # Step back one increment to get a conservative far-end position
+                far_end = total_travel - step
+                gcmd.respond_info(
+                    "SA CAL: Stall detected at %.1fmm.  Far-end set to %.1fmm."
+                    % (total_travel, far_end))
+                break
 
-        # ── Step 3: calculate positions ───────────────────────────────────────
+        # ── Restore normal driver settings immediately ────────────────────────
+        self._restore_selector_current(gcmd, sn)
+
+        if not stall_found:
+            raise gcmd.error(
+                "SA CAL: No stall detected within %.0fmm.\n"
+                "Check wiring of SA_SELECTOR_DIAG (PB9), or lower\n"
+                "selector_stall_threshold / selector_stall_current."
+                % owner.selector_max_travel)
+
+        # ── Step 4: calculate path positions ─────────────────────────────────
+        # Happy Hare approach: path 0 is exactly at home (0mm), path n-1 is at
+        # far_end.  Positions are distributed evenly across the full usable travel.
         n = owner.num_paths
         if n == 1:
             positions = [0.0]
             spacing   = 0.0
         else:
-            spacing   = total_travel / float(n - 1)
-            positions = [round(i * spacing, 3) for i in range(n)]
+            if far_end < (n - 1) * 5.0:
+                raise gcmd.error(
+                    "SA CAL: Usable travel (%.1fmm) too short for %d paths."
+                    % (far_end, n))
+            spacing   = far_end / float(n - 1)
+            positions = [round(i * spacing, 2) for i in range(n)]
 
         pos_lines = "\n".join(
-            "  Path %d: %.3fmm" % (i, p) for i, p in enumerate(positions))
+            "  Path %d: %.2fmm" % (i, p) for i, p in enumerate(positions))
         gcmd.respond_info(
-            "SA CAL: Calculated positions (%.3fmm spacing):\n%s"
-            % (spacing, pos_lines))
+            "SA CAL: Far end %.1fmm → %d paths, spacing %.2fmm:\n%s"
+            % (far_end, n, spacing, pos_lines))
 
-        if not self._prompt_yes_no(gcmd, "Accept these positions?"):
-            gcmd.respond_info(
-                "SA CAL: Calibration cancelled. "
-                "Adjust selector_max_travel in hardware.cfg and retry.")
+        if not self._prompt_yes_no(gcmd, "Accept these positions and save?"):
+            gcmd.respond_info("SA CAL: Positions NOT saved.  Adjust stall settings and retry.")
             motion.selector_home()
             return
 
-        # ── Step 4: save positions ────────────────────────────────────────────
+        # ── Step 5: save ──────────────────────────────────────────────────────
         for i, pos in enumerate(positions):
             owner._selector_positions[i] = pos
             self._save_config_value(
-                'stealth_autoloader', 'selector_position_%d' % i, '%.3f' % pos)
+                'stealth_autoloader', 'selector_position_%d' % i, '%.2f' % pos)
 
-        gcmd.respond_info("SA CAL: All %d selector positions queued for SAVE_CONFIG." % n)
-
-        # Return home
+        gcmd.respond_info("SA CAL: All %d positions queued." % n)
         motion.selector_home()
 
-        if self._prompt_yes_no(gcmd, "Save selector calibration and restart printer now?"):
+        if self._prompt_yes_no(gcmd, "Save and restart printer now?"):
             self._trigger_save_config(gcmd)
         else:
-            gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
+            gcmd.respond_info("SA CAL: Queued.  Run SAVE_CONFIG when ready.")
+
+    def _restore_selector_current(self, gcmd, sn):
+        """Restore normal selector current and disable DIAG1 stall routing."""
+        owner = self.owner
+        try:
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
+        except Exception as e:
+            logging.warning("SACalibration: failed to restore selector current: %s", e)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Bowden tube length calibration
