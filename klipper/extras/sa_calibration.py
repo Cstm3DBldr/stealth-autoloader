@@ -171,7 +171,22 @@ class SACalibration:
         owner.gcode.run_script_from_command("M400")
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # ── Step 5: Clear stallguard config, release driver latch ────────────
+        # ── Step 5: Check DIAG pin — stop_enable latches it HIGH after stall ──
+        # DIAG stays PRESSED until enable is toggled, so this read is reliable
+        # even though the move has already completed.
+        stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
+        if stall_btn is not None:
+            btn_status = stall_btn.get_status(owner.reactor.monotonic())
+            stall_detected = (btn_status.get('state') == 'PRESSED')
+            gcmd.respond_info(
+                "SA CAL: DIAG pin — %s (stall %s)"
+                % ('PRESSED' if stall_detected else 'RELEASED',
+                   'detected — motor stopped at wall' if stall_detected
+                   else 'not detected — motor may have reached wall mechanically'))
+        else:
+            gcmd.respond_info("SA CAL: gcode_button selector_stall not found — skipping DIAG check.")
+
+        # ── Step 6: Clear stallguard config, release driver latch ────────────
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
         owner.gcode.run_script_from_command(
@@ -181,7 +196,7 @@ class SACalibration:
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.reactor.pause(owner.reactor.monotonic() + 0.1)
 
-        # ── Step 6: Zero at far wall, home back, measure ──────────────────────
+        # ── Step 7: Zero at far wall, home back, measure ──────────────────────
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         mcu_far = stepper.get_mcu_position()
 
@@ -201,12 +216,12 @@ class SACalibration:
             "SA CAL: Total travel: %.2fmm"
             % (mcu_far, mcu_home, abs(mcu_far - mcu_home), step_dist, total_travel))
 
-        # ── Step 7: Restore current and internal state ────────────────────────
+        # ── Step 8: Restore current and internal state ────────────────────────
         self._restore_selector_current(gcmd, sn)
         owner.motion._selector_position = 0.0
         owner.current_path = -1
 
-        # ── Step 8: Calculate positions ───────────────────────────────────────
+        # ── Step 9: Calculate positions ───────────────────────────────────────
         n          = owner.num_paths
         end_offset = owner.selector_end_offset
         path_width = owner.path_width
