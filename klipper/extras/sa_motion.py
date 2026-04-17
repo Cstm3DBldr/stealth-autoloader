@@ -138,10 +138,10 @@ class SAMotion:
     def _selector_home_endstop(self):
         """Physical endstop double-touch homing (homing_mode=1).
 
-        Dynamically swaps rail.endstops to the physical switch for the homing
-        moves, then restores the configured endstop (DIAG) afterward.
-        selector_endstop_offset applied to SET_POSITION so that position 0
-        represents the physical hard-stop wall — same reference as sensorless.
+        The switch triggers selector_endstop_offset mm before path 0.
+        After each trigger: SET_POSITION=-offset then MOVE=0 steps the carriage
+        forward to path 0.  Final position is always 0 — same reference as
+        sensorless mode.
         """
         owner  = self.owner
         sn     = self._owner_sel_name()
@@ -168,27 +168,33 @@ class SAMotion:
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
-            # Fast approach
+            # ── Fast approach ────────────────────────────────────────────────
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
                 % (sn, mt + 20.0, hs))
             owner.gcode.run_script_from_command("M400")
-            # Offset from switch trigger to physical wall (makes coord 0 = hard stop)
+            # Switch triggers offset mm before path 0 → label as -offset, step to 0
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, offset))
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, -offset))
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, hs))
+            owner.gcode.run_script_from_command("M400")
 
-            # Back off
+            # ── Back off ─────────────────────────────────────────────────────
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, bo, hs))
             owner.gcode.run_script_from_command("M400")
 
-            # Slow re-approach
+            # ── Slow re-approach ─────────────────────────────────────────────
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
                 % (sn, bo * 4.0, hs / 4.0))
             owner.gcode.run_script_from_command("M400")
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, offset))
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, -offset))
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, hs / 4.0))
+            owner.gcode.run_script_from_command("M400")
         finally:
             rail.endstops = orig_endstops
 
