@@ -255,52 +255,25 @@ class SACalibration:
         step_dist = stepper.get_step_dist()
 
         # ── Steps 3+4: Sweep to far wall ─────────────────────────────────────
-        threshold     = owner.selector_stall_threshold
+        # Plain overshoot move at reduced current — brief grind at far wall is
+        # acceptable for one-time calibration. Current is restored immediately
+        # after the sweep completes. No stallguard needed here; measurement
+        # accuracy comes from homing back, not from detecting the far-wall stall.
         stall_current = owner.selector_stall_current
         stall_speed   = owner.selector_stall_speed
         far_target    = owner.selector_max_travel + 30.0
 
-        gcmd.respond_info(
-            "SA CAL: SGT=%d  current=%.2fA  speed=%.0fmm/s"
-            % (threshold, stall_current, stall_speed))
-
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         owner.gcode.run_script_from_command(
-            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
-
-        if owner.homing_mode == 2:
-            # Sensorless: arm stallguard and use STOP_ON_ENDSTOP=1.
-            # Motor stopped normally at home after offset correction — DIAG HIGH.
-            # Accelerates freely; StallGuard arms above TCOOLTHRS speed.
-            # Stall at far wall fires DIAG → STOP_ON_ENDSTOP halts cleanly.
-            # (stop_enable is NOT used — on TMC5160 it controls ENCA_DCIN pin,
-            #  it does NOT cut the bridge on stallguard.)
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=5000" % sn)
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.3)
-            gcmd.respond_info("SA CAL: Sweeping to far wall — STOP_ON_ENDSTOP at stall...")
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f STOP_ON_ENDSTOP=1"
-                % (sn, far_target, stall_speed))
-            owner.gcode.run_script_from_command("M400")
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
-        else:
-            # Endstop mode: plain overshoot move — brief grind at far wall is
-            # acceptable at reduced current (one-time calibration only).
-            gcmd.respond_info("SA CAL: Sweeping to far wall (%.0fmm)..." % far_target)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
-                % (sn, far_target, stall_speed))
-            owner.gcode.run_script_from_command("M400")
-
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=0.400" % sn)
+        gcmd.respond_info("SA CAL: Sweeping to far wall (%.0fmm) at 0.4A..." % far_target)
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+            % (sn, far_target, stall_speed))
+        owner.gcode.run_script_from_command("M400")
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
         gcmd.respond_info("SA CAL: Sweep complete.")
 
