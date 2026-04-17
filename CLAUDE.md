@@ -297,6 +297,8 @@ If code resembles Happy Hare too closely, simplify it for single-path-per-tool a
 
 ## Console Output Rules
 
+- **Every command must be in its own individual code block** — never combine multiple commands in one block.
+- This applies to all responses: GCode commands, bash commands, test steps, calibration sequences, deploy instructions.
 - All SA_RESPOND prompts must be on their own clearly separated lines so the user can copy-paste without typos.
 - Use `_prompt(gcmd, message, *commands)` helper in SACalibration — it formats commands with leading spaces on their own lines.
 - Print calibration phase progress as plain text (no extra decoration needed).
