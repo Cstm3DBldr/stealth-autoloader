@@ -171,43 +171,23 @@ class SACalibration:
                 "SA CAL: DIAG is PRESSED before sweep.\n"
                 "Check wiring or raise selector_stall_threshold.")
 
-        # ── Step 4: Incremental outward sweep — 5mm steps, check stall latch ────
-        # stop_enable halts the driver bridge when stallguard fires and latches
-        # DIAG HIGH. Checking after each 5mm increment means max grinding time is
-        # 5mm / speed = 0.1s, not the full commanded distance.
-        far_target     = owner.selector_max_travel + 30.0
-        step_mm        = 5.0
-        current_pos    = 0.0
-        stall_detected = False
-
-        gcmd.respond_info(
-            "SA CAL: Sweeping to %.0fmm in %.0fmm steps at %.0fmm/s..."
-            % (far_target, step_mm, stall_speed))
+        # ── Step 4: Single continuous outward move ────────────────────────────
+        far_target = owner.selector_max_travel + 30.0
+        gcmd.respond_info("SA CAL: Sweeping to %.0fmm at %.0fmm/s..." % (far_target, stall_speed))
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+            % (sn, far_target, stall_speed))
+        owner.gcode.run_script_from_command("M400")
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        while current_pos < far_target:
-            next_pos = min(current_pos + step_mm, far_target)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
-                % (sn, next_pos, stall_speed))
-            owner.gcode.run_script_from_command("M400")
-            owner.reactor.pause(owner.reactor.monotonic() + 0.05)
-
-            if stall_btn.get_status(owner.reactor.monotonic()).get('state') == 'PRESSED':
-                gcmd.respond_info(
-                    "SA CAL: Stall detected at ~%.0fmm — motor stopped cleanly." % next_pos)
-                stall_detected = True
-                break
-
-            current_pos = next_pos
-
-        if not stall_detected:
-            gcmd.respond_info(
-                "SA CAL: No stall detected — motor ran full %.0fmm. "
-                "Lower selector_stall_current or selector_stall_threshold to improve this."
-                % far_target)
+        status = stall_btn.get_status(owner.reactor.monotonic())
+        if status.get('state') == 'PRESSED':
+            gcmd.respond_info("SA CAL: Stall detected — motor halted cleanly (DIAG latched).")
+        else:
+            gcmd.respond_info("SA CAL: No stall latch — motor reached far limit. Continuing.")
 
         # ── Step 5: Clear stop_enable, release driver latch ───────────────────
         owner.gcode.run_script_from_command(
