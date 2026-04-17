@@ -27,6 +27,17 @@ selector that moves to filament. No color changes mid-print on a single toolhead
 - Branch: main
 - Commit and push after any change that works on the printer
 
+## Operational Permissions (set by user)
+Claude has full autonomous control of this printer and repository. No need to ask
+before deploying or pushing — just do it and report the result.
+
+- **Deploy after every code change** — SCP files, restart Klipper, verify it loads.
+- **Commit and push to main** after every successful deploy.
+- **This is a spare/test printer** — mechanical risk is acceptable for calibration and testing.
+- **Update README.md** whenever commands, config parameters, or calibration procedures change.
+- **Update CLAUDE.md** whenever the user adds new rules, preferences, or project context.
+- **No confirmation prompts needed** for SCP, SSH restart, git commit, or git push.
+
 ---
 
 ## Project File Structure

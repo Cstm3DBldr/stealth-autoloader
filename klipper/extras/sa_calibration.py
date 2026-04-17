@@ -354,52 +354,57 @@ class SACalibration:
     # ══════════════════════════════════════════════════════════════════════════
 
     def calibrate_selector_auto(self, gcmd):
-        """SA_CALIBRATE_SELECTOR — one-time sensorless far-end detection.
+        """SA_CALIBRATE_SELECTOR — one-time automated far-end detection.
 
-        Uses the TMC5160 stallguard (M1 DIAG pin = PB9) to find the mechanical
-        far-end of the selector travel.  Run this ONCE after initial assembly or
-        any mechanical change.  SA_HOME uses only the physical endstop switch and
-        never runs this logic.
+        Uses TMC5160 stop_enable (GCONF bit 15) to latch the stall signal so it
+        survives past M400, then measures total rail length by homing BACK to the
+        physical endstop.  Accurate regardless of whether the outward move stopped
+        on a clean stall or briefly ground at the hard stop.
 
         Flow
         ----
-        1. Home to physical endstop (double-touch).
-        2. Lower run_current to selector_stall_current so the motor stalls on
-           contact with the hard stop without grinding.
-        3. Enable stallguard output on DIAG1 via SET_TMC_FIELD.
-        4. Sweep in selector_stall_speed mm/s increments.  After each step,
-           check the [gcode_button selector_stall] state.  Stop on first PRESSED.
-        5. Record far-end position, calculate even path spacing.
-        6. Restore normal run_current and disable DIAG1 stall routing.
-        7. Confirm with user, save positions via SAVE_CONFIG.
+        1.  Home to physical endstop (double-touch).
+        2.  Look up stepper object for MCU position measurement.
+        3.  Set SGT, enable diag1_stall + stop_enable, lower current.
+        4.  Single continuous outward move to selector_max_travel + 30mm.
+            - stop_enable halts and latches the driver when stallguard fires.
+            - If motor reaches far_target without stalling it grinds briefly
+              at reduced current — acceptable for one-time calibration.
+        5.  Read latched DIAG state (informational).
+        6.  Clear stop_enable + diag1_stall; toggle enable pin to release latch.
+        7.  Zero position at far wall; record MCU step counter.
+        8.  Home BACK to physical endstop — this is the measurement.
+        9.  total_travel = MCU step delta × step_dist.
+        10. Restore normal current.
+        11. Calculate evenly-spaced path positions; confirm; save.
 
         Tuning
         ------
-        If false stall triggers mid-travel:  raise selector_stall_threshold (less sensitive).
-        If it runs past the hard stop:       lower selector_stall_threshold (more sensitive)
-                                             OR lower selector_stall_current.
+        Stalls before far end → raise selector_stall_threshold or selector_stall_current
+        Never stalls cleanly  → lower selector_stall_threshold or selector_stall_current
+        (Positions are still calculated correctly via homing-back even if no stall.)
         """
         owner  = self.owner
         motion = owner.motion
         sn     = owner._sel_name()
 
         gcmd.respond_info(
-            "SA SELECTOR SENSORLESS CALIBRATION\n"
-            "====================================\n"
+            "SA SELECTOR CALIBRATION\n"
+            "========================\n"
             "ONE-TIME setup — only repeat after mechanical changes.\n"
             "\n"
-            "The selector will sweep to the far mechanical stop using the TMC5160\n"
-            "stallguard (DIAG1 pin).  When the motor stalls, path positions are\n"
-            "calculated automatically.\n"
+            "The selector sweeps to the far mechanical stop, then homes back\n"
+            "to measure total rail length.  Path positions are calculated\n"
+            "automatically from the measured travel.\n"
             "\n"
             "Requirements:\n"
-            "  - SA_HOME must work correctly first (test it before running this).\n"
+            "  - SA_HOME must work correctly first.\n"
             "  - No filament loaded — servo must be free.\n"
-            "  - [gcode_button selector_stall] in hardware.cfg (pin ^!autoloader:SA_SELECTOR_DIAG).\n"
+            "  - [gcode_button selector_stall] in hardware.cfg\n"
+            "    (pin: ^!autoloader:SA_SELECTOR_DIAG).\n"
             "\n"
-            "Tuning if behaviour is wrong:\n"
-            "  Stalls before far end → raise selector_stall_threshold or selector_stall_current\n"
-            "  Overshoots far end    → lower selector_stall_threshold or selector_stall_current\n")
+            "Tuning if the carriage stalls mid-travel:\n"
+            "  Raise selector_stall_threshold or selector_stall_current.\n")
 
         # ── Find and validate the stall button ────────────────────────────────
         stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
@@ -416,13 +421,18 @@ class SACalibration:
             gcmd.respond_info("SA CAL: Calibration aborted.")
             return
 
-        # ── Step 1: home to physical endstop ─────────────────────────────────
+        # ── Step 1: home to physical endstop ──────────────────────────────────
         gcmd.respond_info("SA CAL: Homing to physical endstop (double-touch)...")
         motion.selector_home()
         gcmd.respond_info("SA CAL: Homed at 0.0mm.")
 
-        # ── Step 2: configure stallguard ──────────────────────────────────────
-        threshold = owner.selector_stall_threshold
+        # ── Step 2: get stepper object for MCU position measurement ───────────
+        sel_obj   = owner.printer.lookup_object('manual_stepper sa_selector')
+        stepper   = sel_obj.get_steppers()[0]
+        step_dist = stepper.get_step_dist()
+
+        # ── Step 3: configure stallguard with latching stop ───────────────────
+        threshold     = owner.selector_stall_threshold
         stall_current = owner.selector_stall_current
         stall_speed   = owner.selector_stall_speed
 
@@ -430,98 +440,114 @@ class SACalibration:
             "SA CAL: Configuring stallguard — SGT=%d, current=%.2fA, speed=%.0fmm/s"
             % (threshold, stall_current, stall_speed))
 
-        # Set stallguard threshold
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
-        # Route stall result to DIAG1 output
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
-        # Lower current so the motor stalls on contact, not on inertia
+        # stop_enable (GCONF bit 15): latch motor halt + DIAG pin HIGH on stall
+        # so the signal survives past M400 and can be read after the move.
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=1" % sn)
         owner.gcode.run_script_from_command(
             "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
-
-        # Brief settle — let driver stabilise at new current before sweeping
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # Verify DIAG pin starts RELEASED (no false stall at rest)
+        # Verify DIAG starts RELEASED (no false stall at rest)
         status = stall_btn.get_status(owner.reactor.monotonic())
         if status.get('state') == 'PRESSED':
-            # Restore and abort
             self._restore_selector_current(gcmd, sn)
             raise gcmd.error(
-                "SA CAL: selector_stall button is PRESSED before sweep started.\n"
+                "SA CAL: selector_stall is PRESSED before sweep.\n"
                 "Check DIAG1 wiring or raise selector_stall_threshold.")
 
-        # ── Step 3: sweep toward far end in small steps ───────────────────────
+        # ── Step 4: single continuous outward move ────────────────────────────
+        far_target = owner.selector_max_travel + 30.0
         gcmd.respond_info(
-            "SA CAL: Sweeping to far end at %.0fmm/s.  Watch the carriage..."
-            % stall_speed)
-
-        step         = 3.0   # mm per increment
-        total_travel = 0.0
-        stall_found  = False
-        max_steps    = int((owner.selector_max_travel + 30.0) / step) + 1
+            "SA CAL: Sweeping outward to %.0fmm at %.0fmm/s..."
+            % (far_target, stall_speed))
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+            % (sn, far_target, stall_speed))
+        owner.gcode.run_script_from_command("M400")
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        for _ in range(max_steps):
-            total_travel += step
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f"
-                % (sn, total_travel, stall_speed))
-            owner.gcode.run_script_from_command("M400")
+        # ── Step 5: read latched DIAG (informational only) ────────────────────
+        status = stall_btn.get_status(owner.reactor.monotonic())
+        stall_detected = (status.get('state') == 'PRESSED')
+        if stall_detected:
+            gcmd.respond_info(
+                "SA CAL: Stall detected — motor halted cleanly at far end (DIAG latched).")
+        else:
+            gcmd.respond_info(
+                "SA CAL: No stall latch — motor completed full sweep distance.\n"
+                "         Continuing: total travel will be measured by homing back.")
 
-            # Brief settle so the driver updates SG_RESULT and DIAG pin
-            owner.reactor.pause(owner.reactor.monotonic() + 0.05)
+        # ── Step 6: clear stop_enable + release driver latch ─────────────────
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+        # Toggle enable pin to release the driver from its latched-halt state
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % sn)
+        owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+        owner.reactor.pause(owner.reactor.monotonic() + 0.1)
 
-            status = stall_btn.get_status(owner.reactor.monotonic())
-            if status.get('state') == 'PRESSED':
-                stall_found = True
-                # Step back one increment to get a conservative far-end position
-                far_end = total_travel - step
-                gcmd.respond_info(
-                    "SA CAL: Stall detected at %.1fmm.  Far-end set to %.1fmm."
-                    % (total_travel, far_end))
-                break
+        # ── Step 7: zero at far wall, record MCU step counter ─────────────────
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        mcu_far = stepper.get_mcu_position()
 
-        # ── Restore normal driver settings immediately ────────────────────────
+        # ── Step 8: home back to physical endstop — this is the measurement ──
+        gcmd.respond_info("SA CAL: Homing back to measure total travel...")
+        home_target = -(owner.selector_max_travel + 50.0)
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+            % (sn, home_target, owner.selector_homing_speed))
+        owner.gcode.run_script_from_command("M400")
+
+        # ── Step 9: calculate total travel from MCU step delta ────────────────
+        mcu_home     = stepper.get_mcu_position()
+        total_travel = abs(mcu_far - mcu_home) * step_dist
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+        gcmd.respond_info(
+            "SA CAL: MCU steps — far=%d  home=%d  delta=%d  step_dist=%.5fmm\n"
+            "SA CAL: Total travel measured: %.2fmm"
+            % (mcu_far, mcu_home, abs(mcu_far - mcu_home), step_dist, total_travel))
+
+        # ── Step 10: restore normal current ───────────────────────────────────
         self._restore_selector_current(gcmd, sn)
+        owner.motion._selector_position = 0.0
+        owner.current_path = -1
 
-        if not stall_found:
-            raise gcmd.error(
-                "SA CAL: No stall detected within %.0fmm.\n"
-                "Check wiring of SA_SELECTOR_DIAG (PB9), or lower\n"
-                "selector_stall_threshold / selector_stall_current."
-                % owner.selector_max_travel)
-
-        # ── Step 4: calculate path positions ─────────────────────────────────
-        # Happy Hare approach: path 0 is exactly at home (0mm), path n-1 is at
-        # far_end.  Positions are distributed evenly across the full usable travel.
+        # ── Step 11: calculate path positions ────────────────────────────────
         n = owner.num_paths
         if n == 1:
             positions = [0.0]
             spacing   = 0.0
         else:
-            if far_end < (n - 1) * 5.0:
+            if total_travel < (n - 1) * 5.0:
                 raise gcmd.error(
-                    "SA CAL: Usable travel (%.1fmm) too short for %d paths."
-                    % (far_end, n))
-            spacing   = far_end / float(n - 1)
+                    "SA CAL: Measured travel (%.1fmm) too short for %d paths.\n"
+                    "Check mechanical assembly or selector_max_travel setting."
+                    % (total_travel, n))
+            spacing   = total_travel / float(n - 1)
             positions = [round(i * spacing, 2) for i in range(n)]
 
         pos_lines = "\n".join(
             "  Path %d: %.2fmm" % (i, p) for i, p in enumerate(positions))
         gcmd.respond_info(
-            "SA CAL: Far end %.1fmm → %d paths, spacing %.2fmm:\n%s"
-            % (far_end, n, spacing, pos_lines))
+            "SA CAL: Total travel %.2fmm → %d paths, spacing %.2fmm:\n%s"
+            % (total_travel, n, spacing, pos_lines))
 
         if not self._prompt_yes_no(gcmd, "Accept these positions and save?"):
             gcmd.respond_info("SA CAL: Positions NOT saved.  Adjust stall settings and retry.")
             motion.selector_home()
             return
 
-        # ── Step 5: save ──────────────────────────────────────────────────────
         for i, pos in enumerate(positions):
             owner._selector_positions[i] = pos
             self._save_config_value(
@@ -536,9 +562,11 @@ class SACalibration:
             gcmd.respond_info("SA CAL: Queued.  Run SAVE_CONFIG when ready.")
 
     def _restore_selector_current(self, gcmd, sn):
-        """Restore normal selector current and disable DIAG1 stall routing."""
+        """Restore normal selector current and clear all stallguard TMC fields."""
         owner = self.owner
         try:
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
             owner.gcode.run_script_from_command(
                 "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
             owner.gcode.run_script_from_command(

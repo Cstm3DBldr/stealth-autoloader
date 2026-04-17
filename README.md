@@ -254,16 +254,21 @@ Calibrates `mm_per_pulse` for one path encoder using 5 x 400mm feed/retract cycl
 
 ### Selector calibration — `SA_CALIBRATE_SELECTOR`
 
-Automated calibration of all path selector positions. Homes the carriage, sweeps to the far end, and calculates evenly-spaced positions.
+Fully automated one-time calibration. The routine homes the carriage, sweeps to the far mechanical stop using TMC5160 stallguard, then homes back to measure the total rail length precisely. Path positions are calculated automatically from the measured travel — no manual measurement needed.
+
+**Requirements:** `SA_HOME` must work correctly first. No filament loaded. `[gcode_button selector_stall]` must be present in `hardware.cfg` (pin `^!autoloader:SA_SELECTOR_DIAG`).
 
 **Process:**
 1. Run `SA_CALIBRATE_SELECTOR`.
-2. The selector homes, then moves slowly to `selector_max_travel`.
-3. If the carriage reached the last path, send `SA_RESPOND VALUE=ok`.
-4. If it stopped short, measure the actual travel and send `SA_RESPOND VALUE=<mm>`.
-5. The routine calculates evenly-spaced positions and shows them.
-6. Send `SA_RESPOND VALUE=yes` to accept, or `no` to cancel and adjust `selector_max_travel`.
-7. Confirm save and restart.
+2. Send `SA_RESPOND VALUE=yes` when prompted to confirm ready.
+3. The carriage homes, then sweeps outward. The TMC5160 `stop_enable` bit latches the stall signal so it is reliably detected after the move. If no stall is detected the carriage briefly contacts the hard stop at reduced current (0.4 A), which is harmless.
+4. The routine homes back to the physical endstop and measures total travel from the MCU step delta.
+5. Calculated positions are displayed. Send `SA_RESPOND VALUE=yes` to accept or `no` to cancel.
+6. Send `SA_RESPOND VALUE=yes` to save and restart, or `no` to queue for later.
+
+**Tuning if the carriage stalls mid-travel (before reaching the far end):**
+- Raise `selector_stall_threshold` (less sensitive stallguard)
+- Raise `selector_stall_current` (more traversal torque)
 
 **Result:** Updates `selector_position_0` through `selector_position_N` in `[stealth_autoloader]` via `SAVE_CONFIG`.
 
@@ -385,6 +390,9 @@ All parameters are set in the `[stealth_autoloader]` section of `hardware.cfg`.
 | `selector_max_travel` | `200.0` | Max mm for selector far-end detection / cal sweep |
 | `selector_homing_speed` | `50.0` | Homing approach speed (mm/s) |
 | `selector_homing_backoff` | `5.0` | Back-off distance before slow re-approach (mm) |
+| `selector_stall_current` | `0.4` | Motor current (A) during SA_CALIBRATE_SELECTOR sweep — lower than run_current |
+| `selector_stall_threshold` | `3` | TMC5160 SGT value for stallguard sensitivity (raise to reduce false triggers) |
+| `selector_stall_speed` | `50.0` | Sweep speed (mm/s) during SA_CALIBRATE_SELECTOR |
 
 ---
 
