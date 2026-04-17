@@ -138,6 +138,28 @@ class StealthAutoloader:
         self.selector_end_offset = config.getfloat('selector_end_offset', 0.0)
         self.path_width          = config.getfloat('path_width',          0.0)
 
+        # ── DIAG endstop for sensorless calibration ───────────────────────────
+        # Registered directly from the pin alias at config time (pins lock at
+        # klippy:connect, so this must happen in __init__).
+        # SA_CALIBRATE_SELECTOR temporarily swaps this into the selector rail so
+        # STOP_ON_ENDSTOP=1 halts the outward sweep the instant stallguard fires —
+        # identical to how sensorless homing works on XY axes.
+        # SA_HOME continues to use the physical endstop (SA_SELECTOR_STOP).
+        # The calibration code also sets diag1_stall=1 before the sweep so the
+        # TMC5160 routes stallguard to the DIAG1 pin (PB9).
+        self._selector_diag_endstop = None
+        ppins = self.printer.lookup_object('pins')
+        try:
+            pin_params = ppins.lookup_pin(
+                '^!autoloader:SA_SELECTOR_DIAG', can_pullup=True, can_invert=True)
+            self._selector_diag_endstop = pin_params['chip'].setup_pin(
+                'endstop', pin_params)
+            logging.info("StealthAutoloader: selector DIAG endstop registered (PB9)")
+        except Exception as e:
+            logging.warning(
+                "StealthAutoloader: DIAG endstop unavailable — "
+                "SA_CALIBRATE_SELECTOR will fall back to mechanical stop: %s", e)
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
         self._servo_is_engaged = False

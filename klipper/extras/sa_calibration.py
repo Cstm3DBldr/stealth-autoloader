@@ -96,7 +96,7 @@ class SACalibration:
         owner = self.owner
         try:
             owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
             owner.gcode.run_script_from_command(
                 "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
             owner.gcode.run_script_from_command(
@@ -134,10 +134,9 @@ class SACalibration:
         stepper   = sel_obj.get_steppers()[0]
         step_dist = stepper.get_step_dist()
 
-        # ── Step 3: Configure stallguard — TCOOLTHRS enables SG at all speeds ─
-        # TCOOLTHRS=0 (default) disables stallguard during motion. Set to max so
-        # SG is active at any non-zero speed. stop_enable silently halts driver
-        # on stall; no DIAG pin needed (BTT MMB V2.0 does not expose DIAG on header).
+        # ── Step 3: Configure stallguard ─────────────────────────────────────
+        # TCOOLTHRS=0 (default) disables stallguard during motion. Set to max
+        # so SG is active at any speed during the calibration sweep.
         threshold     = owner.selector_stall_threshold
         stall_current = owner.selector_stall_current
         stall_speed   = owner.selector_stall_speed
@@ -151,52 +150,52 @@ class SACalibration:
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=1048575" % sn)
         owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=1" % sn)
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
         owner.gcode.run_script_from_command(
             "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # ── Step 4: Single continuous outward move ────────────────────────────
-        # stop_enable will silently halt the driver when stall fires. Klipper
-        # phantom-steps the rest (quiet since bridge is off). Measurement is
-        # accurate regardless — we zero at the far position and measure back.
-        far_target = owner.selector_max_travel + 30.0
-        gcmd.respond_info("SA CAL: Sweeping to %.0fmm at %.0fmm/s..." % (far_target, stall_speed))
+        # ── Step 4: Swap rail endstop to DIAG, sweep with STOP_ON_ENDSTOP ────
+        # The DIAG virtual_endstop was registered at Klipper startup.
+        # Swapping rail.endstops redirects STOP_ON_ENDSTOP to the DIAG pin —
+        # same mechanism as sensorless homing on XY axes: when stallguard fires,
+        # DIAG goes HIGH mid-move, Klipper halts the move instantly.
+        # Physical endstop is restored immediately after the move.
+        far_target   = owner.selector_max_travel + 30.0
+        diag_endstop = owner._selector_diag_endstop
+        sel_obj      = owner.printer.lookup_object('manual_stepper sa_selector')
+        rail         = sel_obj.rail
+        orig_endstops = rail.endstops[:]
 
+        gcmd.respond_info("SA CAL: Sweeping to %.0fmm (STOP_ON_ENDSTOP via DIAG)..." % far_target)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
-            % (sn, far_target, stall_speed))
+
+        if diag_endstop is not None:
+            rail.endstops = [(diag_endstop, 'diag_stall')]
+            try:
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f STOP_ON_ENDSTOP=1 SYNC=1"
+                    % (sn, far_target, stall_speed))
+            finally:
+                rail.endstops = orig_endstops
+            gcmd.respond_info("SA CAL: Sweep complete — DIAG halted move at stall.")
+        else:
+            # Fallback: no DIAG endstop available, run to mechanical stop
+            gcmd.respond_info("SA CAL: DIAG endstop not available — sweeping to mechanical stop.")
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+                % (sn, far_target, stall_speed))
         owner.gcode.run_script_from_command("M400")
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # ── Step 5: Check DIAG pin — stop_enable latches it HIGH after stall ──
-        # DIAG stays PRESSED until enable is toggled, so this read is reliable
-        # even though the move has already completed.
-        stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
-        if stall_btn is not None:
-            btn_status = stall_btn.get_status(owner.reactor.monotonic())
-            stall_detected = (btn_status.get('state') == 'PRESSED')
-            gcmd.respond_info(
-                "SA CAL: DIAG pin — %s (stall %s)"
-                % ('PRESSED' if stall_detected else 'RELEASED',
-                   'detected — motor stopped at wall' if stall_detected
-                   else 'not detected — motor may have reached wall mechanically'))
-        else:
-            gcmd.respond_info("SA CAL: gcode_button selector_stall not found — skipping DIAG check.")
-
-        # ── Step 6: Clear stallguard config, release driver latch ────────────
+        # ── Step 5: Restore TMC fields ────────────────────────────────────────
         owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % sn)
-        owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        owner.reactor.pause(owner.reactor.monotonic() + 0.1)
 
-        # ── Step 7: Zero at far wall, home back, measure ──────────────────────
+        # ── Step 6: Zero at far wall, home back, measure ──────────────────────
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         mcu_far = stepper.get_mcu_position()
 
