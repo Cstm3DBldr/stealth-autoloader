@@ -315,16 +315,45 @@ class SACalibration:
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.reactor.pause(owner.reactor.monotonic() + 0.1)
 
-        # ── Step 6: Zero at far wall, home back, measure ──────────────────────
+        # ── Step 6: Zero at far wall, home back to measure total travel ──────────
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         mcu_far = stepper.get_mcu_position()
+        home_target = -(owner.selector_max_travel + 50.0)
 
         gcmd.respond_info("SA CAL: Homing back to measure total travel...")
-        home_target = -(owner.selector_max_travel + 50.0)
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
-            % (sn, home_target, owner.selector_homing_speed))
-        owner.gcode.run_script_from_command("M400")
+
+        if owner.homing_mode == 1:
+            # Endstop mode: swap to physical switch for the measurement home-back
+            rail = sel_obj.rail
+            orig_endstops = list(rail.endstops)
+            if owner._selector_phys_endstop is not None:
+                rail.endstops = [(owner._selector_phys_endstop, 'physical_stop')]
+            try:
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                    % (sn, home_target, owner.selector_homing_speed))
+                owner.gcode.run_script_from_command("M400")
+            finally:
+                rail.endstops = orig_endstops
+        else:
+            # Sensorless mode: re-arm stallguard — DIAG in rail needs diag1_stall=1
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=5000" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
+            owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                % (sn, home_target, stall_speed))
+            owner.gcode.run_script_from_command("M400")
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
 
         mcu_home     = stepper.get_mcu_position()
         total_travel = abs(mcu_far - mcu_home) * step_dist

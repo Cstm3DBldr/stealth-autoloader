@@ -131,35 +131,36 @@ class StealthAutoloader:
         self.selector_max_travel     = config.getfloat('selector_max_travel',     200.0)
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
-        # Sensorless calibration (SA_CALIBRATE_SELECTOR)
-        self.selector_stall_threshold = config.getint(  'selector_stall_threshold',  1)
-        self.selector_stall_current   = config.getfloat('selector_stall_current',    0.3)
-        self.selector_stall_speed     = config.getfloat('selector_stall_speed',     30.0)
+        # Sensorless homing/calibration (stallguard)
+        self.selector_stall_threshold  = config.getint(  'selector_stall_threshold',   1)
+        self.selector_stall_current    = config.getfloat('selector_stall_current',     0.3)
+        self.selector_stall_speed      = config.getfloat('selector_stall_speed',      30.0)
+        self.selector_stall_prebackoff = config.getfloat('selector_stall_prebackoff', 20.0)
+        self.selector_stall_speed_2    = config.getfloat('selector_stall_speed_2',     0.0)
         # Selector position calibration geometry
         self.selector_end_offset = config.getfloat('selector_end_offset', 0.0)
         self.path_width          = config.getfloat('path_width',          0.0)
+        # Homing mode
+        # 1 = physical endstop (SA_SELECTOR_STOP / PA15) — double-touch, accurate
+        # 2 = sensorless stallguard (SA_SELECTOR_DIAG / PB9) — no switch required
+        self.homing_mode             = config.getint(  'homing_mode',             2)
+        self.selector_endstop_offset = config.getfloat('selector_endstop_offset', 2.0)
 
-        # ── DIAG endstop for sensorless calibration ───────────────────────────
-        # Registered directly from the pin alias at config time (pins lock at
-        # klippy:connect, so this must happen in __init__).
-        # SA_CALIBRATE_SELECTOR temporarily swaps this into the selector rail so
-        # STOP_ON_ENDSTOP=1 halts the outward sweep the instant stallguard fires —
-        # identical to how sensorless homing works on XY axes.
-        # SA_HOME continues to use the physical endstop (SA_SELECTOR_STOP).
-        # The calibration code also sets diag1_stall=1 before the sweep so the
-        # TMC5160 routes stallguard to the DIAG1 pin (PB9).
-        self._selector_diag_endstop = None
+        # ── Secondary endstop registered at config time ───────────────────────
+        # Whichever pin is NOT the configured endstop_pin gets registered here
+        # so selector_home() can swap it in at runtime (pins lock at connect).
+        # homing_mode=1: endstop_pin=DIAG, swap to physical switch (SA_SELECTOR_STOP)
+        # homing_mode=2: endstop_pin=DIAG, DIAG already in rail — no swap needed
+        self._selector_phys_endstop = None
         ppins = self.printer.lookup_object('pins')
         try:
-            pin_params = ppins.lookup_pin(
-                '^!autoloader:SA_SELECTOR_DIAG', can_pullup=True, can_invert=True)
-            self._selector_diag_endstop = pin_params['chip'].setup_pin(
-                'endstop', pin_params)
-            logging.info("StealthAutoloader: selector DIAG endstop registered (PB9)")
+            pin_params = ppins.lookup_pin('^autoloader:SA_SELECTOR_STOP', can_pullup=True)
+            self._selector_phys_endstop = pin_params['chip'].setup_pin('endstop', pin_params)
+            logging.info("StealthAutoloader: physical selector endstop registered (PA15)")
         except Exception as e:
             logging.warning(
-                "StealthAutoloader: DIAG endstop unavailable — "
-                "SA_CALIBRATE_SELECTOR will fall back to mechanical stop: %s", e)
+                "StealthAutoloader: physical endstop (PA15) unavailable — "
+                "homing_mode=1 will not work: %s", e)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1

@@ -125,66 +125,174 @@ class SAMotion:
     # ══════════════════════════════════════════════════════════════════════════
 
     def selector_home(self):
-        """Double-touch selector homing — physical endstop switch only.
+        """Home selector — method selected by owner.homing_mode.
 
-        Uses SA_SELECTOR_STOP (physical switch).  Does NOT use stallguard.
-        Call SA_CALIBRATE_SELECTOR for one-time sensorless far-end detection.
-
-        Sequence
-        --------
-        1. Disengage servo (never home with filament gripped).
-        2. Enable stepper, cancel any pending idle timeout.
-        3. Fast approach at selector_homing_speed — STOP_ON_ENDSTOP=1.
-        4. SET_POSITION=0 immediately after first touch (establishes zero).
-        5. Back off selector_homing_backoff mm (negative move, endstop clears).
-        6. Slow re-approach at selector_homing_speed/4 — STOP_ON_ENDSTOP=1.
-        7. SET_POSITION=0 at second (accurate) touch.
-        8. Arm idle timeout.
+        1 = physical endstop double-touch (SA_SELECTOR_STOP / PA15)
+        2 = sensorless stallguard (SA_SELECTOR_DIAG / PB9)
         """
-        owner = self.owner
-        sn    = self._owner_sel_name()
-        hs    = owner.selector_homing_speed
-        bo    = owner.selector_homing_backoff
-        mt    = owner.selector_max_travel
+        if self.owner.homing_mode == 1:
+            self._selector_home_endstop()
+        else:
+            self._selector_home_sensorless()
 
-        # Safety: release drive gear first
+    def _selector_home_endstop(self):
+        """Physical endstop double-touch homing (homing_mode=1).
+
+        Dynamically swaps rail.endstops to the physical switch for the homing
+        moves, then restores the configured endstop (DIAG) afterward.
+        selector_endstop_offset applied to SET_POSITION so that position 0
+        represents the physical hard-stop wall — same reference as sensorless.
+        """
+        owner  = self.owner
+        sn     = self._owner_sel_name()
+        hs     = owner.selector_homing_speed
+        bo     = owner.selector_homing_backoff
+        mt     = owner.selector_max_travel
+        offset = owner.selector_endstop_offset
+
         self.servo_disengage()
-
-        # Cancel any pending idle timeout before starting
         self._cancel_timeout(sn)
 
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        # Start from 0; MOVE=-(mt+20) guarantees we cross the endstop wherever it is
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        sel_obj = owner.printer.lookup_object('manual_stepper sa_selector')
+        rail    = sel_obj.rail
+        orig_endstops = list(rail.endstops)
 
-        # ── Fast approach ─────────────────────────────────────────────────────
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
-            % (sn, mt + 20.0, hs))
-        owner.gcode.run_script_from_command("M400")
+        if owner._selector_phys_endstop is None:
+            raise RuntimeError(
+                "SA HOME: physical endstop (PA15) not registered — "
+                "check pin_aliases.cfg has SA_SELECTOR_STOP and Klipper loaded cleanly.")
 
-        # Zero here — critical so back-off and second approach use a clean reference
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        rail.endstops = [(owner._selector_phys_endstop, 'physical_stop')]
+        try:
+            owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
-        # ── Back off ──────────────────────────────────────────────────────────
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, bo, hs))
-        owner.gcode.run_script_from_command("M400")
+            # Fast approach
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                % (sn, mt + 20.0, hs))
+            owner.gcode.run_script_from_command("M400")
+            # Offset from switch trigger to physical wall (makes coord 0 = hard stop)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, offset))
 
-        # ── Slow re-approach ─────────────────────────────────────────────────
-        # Move to -(bo*4) — well past position 0 where the endstop lives
-        owner.gcode.run_script_from_command(
-            "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
-            % (sn, bo * 4.0, hs / 4.0))
-        owner.gcode.run_script_from_command("M400")
+            # Back off
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, bo, hs))
+            owner.gcode.run_script_from_command("M400")
 
-        # Final zero at accurate second touch
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+            # Slow re-approach
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                % (sn, bo * 4.0, hs / 4.0))
+            owner.gcode.run_script_from_command("M400")
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, offset))
+        finally:
+            rail.endstops = orig_endstops
 
         self._arm_timeout(sn)
         owner.current_path = -1
         self._selector_position = 0.0
-        logging.info("SAMotion: selector homed (double-touch)")
+        logging.info("SAMotion: selector homed (endstop, offset=%.2fmm)", offset)
+        self.save_position()
+
+    def _selector_home_sensorless(self):
+        """Sensorless stallguard homing (homing_mode=2).
+
+        Pre-backoff ensures the motor is at full speed when it hits the hard
+        stop, making stall detection reliable. Second touch is optional —
+        set selector_stall_speed_2=0 to skip (recommended for sensorless
+        since the motor starts from rest over a short backoff and may not
+        reach stall threshold).
+        """
+        owner         = self.owner
+        sn            = self._owner_sel_name()
+        mt            = owner.selector_max_travel
+        bo            = owner.selector_homing_backoff
+        threshold     = owner.selector_stall_threshold
+        stall_current = owner.selector_stall_current
+        stall_speed   = owner.selector_stall_speed
+        stall_speed_2 = owner.selector_stall_speed_2
+        prebackoff    = owner.selector_stall_prebackoff
+
+        self.servo_disengage()
+        self._cancel_timeout(sn)
+
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+        # Pre-backoff: move away from home so motor is at full speed at stall point
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f" % (sn, prebackoff, stall_speed))
+        owner.gcode.run_script_from_command("M400")
+
+        # Arm stallguard
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=5000" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
+        try:
+            # Fast approach — DIAG endstop in rail stops move on stall
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                % (sn, mt + prebackoff + 20.0, stall_speed))
+            owner.gcode.run_script_from_command("M400")
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+            # Clear stallguard
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+
+            if stall_speed_2 > 0.0:
+                # Optional slow re-approach for higher repeatability
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f"
+                    % (sn, bo, stall_speed))
+                owner.gcode.run_script_from_command("M400")
+
+                owner.gcode.run_script_from_command(
+                    "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+                owner.gcode.run_script_from_command(
+                    "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=5000" % sn)
+                owner.gcode.run_script_from_command(
+                    "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+                owner.gcode.run_script_from_command(
+                    "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
+                owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+                    % (sn, bo * 4.0, stall_speed_2))
+                owner.gcode.run_script_from_command("M400")
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+        finally:
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
+            owner.gcode.run_script_from_command(
+                "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
+
+        self._arm_timeout(sn)
+        owner.current_path = -1
+        self._selector_position = 0.0
+        logging.info("SAMotion: selector homed (sensorless, speed_2=%.0f)", stall_speed_2)
         self.save_position()
 
     def selector_move_to(self, position_mm):
