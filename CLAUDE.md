@@ -292,3 +292,21 @@ If code resembles Happy Hare too closely, simplify it for single-path-per-tool a
 - Do not add trailing comma to last alias in `[board_pins]`
 - Do not SCP `References/` folder to printer
 - Do not create separate `[filament_feed toolN]` sections — replaced by `[stealth_autoloader]`
+- Do not use blocking `reactor.pause()` poll loops to wait for SA_RESPOND — the GCode mutex blocks it. Use the state machine in SACalibration instead.
+- Do not add "are you ready?" confirmation prompts — user initiated the command, that is confirmation enough.
+
+## Console Output Rules
+
+- All SA_RESPOND prompts must be on their own clearly separated lines so the user can copy-paste without typos.
+- Use `_prompt(gcmd, message, *commands)` helper in SACalibration — it formats commands with leading spaces on their own lines.
+- Print calibration phase progress as plain text (no extra decoration needed).
+
+## Calibration Architecture
+
+Calibration uses a non-blocking phase state machine:
+- `owner._cal_state` (str | None): current phase key, e.g. `'sel_confirm'`, cleared on Klipper restart
+- `owner._cal_data` (dict): data bag passed between phases (positions, measurements, attempt counts, etc.)
+- `SA_RESPOND VALUE=x` calls `calibration.respond(gcmd, value)` which dispatches to the correct `_*_respond()` handler
+- Each phase runs to completion (no blocking waits) and either finishes or sets the next state + prompts
+- `SA_RESPOND VALUE=abort` always cancels and clears state
+- State is automatically cleared on Klipper restart — no risk of waking up mid-calibration after a power cycle

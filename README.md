@@ -197,13 +197,17 @@ SA_SET_STATE TOOL=2 STATE=loaded
 
 ## Calibration commands
 
-All interactive calibration commands use a console response pattern: the routine prints a prompt, then waits for you to send `SA_RESPOND VALUE=<answer>`. Send `SA_RESPOND VALUE=abort` at any point to cancel.
+Calibration uses a **non-blocking phase state machine**. Each calibration command does its automated work, prints the result, then pauses and tells you exactly what to send next. You respond with `SA_RESPOND VALUE=<answer>` and the next phase runs immediately as a normal GCode command — no polling, no timeouts.
+
+- Send `SA_RESPOND VALUE=abort` at any prompt to cancel the calibration.
+- A Klipper restart (including from `SAVE_CONFIG`) always clears any in-progress calibration state.
 
 ### `SA_RESPOND VALUE=x`
-Delivers a console response to a waiting calibration routine. Only meaningful when a calibration is running.
+Advances the active calibration to its next phase.
 
 ```
 SA_RESPOND VALUE=yes
+SA_RESPOND VALUE=no
 SA_RESPOND VALUE=103.5
 SA_RESPOND VALUE=abort
 ```

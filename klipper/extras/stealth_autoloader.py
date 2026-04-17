@@ -140,9 +140,9 @@ class StealthAutoloader:
         self._servo_is_engaged = False
         self.path_states       = [self.STATE_UNKNOWN] * self.num_paths
 
-        # SA_RESPOND mailbox (used by calibration routines)
-        self._pending_response = None
-        self._response_ready   = False
+        # Calibration state machine (SA_RESPOND dispatches here; cleared on restart)
+        self._cal_state = None   # str key e.g. 'sel_confirm', or None
+        self._cal_data  = {}     # data bag passed between calibration phases
 
         # ── Subsystems ────────────────────────────────────────────────────────
         self.motion      = SAMotion(self)
@@ -518,11 +518,12 @@ class StealthAutoloader:
         gcmd.respond_info("SA: Path %d state set to '%s'." % (path, state))
 
     def _cmd_respond(self, gcmd):
-        """SA_RESPOND VALUE=x — deliver a console response to a waiting calibration routine."""
-        value = gcmd.get('VALUE')
-        self._pending_response = value
-        self._response_ready   = True
-        gcmd.respond_info("SA: Response received: '%s'" % value)
+        """SA_RESPOND VALUE=x — advance the active calibration to its next phase."""
+        value = gcmd.get('VALUE').strip()
+        if self._cal_state is not None:
+            gcmd.respond_info(
+                "SA: Responding '%s' (state=%s)" % (value, self._cal_state))
+        self.calibration.respond(gcmd, value)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
@@ -557,6 +558,7 @@ class StealthAutoloader:
             'extruder_filament' : extruder_filament,
             'filament_loaded'   : filament_loaded,
             'selector_position' : sel_pos,
+            'cal_state'         : self._cal_state or '',
         }
 
     # ══════════════════════════════════════════════════════════════════════════
