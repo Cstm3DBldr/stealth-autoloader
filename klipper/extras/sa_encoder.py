@@ -37,7 +37,25 @@ class SAEncoder:
         buttons = self.printer.load_object(config, 'buttons')
         buttons.register_buttons([sensor_pin], self._pulse_callback)
 
+        # Load calibrated mm_per_pulse from save_variables at ready (overrides config)
+        self.printer.register_event_handler('klippy:ready', self._on_ready)
+
         logging.info("SA Encoder '%s' ready — %.4f mm/pulse", self.name, self.mm_per_pulse)
+
+    def _on_ready(self):
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv is None:
+            return
+        allvars = sv.allVariables
+        key = 'encoder_mpp_%s' % self.name
+        if key in allvars:
+            try:
+                self.mm_per_pulse = float(allvars[key])
+                logging.info(
+                    "SA Encoder '%s': mm_per_pulse=%.5f (from save_variables)",
+                    self.name, self.mm_per_pulse)
+            except (ValueError, TypeError):
+                pass
 
     # ------------------------------------------------------------------
     # Interrupt callback — called by Klipper reactor on each pin edge

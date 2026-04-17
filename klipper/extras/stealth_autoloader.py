@@ -162,7 +162,51 @@ class StealthAutoloader:
         self.reactor.register_callback(self._init_hardware)
 
     def _init_hardware(self, eventtime):
+        self._load_variable_overrides()
         self.motion.on_ready()
+
+    def _load_variable_overrides(self):
+        """Load calibrated values from save_variables, overriding hardware.cfg defaults."""
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv is None:
+            return
+        allvars = sv.allVariables
+        for i in range(self.num_paths):
+            key = 'selector_position_%d' % i
+            if key in allvars:
+                try:
+                    self._selector_positions[i] = float(allvars[key])
+                except (ValueError, TypeError):
+                    pass
+            key = 'bowden_length_%d' % i
+            if key in allvars:
+                try:
+                    self._bowden_lengths[i] = float(allvars[key])
+                except (ValueError, TypeError):
+                    pass
+        if 'drive_rotation_distance' in allvars:
+            try:
+                self._apply_drive_rotation_distance(float(allvars['drive_rotation_distance']))
+            except (ValueError, TypeError):
+                pass
+        logging.info("StealthAutoloader: save_variables overrides applied")
+
+    def _apply_drive_rotation_distance(self, new_rd):
+        """Apply a calibrated rotation_distance to the drive stepper in memory."""
+        try:
+            drv_obj  = self.printer.lookup_object(self.drive_stepper_name)
+            steppers = drv_obj.get_steppers()
+            if steppers:
+                s      = steppers[0]
+                old_rd = s.get_rotation_distance()[0]
+                old_sd = s.get_step_dist()
+                new_sd = old_sd * (new_rd / old_rd)
+                s.set_step_dist(new_sd)
+                logging.info(
+                    "StealthAutoloader: drive rotation_distance=%.4f applied "
+                    "(step_dist=%.6f)", new_rd, new_sd)
+        except Exception as e:
+            logging.warning("StealthAutoloader: failed to apply drive_rd: %s", e)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hardware name helpers

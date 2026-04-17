@@ -4,13 +4,14 @@
 #   - Each calibration command kicks off phase 0 (automated work + prompt).
 #   - SA_RESPOND VALUE=<answer> dispatches to the next phase — no blocking wait loops.
 #   - State stored in owner._cal_state / owner._cal_data; cleared on Klipper restart.
-#   - A Klipper restart from SAVE_CONFIG always clears any mid-calibration state.
+#   - Calibrated values are written immediately to save_variables (no SAVE_CONFIG needed).
+#   - Values are loaded from save_variables at klippy:ready, overriding hardware.cfg defaults.
 #
 # Calibration states:
-#   sel_confirm / sel_save
+#   sel_confirm
 #   drv_path / drv_mark / drv_meas / drv_save
-#   enc_zero_N / enc_exit_N / enc_save_N
-#   bow_est_N  / bow_save_N
+#   enc_zero_N / enc_exit_N
+#   bow_est_N
 
 import sys, os as _os
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
@@ -86,13 +87,10 @@ class SACalibration:
         lines.append("")
         gcmd.respond_info("\n".join(lines))
 
-    def _save_config_value(self, section, key, value):
-        configfile = self.owner.printer.lookup_object('configfile')
-        configfile.set(section, key, str(value))
-
-    def _trigger_save_config(self, gcmd):
-        gcmd.respond_info("SA CAL: Running SAVE_CONFIG — Klipper will restart.")
-        self.owner.gcode.run_script_from_command("SAVE_CONFIG")
+    def _save_variable(self, key, value):
+        """Write a calibration value to save_variables immediately — no restart needed."""
+        self.owner.gcode.run_script_from_command(
+            "SAVE_VARIABLE VARIABLE=%s VALUE=%s" % (key, str(value)))
 
     def _restore_selector_current(self, gcmd, sn):
         owner = self.owner
@@ -261,26 +259,19 @@ class SACalibration:
                 positions = owner._cal_data['positions']
                 for i, pos in enumerate(positions):
                     owner._selector_positions[i] = pos
-                    self._save_config_value(
-                        'stealth_autoloader', 'selector_position_%d' % i, '%.2f' % pos)
-                owner._cal_state = 'sel_save'
-                self._prompt(gcmd,
-                    "Positions queued. Save and restart Klipper now?",
-                    "SA_RESPOND VALUE=yes",
-                    "SA_RESPOND VALUE=no")
+                    self._save_variable('selector_position_%d' % i, '%.2f' % pos)
+                self._clear()
+                gcmd.respond_info(
+                    "SA CAL: Selector positions saved immediately — "
+                    "effective now, no restart needed.\n"
+                    "Run SA_HOME then SA_SELECT TOOL=N to verify each position.")
+                owner.motion.selector_home()
             else:
                 self._clear()
                 owner.motion.selector_home()
                 gcmd.respond_info(
                     "SA CAL: Positions NOT saved.\n"
                     "Adjust selector_stall_threshold or selector_stall_current and retry.")
-
-        elif state == 'sel_save':
-            self._clear()
-            if self._yes(value):
-                self._trigger_save_config(gcmd)
-            else:
-                gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_DRIVE
@@ -302,7 +293,8 @@ class SACalibration:
             "\n"
             "Requirements: filament loaded past drive gear on one path. Calipers or ruler.")
 
-        owner._cal_data  = {'attempt': 0, 'best_rd': None, 'path': None}
+        owner._cal_data  = {'attempt': 0, 'best_rd': None, 'path': None,
+                            'original_rd': None, 'original_sd': None}
         owner._cal_state = 'drv_path'
 
         self._prompt(gcmd,
@@ -336,8 +328,11 @@ class SACalibration:
             drive_obj = owner.printer.lookup_object(owner.drive_stepper_name)
             steppers  = drive_obj.get_steppers()
             best_rd   = steppers[0].get_rotation_distance()[0] if steppers else 22.0
+            orig_sd   = steppers[0].get_step_dist() if steppers else None
 
-            data.update({'path': path, 'best_rd': best_rd, 'attempt': 0})
+            data.update({'path': path, 'best_rd': best_rd, 'attempt': 0,
+                         'original_rd': best_rd, 'original_sd': orig_sd,
+                         'steppers': steppers})
             owner._cal_state = 'drv_mark'
 
             self._prompt(gcmd,
@@ -391,12 +386,9 @@ class SACalibration:
                 if error <= 1.0:
                     gcmd.respond_info("SA CAL: Error within 1mm — drive calibrated!")
                 motion.servo_disengage()
-                self._save_config_value(
-                    'manual_stepper sa_drive', 'rotation_distance', '%.4f' % new_rd)
-                gcmd.respond_info("SA CAL: rotation_distance=%.4f queued." % new_rd)
                 owner._cal_state = 'drv_save'
                 self._prompt(gcmd,
-                    "Save and restart Klipper now?",
+                    "Apply rotation_distance=%.4f now?" % new_rd,
                     "SA_RESPOND VALUE=yes",
                     "SA_RESPOND VALUE=no")
             else:
@@ -408,11 +400,35 @@ class SACalibration:
                     "SA_RESPOND VALUE=yes")
 
         elif state == 'drv_save':
+            new_rd   = data['best_rd']
+            orig_rd  = data.get('original_rd') or new_rd
+            orig_sd  = data.get('original_sd')
+            steppers = data.get('steppers', [])
             self._clear()
+
             if self._yes(value):
-                self._trigger_save_config(gcmd)
+                # Apply to stepper in memory (survives this session)
+                if orig_sd is not None and orig_rd > 0 and steppers:
+                    try:
+                        new_sd = orig_sd * (new_rd / orig_rd)
+                        steppers[0].set_step_dist(new_sd)
+                        gcmd.respond_info(
+                            "SA CAL: rotation_distance=%.4f applied (step_dist=%.6f)."
+                            % (new_rd, new_sd))
+                    except Exception as e:
+                        logging.warning("SA CAL: set_step_dist failed: %s", e)
+
+                # Persist to save_variables
+                self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
+                gcmd.respond_info(
+                    "SA CAL: rotation_distance=%.4f saved — effective immediately.\n"
+                    "Also update hardware.cfg [manual_stepper sa_drive] "
+                    "rotation_distance: %.4f\n"
+                    "so the value is preserved if variables.cfg is ever deleted."
+                    % (new_rd, new_rd))
             else:
-                gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
+                gcmd.respond_info(
+                    "SA CAL: Not saved. rotation_distance remains %.4f." % orig_rd)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_ENCODER
@@ -535,22 +551,14 @@ class SACalibration:
                 except ValueError:
                     pass
 
-            self._save_config_value('sa_encoder %d' % path, 'mm_per_pulse', '%.5f' % new_mpp)
-            gcmd.respond_info(
-                "SA CAL: Encoder %d mm_per_pulse=%.5f queued." % (path, new_mpp))
-            owner._cal_state = 'enc_save_%d' % path
-
-            self._prompt(gcmd,
-                "Save encoder %d calibration and restart Klipper now?" % path,
-                "SA_RESPOND VALUE=yes",
-                "SA_RESPOND VALUE=no")
-
-        elif state.startswith('enc_save_'):
+            # Update live encoder immediately
+            enc.mm_per_pulse = new_mpp
+            # Persist to save_variables
+            self._save_variable('encoder_mpp_%d' % path, '%.5f' % new_mpp)
             self._clear()
-            if self._yes(value):
-                self._trigger_save_config(gcmd)
-            else:
-                gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
+            gcmd.respond_info(
+                "SA CAL: Encoder %d mm_per_pulse=%.5f saved — "
+                "effective immediately, no restart needed." % (path, new_mpp))
 
     # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_BOWDEN
@@ -677,21 +685,10 @@ class SACalibration:
                 % (path, [round(x, 2) for x in trials], avg_length, spread,
                    "  <- high, check sensor bounce" if spread > 3.0 else ""))
 
-            self._save_config_value(
-                'stealth_autoloader', 'bowden_length_%d' % path, '%.2f' % avg_length)
+            # Update live state and persist immediately
             owner._bowden_lengths[path] = avg_length
-            gcmd.respond_info(
-                "SA CAL: bowden_length_%d = %.2fmm queued." % (path, avg_length))
-            owner._cal_state = 'bow_save_%d' % path
-
-            self._prompt(gcmd,
-                "Save Bowden calibration for path %d and restart Klipper now?" % path,
-                "SA_RESPOND VALUE=yes",
-                "SA_RESPOND VALUE=no")
-
-        elif state.startswith('bow_save_'):
+            self._save_variable('bowden_length_%d' % path, '%.2f' % avg_length)
             self._clear()
-            if self._yes(value):
-                self._trigger_save_config(gcmd)
-            else:
-                gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
+            gcmd.respond_info(
+                "SA CAL: bowden_length_%d=%.2fmm saved — "
+                "effective immediately, no restart needed." % (path, avg_length))
