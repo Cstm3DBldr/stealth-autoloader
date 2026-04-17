@@ -98,7 +98,7 @@ class SACalibration:
             owner.gcode.run_script_from_command(
                 "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
             owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+                "SET_TMC_FIELD STEPPER=%s FIELD=diag0_stall VALUE=0" % sn)
             owner.gcode.run_script_from_command(
                 "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
         except Exception as e:
@@ -155,8 +155,9 @@ class SACalibration:
 
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+        # BTT MMB CAN V2.0 routes DIAG0 (not DIAG1) to the MCU GPIO via EZ socket
         owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag0_stall VALUE=1" % sn)
         # stop_enable latches DIAG HIGH on stall so signal survives past M400
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=1" % sn)
