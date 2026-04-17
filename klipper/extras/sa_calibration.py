@@ -373,7 +373,9 @@ class SACalibration:
         n          = owner.num_paths
         end_offset = owner.selector_end_offset
         path_width = owner.path_width
-        usable     = total_travel - end_offset
+        # Sensorless homes to physical wall (3mm past path 0) — subtract home offset too
+        home_offset = owner.selector_endstop_offset if owner.homing_mode == 2 else 0.0
+        usable     = total_travel - end_offset - home_offset
 
         if n == 1:
             positions = [0.0]
@@ -388,9 +390,10 @@ class SACalibration:
             spacing   = usable / float(n - 1)
             positions = [round(i * spacing, 2) for i in range(n)]
 
-        offset_note = (
-            "  end_offset %.2fmm  usable %.2fmm\n" % (end_offset, usable)
-            if end_offset != 0.0 else "")
+        offset_note = ""
+        if end_offset != 0.0 or home_offset != 0.0:
+            offset_note = ("  end_offset %.2fmm  home_offset %.2fmm  usable %.2fmm\n"
+                           % (end_offset, home_offset, usable))
         width_note  = ""
         if path_width > 0.0:
             width_note = (

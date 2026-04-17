@@ -138,17 +138,14 @@ class SAMotion:
     def _selector_home_endstop(self):
         """Physical endstop double-touch homing (homing_mode=1).
 
-        The switch triggers selector_endstop_offset mm before path 0.
-        After each trigger: SET_POSITION=-offset then MOVE=0 steps the carriage
-        forward to path 0.  Final position is always 0 — same reference as
-        sensorless mode.
+        The switch triggers at path 0. SET_POSITION=0 directly after each
+        trigger — no offset correction needed here.
         """
         owner  = self.owner
         sn     = self._owner_sel_name()
         hs     = owner.selector_homing_speed
         bo     = owner.selector_homing_backoff
         mt     = owner.selector_max_travel
-        offset = owner.selector_endstop_offset
 
         self.servo_disengage()
         self._cancel_timeout(sn)
@@ -159,8 +156,10 @@ class SAMotion:
 
         if owner._selector_phys_endstop is None:
             raise RuntimeError(
-                "SA HOME: physical endstop (PA15) not registered — "
-                "check pin_aliases.cfg has SA_SELECTOR_STOP and Klipper loaded cleanly.")
+                "SA HOME: physical endstop (PA15) not registered.\n"
+                "endstop_pin in hardware.cfg must ALWAYS be ^!autoloader:SA_SELECTOR_DIAG.\n"
+                "Do NOT change it to SA_SELECTOR_STOP — that causes a 'pin used multiple times' "
+                "conflict and disables this feature. Only change homing_mode to switch modes.")
 
         rail.endstops = [(owner._selector_phys_endstop, 'physical_stop')]
         try:
@@ -173,12 +172,9 @@ class SAMotion:
                 "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
                 % (sn, mt + 20.0, hs))
             owner.gcode.run_script_from_command("M400")
-            # Switch triggers offset mm before path 0 → label as -offset, step to 0
+            # Switch triggers at path 0 — zero position here directly
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, -offset))
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, hs))
-            owner.gcode.run_script_from_command("M400")
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
             # ── Back off ─────────────────────────────────────────────────────
             owner.gcode.run_script_from_command(
@@ -191,17 +187,14 @@ class SAMotion:
                 % (sn, bo * 4.0, hs / 4.0))
             owner.gcode.run_script_from_command("M400")
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f" % (sn, -offset))
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, hs / 4.0))
-            owner.gcode.run_script_from_command("M400")
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
         finally:
             rail.endstops = orig_endstops
 
         self._arm_timeout(sn)
         owner.current_path = -1
         self._selector_position = 0.0
-        logging.info("SAMotion: selector homed (endstop, offset=%.2fmm)", offset)
+        logging.info("SAMotion: selector homed (endstop mode)")
         self.save_position()
 
     def _selector_home_sensorless(self):
@@ -251,8 +244,14 @@ class SAMotion:
                 "MANUAL_STEPPER STEPPER=%s MOVE=-%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
                 % (sn, mt + prebackoff + 20.0, stall_speed))
             owner.gcode.run_script_from_command("M400")
+            # Stall point is selector_endstop_offset mm before path 0.
+            # Label position as -offset so MOVE=0 steps carriage forward to path 0.
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f"
+                % (sn, -owner.selector_endstop_offset))
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, stall_speed))
+            owner.gcode.run_script_from_command("M400")
 
             # Clear stallguard
             owner.gcode.run_script_from_command(
@@ -285,7 +284,11 @@ class SAMotion:
                     % (sn, bo * 4.0, stall_speed_2))
                 owner.gcode.run_script_from_command("M400")
                 owner.gcode.run_script_from_command(
-                    "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+                    "MANUAL_STEPPER STEPPER=%s SET_POSITION=%.2f"
+                    % (sn, -owner.selector_endstop_offset))
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s MOVE=0.0 SPEED=%.1f" % (sn, stall_speed_2))
+                owner.gcode.run_script_from_command("M400")
 
         finally:
             owner.gcode.run_script_from_command(
