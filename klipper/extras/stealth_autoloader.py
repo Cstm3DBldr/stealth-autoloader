@@ -154,7 +154,7 @@ class StealthAutoloader:
         self._selector_phys_endstop = None
         ppins = self.printer.lookup_object('pins')
         try:
-            pin_params = ppins.lookup_pin('^autoloader:SA_SELECTOR_STOP', can_pullup=True)
+            pin_params = ppins.lookup_pin('^!autoloader:SA_SELECTOR_STOP', can_pullup=True, can_invert=True)
             self._selector_phys_endstop = pin_params['chip'].setup_pin('endstop', pin_params)
             logging.info("StealthAutoloader: physical selector endstop registered (PA15)")
         except Exception as e:
