@@ -155,23 +155,33 @@ class SACalibration:
             "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # ── Step 4: Swap rail endstop to DIAG, sweep with STOP_ON_ENDSTOP ────
-        # The DIAG virtual_endstop was registered at Klipper startup.
-        # Swapping rail.endstops redirects STOP_ON_ENDSTOP to the DIAG pin —
-        # same mechanism as sensorless homing on XY axes: when stallguard fires,
-        # DIAG goes HIGH mid-move, Klipper halts the move instantly.
-        # Physical endstop is restored immediately after the move.
-        far_target   = owner.selector_max_travel + 30.0
-        diag_endstop = owner._selector_diag_endstop
-        sel_obj      = owner.printer.lookup_object('manual_stepper sa_selector')
-        rail         = sel_obj.rail
+        # ── Step 4: Two-phase sweep to far wall ───────────────────────────────
+        # Phase A: move 25mm WITHOUT stallguard endstop active. This carries the
+        #   motor through the low-speed acceleration ramp where back-EMF is too
+        #   small for reliable stallguard — same reason XY sensorless homing has
+        #   a retract/re-approach rather than starting from standstill.
+        # Phase B: swap DIAG in as the active endstop, drive the remaining
+        #   distance with STOP_ON_ENDSTOP=1. Klipper halts the move mid-step the
+        #   instant stallguard fires and DIAG goes active — no grinding, no latch.
+        far_target    = owner.selector_max_travel + 30.0
+        accel_clear   = 25.0     # mm to travel before enabling stallguard detection
+        diag_endstop  = owner._selector_diag_endstop
+        sel_obj       = owner.printer.lookup_object('manual_stepper sa_selector')
+        rail          = sel_obj.rail
         orig_endstops = rail.endstops[:]
 
-        gcmd.respond_info("SA CAL: Sweeping to %.0fmm (STOP_ON_ENDSTOP via DIAG)..." % far_target)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
 
         if diag_endstop is not None:
+            # Phase A — get up to speed, no stallguard detection yet
+            gcmd.respond_info(
+                "SA CAL: Phase A — %.0fmm ramp (no SG) then STOP_ON_ENDSTOP to %.0fmm..."
+                % (accel_clear, far_target))
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+                % (sn, accel_clear, stall_speed))
+            # Phase B — stallguard now reliable; swap endstop and detect stall
             rail.endstops = [(diag_endstop, 'diag_stall')]
             try:
                 owner.gcode.run_script_from_command(
@@ -181,7 +191,6 @@ class SACalibration:
                 rail.endstops = orig_endstops
             gcmd.respond_info("SA CAL: Sweep complete — DIAG halted move at stall.")
         else:
-            # Fallback: no DIAG endstop available, run to mechanical stop
             gcmd.respond_info("SA CAL: DIAG endstop not available — sweeping to mechanical stop.")
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
