@@ -107,6 +107,126 @@ class SACalibration:
             logging.warning("SACalibration: failed to restore selector current: %s", e)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # SA_TEST_SENSORLESS
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def test_sensorless(self, gcmd):
+        """Test whether DIAG stallguard endstop can home the selector reliably.
+
+        Sequence:
+          1. Home with physical endstop to establish zero.
+          2. Move to 100mm (mid-rail, away from home).
+          3. Configure stallguard on the TMC5160 (sgt, tcoolthrs, diag1_stall, current).
+          4. Swap rail.endstops to the DIAG endstop object.
+          5. Attempt STOP_ON_ENDSTOP move back toward home at stall_speed.
+          6. Restore endstops and TMC fields.
+          7. Report distance traveled:
+               ~100mm → sensorless homing works (stalled at physical home)
+               ~0mm   → false trigger at standstill (known issue with SG_RESULT=0)
+               ~Xmm   → false trigger mid-travel (SGT too sensitive)
+          8. Always home with physical endstop afterward.
+        """
+        owner  = self.owner
+        motion = owner.motion
+        sn     = owner._sel_name()
+
+        if owner._selector_diag_endstop is None:
+            raise gcmd.error(
+                "SA TEST: DIAG endstop not registered.\n"
+                "Check pin_aliases.cfg has SA_SELECTOR_DIAG=PB9 "
+                "and Klipper loaded cleanly.")
+
+        threshold     = owner.selector_stall_threshold
+        stall_current = owner.selector_stall_current
+        stall_speed   = owner.selector_stall_speed
+
+        gcmd.respond_info(
+            "SA SENSORLESS HOME TEST\n"
+            "=======================\n"
+            "SGT=%d  current=%.2fA  speed=%.0fmm/s\n"
+            "Homing to zero, moving to 100mm, then attempting sensorless return..."
+            % (threshold, stall_current, stall_speed))
+
+        # Step 1: Physical home
+        gcmd.respond_info("SA TEST: Homing with physical endstop...")
+        motion.selector_home()
+
+        # Step 2: Move to 100mm
+        gcmd.respond_info("SA TEST: Moving to 100mm...")
+        motion.selector_move_to(100.0)
+
+        # Step 3: Get stepper for position measurement
+        sel_obj   = owner.printer.lookup_object('manual_stepper sa_selector')
+        stepper   = sel_obj.get_steppers()[0]
+        step_dist = stepper.get_step_dist()
+
+        # Step 4: Configure stallguard
+        gcmd.respond_info("SA TEST: Arming stallguard...")
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
+        # TCOOLTHRS=5000 ≈ 30mm/s on this motor — stallguard only active above this speed.
+        # Prevents false triggers at standstill (SG_RESULT=0 when stopped).
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=5000" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
+        # Step 5: Swap rail endstops to DIAG
+        rail = sel_obj.rail
+        orig_endstops = list(rail.endstops)
+        rail.endstops = [(owner._selector_diag_endstop, 'diag_stall')]
+        gcmd.respond_info("SA TEST: Endstop swapped to DIAG (PB9). Starting move...")
+
+        # Step 6: Record MCU position, attempt sensorless home
+        start_mcu = stepper.get_mcu_position()
+        try:
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=-150.0 SPEED=%.1f STOP_ON_ENDSTOP=1 SYNC=1"
+                % (sn, stall_speed))
+            owner.gcode.run_script_from_command("M400")
+        except Exception as e:
+            gcmd.respond_info("SA TEST: Move exception: %s" % e)
+
+        end_mcu = stepper.get_mcu_position()
+        distance = abs(start_mcu - end_mcu) * step_dist
+
+        # Step 7: Restore endstops and TMC fields
+        rail.endstops = orig_endstops
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
+        owner.reactor.pause(owner.reactor.monotonic() + 0.2)
+
+        # Step 8: Report
+        if distance > 80.0:
+            verdict = "PASS — sensorless homing works! Motor traveled %.1fmm to home." % distance
+        elif distance < 5.0:
+            verdict = ("FAIL — false trigger at standstill. Motor moved only %.1fmm.\n"
+                       "  TCOOLTHRS does not gate DIAG at standstill on this hardware.\n"
+                       "  Sensorless homing cannot replace physical endstop.")  % distance
+        else:
+            verdict = ("PARTIAL — motor stopped after %.1fmm (mid-travel false trigger).\n"
+                       "  Try raising selector_stall_threshold (SGT) to reduce sensitivity.")  % distance
+
+        gcmd.respond_info(
+            "SA TEST RESULT:\n"
+            "  start_mcu=%d  end_mcu=%d  delta=%d  step_dist=%.5f\n"
+            "  Distance traveled: %.2fmm\n"
+            "  %s"
+            % (start_mcu, end_mcu, abs(start_mcu - end_mcu), step_dist, distance, verdict))
+
+        # Step 9: Always home back with physical endstop
+        gcmd.respond_info("SA TEST: Re-homing with physical endstop...")
+        motion.selector_home()
+        gcmd.respond_info("SA TEST: Done.")
+
+    # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_SELECTOR
     # ══════════════════════════════════════════════════════════════════════════
 

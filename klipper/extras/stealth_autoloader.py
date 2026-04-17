@@ -40,6 +40,7 @@
 #   SA_ENCODER_WATCH   [TOOL DURATION INTERVAL]
 #   SA_SET_STATE  TOOL=N STATE=x
 #   SA_RESPOND    VALUE=x
+#   SA_TEST_SENSORLESS
 
 import sys, os as _os
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
@@ -361,6 +362,9 @@ class StealthAutoloader:
             ('SA_RESPOND',
              self._cmd_respond,
              "Send a value back to a waiting calibration routine. VALUE=x"),
+            ('SA_TEST_SENSORLESS',
+             self._cmd_test_sensorless,
+             "Test sensorless homing: home→100mm→DIAG STOP_ON_ENDSTOP→report distance"),
         ]
         for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
@@ -593,6 +597,10 @@ class StealthAutoloader:
             gcmd.respond_info(
                 "SA: Responding '%s' (state=%s)" % (value, self._cal_state))
         self.calibration.respond(gcmd, value)
+
+    def _cmd_test_sensorless(self, gcmd):
+        """SA_TEST_SENSORLESS — test if DIAG stallguard can home the selector."""
+        self.calibration.test_sensorless(gcmd)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
