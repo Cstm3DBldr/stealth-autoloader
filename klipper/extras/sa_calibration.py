@@ -98,7 +98,7 @@ class SACalibration:
             owner.gcode.run_script_from_command(
                 "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
             owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=diag0_stall VALUE=0" % sn)
+                "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
             owner.gcode.run_script_from_command(
                 "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
         except Exception as e:
@@ -119,16 +119,6 @@ class SACalibration:
                 "SA CAL: Calibration already in progress (state=%s).\n"
                 "  SA_RESPOND VALUE=abort" % owner._cal_state)
 
-        stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
-        if stall_btn is None:
-            raise gcmd.error(
-                "SA CAL: [gcode_button selector_stall] not found in config.\n"
-                "Add to hardware.cfg:\n"
-                "  [gcode_button selector_stall]\n"
-                "  pin: ^!autoloader:SA_SELECTOR_DIAG\n"
-                "  press_gcode:\n"
-                "  release_gcode:")
-
         gcmd.respond_info(
             "SA SELECTOR CALIBRATION\n"
             "========================\n"
@@ -144,35 +134,32 @@ class SACalibration:
         stepper   = sel_obj.get_steppers()[0]
         step_dist = stepper.get_step_dist()
 
-        # ── Step 3: Configure stallguard with latching stop ───────────────────
+        # ── Step 3: Configure stallguard — TCOOLTHRS enables SG at all speeds ─
+        # TCOOLTHRS=0 (default) disables stallguard during motion. Set to max so
+        # SG is active at any non-zero speed. stop_enable silently halts driver
+        # on stall; no DIAG pin needed (BTT MMB V2.0 does not expose DIAG on header).
         threshold     = owner.selector_stall_threshold
         stall_current = owner.selector_stall_current
         stall_speed   = owner.selector_stall_speed
 
         gcmd.respond_info(
-            "SA CAL: Stallguard — SGT=%d  current=%.2fA  speed=%.0fmm/s"
+            "SA CAL: SGT=%d  current=%.2fA  speed=%.0fmm/s"
             % (threshold, stall_current, stall_speed))
 
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
-        # BTT MMB CAN V2.0 routes DIAG0 (not DIAG1) to the MCU GPIO via EZ socket
         owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=diag0_stall VALUE=1" % sn)
-        # stop_enable latches DIAG HIGH on stall so signal survives past M400
+            "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=1048575" % sn)
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=1" % sn)
         owner.gcode.run_script_from_command(
             "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        status = stall_btn.get_status(owner.reactor.monotonic())
-        if status.get('state') == 'PRESSED':
-            self._restore_selector_current(gcmd, sn)
-            raise gcmd.error(
-                "SA CAL: DIAG is PRESSED before sweep.\n"
-                "Check wiring or raise selector_stall_threshold.")
-
         # ── Step 4: Single continuous outward move ────────────────────────────
+        # stop_enable will silently halt the driver when stall fires. Klipper
+        # phantom-steps the rest (quiet since bridge is off). Measurement is
+        # accurate regardless — we zero at the far position and measure back.
         far_target = owner.selector_max_travel + 30.0
         gcmd.respond_info("SA CAL: Sweeping to %.0fmm at %.0fmm/s..." % (far_target, stall_speed))
 
@@ -184,17 +171,11 @@ class SACalibration:
         owner.gcode.run_script_from_command("M400")
         owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        status = stall_btn.get_status(owner.reactor.monotonic())
-        if status.get('state') == 'PRESSED':
-            gcmd.respond_info("SA CAL: Stall detected — motor halted cleanly (DIAG latched).")
-        else:
-            gcmd.respond_info("SA CAL: No stall latch — motor reached far limit. Continuing.")
-
-        # ── Step 5: Clear stop_enable, release driver latch ───────────────────
+        # ── Step 5: Clear stallguard config, release driver latch ────────────
         owner.gcode.run_script_from_command(
             "SET_TMC_FIELD STEPPER=%s FIELD=stop_enable VALUE=0" % sn)
         owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
+            "SET_TMC_FIELD STEPPER=%s FIELD=tcoolthrs VALUE=0" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=0" % sn)
         owner.reactor.pause(owner.reactor.monotonic() + 0.1)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
