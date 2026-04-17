@@ -225,23 +225,38 @@ class SACalibration:
         owner.current_path = -1
 
         # ── Step 8: Calculate positions ───────────────────────────────────────
-        n = owner.num_paths
+        n          = owner.num_paths
+        end_offset = owner.selector_end_offset
+        path_width = owner.path_width
+        usable     = total_travel - end_offset
+
         if n == 1:
             positions = [0.0]
             spacing   = 0.0
         else:
-            if total_travel < (n - 1) * 5.0:
+            if usable < (n - 1) * 5.0:
                 raise gcmd.error(
-                    "SA CAL: Travel %.1fmm too short for %d paths. "
-                    "Check assembly or selector_max_travel." % (total_travel, n))
-            spacing   = total_travel / float(n - 1)
+                    "SA CAL: Usable travel %.1fmm (total %.1fmm - offset %.1fmm) "
+                    "too short for %d paths. "
+                    "Check assembly or reduce selector_end_offset."
+                    % (usable, total_travel, end_offset, n))
+            spacing   = usable / float(n - 1)
             positions = [round(i * spacing, 2) for i in range(n)]
+
+        offset_note = (
+            "  end_offset %.2fmm  usable %.2fmm\n" % (end_offset, usable)
+            if end_offset != 0.0 else "")
+        width_note  = ""
+        if path_width > 0.0:
+            width_note = (
+                "  path_width configured %.1fmm  calculated %.2fmm  "
+                "delta %.2fmm\n" % (path_width, spacing, abs(spacing - path_width)))
 
         pos_lines = "\n".join(
             "  Path %d: %.2fmm" % (i, p) for i, p in enumerate(positions))
         gcmd.respond_info(
-            "SA CAL: Total travel %.2fmm → %d paths  spacing %.2fmm\n%s"
-            % (total_travel, n, spacing, pos_lines))
+            "SA CAL: Total travel %.2fmm → %d paths  spacing %.2fmm\n%s%s%s"
+            % (total_travel, n, spacing, offset_note, width_note, pos_lines))
 
         owner._cal_data  = {'positions': positions, 'total_travel': total_travel}
         owner._cal_state = 'sel_confirm'

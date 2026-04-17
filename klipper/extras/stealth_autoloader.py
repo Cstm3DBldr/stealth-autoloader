@@ -134,6 +134,9 @@ class StealthAutoloader:
         self.selector_stall_threshold = config.getint(  'selector_stall_threshold',  1)
         self.selector_stall_current   = config.getfloat('selector_stall_current',    0.3)
         self.selector_stall_speed     = config.getfloat('selector_stall_speed',     30.0)
+        # Selector position calibration geometry
+        self.selector_end_offset = config.getfloat('selector_end_offset', 0.0)
+        self.path_width          = config.getfloat('path_width',          0.0)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
