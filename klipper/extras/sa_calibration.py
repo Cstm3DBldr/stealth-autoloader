@@ -758,8 +758,12 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
                 data['trials'].append(length)
 
-                # Fast retract — single move back past entry
-                motion.drive_move(-(length + 20.0), speed=blast_speed)
+                # Retract fully past encoder — length + 30mm gear-to-encoder gap + 30mm margin
+                # Use half blast speed: long retract fights tube friction, motor stalls at full speed
+                retract_speed = blast_speed * 0.5
+                motion.drive_move(-(length + 60.0), speed=retract_speed)
+                # Reset encoder so next trial starts from a known zero
+                enc.reset_distance()
                 motion.servo_disengage()
                 owner.reactor.pause(owner.reactor.monotonic() + 0.5)
 
