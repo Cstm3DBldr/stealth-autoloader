@@ -696,10 +696,19 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Must be > 0.")
                 return
 
-            approach_length = estimated * 0.9
+            # Three-phase approach speeds (48V / TMC5160)
+            blast_speed  = 300.0          # phase 1: 0–50%  — no sensor check
+            quick_speed  = 50.0           # phase 2: 50–75% — no sensor check
+            approach_speed = owner.feed_speed  # phase 3: 75–90% + inch — sensor polling
+
+            blast_end  = estimated * 0.50
+            quick_end  = estimated * 0.75
+            inch_start = estimated * 0.90
+
             gcmd.respond_info(
-                "SA CAL: Running 3 trials "
-                "(fast approach %.0fmm, inch to sensor)..." % approach_length)
+                "SA CAL: Running 3 trials — "
+                "%.0fmm @%.0fmm/s → %.0fmm @%.0fmm/s → sensor approach..."
+                % (blast_end, blast_speed, quick_end - blast_end, quick_speed))
 
             for trial in range(3):
                 gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
@@ -713,24 +722,29 @@ class SACalibration:
                 enc.set_direction(forward=True)
                 enc.reset_distance()
 
-                current_pos = 0.0
-                while current_pos < approach_length:
-                    step = min(owner.feed_step_size * 5.0, approach_length - current_pos)
-                    motion.drive_move(step)
+                # Phase 1: blast to 50% — single move, no sensor check
+                motion.drive_move(blast_end, speed=blast_speed)
+
+                # Phase 2: quick to 75% — single move, no sensor check
+                motion.drive_move(quick_end - blast_end, speed=quick_speed)
+
+                # Phase 3: 75%–90% with sensor polling (10mm steps)
+                triggered  = False
+                current_pos = quick_end
+                while current_pos < inch_start and not triggered:
+                    step = min(owner.feed_step_size, inch_start - current_pos)
+                    motion.drive_move(step, speed=approach_speed)
                     current_pos += step
                     owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
                     if owner._extruder_sensor_active(path):
-                        break
+                        triggered = True
 
-                if owner._extruder_sensor_active(path):
-                    length = enc.get_distance()
-                    gcmd.respond_info(
-                        "SA CAL: Sensor triggered during approach at %.2fmm." % length)
-                else:
+                # Phase 4: inch past 90% until sensor triggers
+                if not triggered:
                     inch_max = estimated * 0.3
                     inched   = 0.0
                     while not owner._extruder_sensor_active(path) and inched < inch_max:
-                        motion.drive_move(owner.feed_step_size)
+                        motion.drive_move(owner.feed_step_size, speed=approach_speed)
                         inched += owner.feed_step_size
                         owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
 
@@ -741,20 +755,12 @@ class SACalibration:
                             "SA CAL: Extruder sensor path %d not triggered after %.0fmm. "
                             "Check sensor or increase estimate." % (path, estimated))
 
-                    length = enc.get_distance()
-                    gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
-
+                length = enc.get_distance()
+                gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
                 data['trials'].append(length)
 
-                retract_target = length + 20.0
-                enc.set_direction(forward=False)
-                enc.reset_distance()
-                retracted = 0.0
-                while retracted < retract_target:
-                    motion.drive_move(-owner.feed_step_size)
-                    retracted += owner.feed_step_size
-                    owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
-
+                # Fast retract — single move back past entry
+                motion.drive_move(-(length + 20.0), speed=blast_speed)
                 motion.servo_disengage()
                 owner.reactor.pause(owner.reactor.monotonic() + 0.5)
 
