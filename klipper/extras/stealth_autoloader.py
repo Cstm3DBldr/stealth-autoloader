@@ -323,6 +323,9 @@ class StealthAutoloader:
             ('SA_CALIBRATE_ENCODER',
              self._cmd_calibrate_encoder,
              "Interactive encoder mm_per_pulse calibration. TOOL=N"),
+            ('SA_CALIBRATE_ENCODER_SPEED',
+             self._cmd_calibrate_encoder_speed,
+             "Find max encoder-accurate feed speed. TOOL=N"),
             ('SA_CALIBRATE_BOWDEN',
              self._cmd_calibrate_bowden,
              "Guided Bowden tube length calibration. TOOL=N"),
@@ -543,6 +546,9 @@ class StealthAutoloader:
 
     def _cmd_calibrate_encoder(self, gcmd):
         self.calibration.calibrate_encoder(gcmd)
+
+    def _cmd_calibrate_encoder_speed(self, gcmd):
+        self.calibration.calibrate_encoder_speed(gcmd)
 
     def _cmd_calibrate_bowden(self, gcmd):
         self.calibration.calibrate_bowden(gcmd)

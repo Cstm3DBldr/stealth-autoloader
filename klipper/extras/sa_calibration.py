@@ -640,6 +640,99 @@ class SACalibration:
                     "SA CAL: Not saved. mm_per_pulse remains %.5f." % orig_mpp)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # SA_CALIBRATE_ENCODER_SPEED
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def calibrate_encoder_speed(self, gcmd):
+        """Find the max feed speed at which the encoder counts accurately.
+
+        Steps through speeds [25, 50, 75, 100, 125, 150, 175, 200] mm/s.
+        Each speed: run 100mm forward, compare encoder reading to commanded
+        distance.  3 tries per speed — need 2/3 within tolerance to pass.
+        Stops at first failing speed.  Saves safe_speed (max_pass * 0.8)
+        to variables.cfg as 'encoder_max_speed'.
+        """
+        owner  = self.owner
+        motion = owner.motion
+        path   = gcmd.get_int('TOOL', 0, minval=0, maxval=owner.num_paths - 1)
+
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration in progress (state=%s). SA_RESPOND VALUE=abort"
+                % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Homing selector...")
+            motion.selector_home()
+
+        gcmd.respond_info(
+            "SA ENCODER SPEED CALIBRATION — Path %d\n"
+            "===========================================\n"
+            "Requires filament through drive gear and encoder.\n"
+            "Tests speeds 25→200mm/s, 3 tries each, 100mm per try.\n"
+            "Stops at first failing speed. Safe speed (80%%) saved."
+            % path)
+
+        motion.servo_disengage()
+        motion.selector_move_to(owner._selector_positions[path])
+        owner.current_path = path
+        motion.servo_engage()
+
+        enc        = owner._encoder(path)
+        test_dist  = 100.0
+        tolerance  = 0.05   # 5% max error per try
+        test_speeds = [25, 50, 75, 100, 125, 150, 175, 200]
+        retract_speed = 25.0
+        max_pass   = 0
+
+        for speed in test_speeds:
+            trial_errors = []
+            passes = 0
+            for attempt in range(3):
+                enc.set_direction(forward=True)
+                enc.reset_distance()
+                motion.drive_move(test_dist, speed=float(speed))
+                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                enc_reading = enc.get_distance()
+                error = abs(enc_reading - test_dist) / test_dist
+                trial_errors.append(error * 100.0)
+                if error <= tolerance:
+                    passes += 1
+                # Retract at safe low speed — accuracy not needed here
+                enc.set_direction(forward=False)
+                enc.reset_distance()
+                motion.drive_move(-test_dist, speed=retract_speed)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.2)
+
+            avg_err = sum(trial_errors) / len(trial_errors)
+            passed  = passes >= 2
+            gcmd.respond_info(
+                "  %3dmm/s: %s  (errors: %s  avg %.1f%%)"
+                % (speed,
+                   "PASS" if passed else "FAIL",
+                   [round(e, 1) for e in trial_errors],
+                   avg_err))
+
+            if passed:
+                max_pass = speed
+            else:
+                break   # no point testing faster speeds
+
+        motion.servo_disengage()
+
+        if max_pass == 0:
+            gcmd.respond_info(
+                "SA CAL: FAILED at all speeds. Check encoder wiring / mm_per_pulse.")
+            return
+
+        safe_speed = max_pass * 0.80
+        self._save_variable('encoder_max_speed', '%.1f' % safe_speed)
+        gcmd.respond_info(
+            "SA CAL: Max reliable speed %dmm/s → safe speed %.0fmm/s (80%%).\n"
+            "Saved as encoder_max_speed — Bowden cal blast speed updated automatically."
+            % (max_pass, safe_speed))
+
+    # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_BOWDEN
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -697,7 +790,10 @@ class SACalibration:
                 return
 
             # Three-phase approach speeds (48V / TMC5160)
-            blast_speed    = 200.0             # 0–65% of estimated — no sensor check
+            # Blast speed: use calibrated encoder_max_speed if available, else 100mm/s safe default
+            sv = owner.printer.lookup_object('save_variables', None)
+            saved_max = float(sv.allVariables.get('encoder_max_speed', 0)) if sv else 0
+            blast_speed = saved_max if saved_max > 0 else 100.0
             quick_speed    = 50.0              # 65–82.5% — no sensor check
             approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
 
