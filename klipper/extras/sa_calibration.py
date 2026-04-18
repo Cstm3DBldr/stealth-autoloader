@@ -517,6 +517,7 @@ class SACalibration:
             enc.reset_distance()
 
             dn = owner._drv_name()
+            motion.servo_engage()
             motion._cancel_timeout(dn)
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
@@ -574,7 +575,8 @@ class SACalibration:
                 "SA_RESPOND VALUE=200.0  (replace with actual mm)")
 
         elif state.startswith('enc_meas_'):
-            motion.servo_disengage()
+            # Release motor torque but keep servo engaged —
+            # user needs grip to reposition filament with the drive knob
             motion.drive_disable()
 
             try:
@@ -605,19 +607,22 @@ class SACalibration:
                 "SA CAL: Pass %d/3 — encoder %.2fmm  actual %.2fmm  "
                 "error %.2fmm (%.1f%%)\n"
                 "  mm_per_pulse: %.5f → %.5f%s"
-                % (attempt, data['enc_reading'], actual, error, pct,
+                % (attempt, enc_reading, actual, error, pct,
                    current_mpp, new_mpp, "  ✓ done" if done else ""))
 
             if done:
+                motion.servo_disengage()
                 owner._cal_state = 'enc_save_%d' % path
                 self._prompt(gcmd,
                     "Save mm_per_pulse=%.5f?" % new_mpp,
                     "SA_RESPOND VALUE=yes",
                     "SA_RESPOND VALUE=no")
             else:
+                # Servo still engaged — use knob to re-mark filament position
                 owner._cal_state = 'enc_mark_%d' % path
                 self._prompt(gcmd,
-                    "Re-mark the filament at its new position, then confirm ready.",
+                    "Servo engaged — use knob to reposition filament to new mark, "
+                    "then confirm ready.",
                     "SA_RESPOND VALUE=yes")
 
         elif state.startswith('enc_save_'):
