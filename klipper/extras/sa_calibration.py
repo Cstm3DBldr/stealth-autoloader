@@ -507,7 +507,7 @@ class SACalibration:
             attempt        = data['attempt'] + 1
             data['attempt'] = attempt
             target         = 200.0
-            max_travel     = 350.0
+            max_travel     = 600.0
             poll_interval  = 0.05   # seconds between encoder checks
             cal_speed      = owner.feed_speed * 0.5
 
@@ -548,13 +548,14 @@ class SACalibration:
 
             enc_reading = enc.get_distance()
 
-            if enc_reading < target * 0.5:
+            if enc_reading < 3.0:
                 motion.servo_disengage()
                 motion.drive_disable()
                 self._clear()
                 raise gcmd.error(
-                    "SA CAL: Encoder %d not responding — %.2fmm counted. "
-                    "Check wiring and filament grip." % (path, enc_reading))
+                    "SA CAL: Encoder %d not responding — %.2fmm counted after "
+                    "%.0fmm travel. Check wiring and filament grip."
+                    % (path, enc_reading, max_travel))
 
             gcmd.respond_info(
                 "SA CAL: Motor stopped — encoder reads %.2fmm." % enc_reading)
@@ -587,10 +588,13 @@ class SACalibration:
 
             current_mpp = data['best_mpp']
             attempt     = data['attempt']
+            enc_reading = data['enc_reading']
             target      = 200.0
             error       = abs(actual - target)
             pct         = error / target * 100.0
-            new_mpp     = current_mpp * (actual / target)
+            # Use actual enc_reading (not assumed target) so formula is valid
+            # whether motor stopped at target or was halted by max_travel limit
+            new_mpp     = current_mpp * (actual / enc_reading)
 
             data['best_mpp'] = new_mpp
             # Apply immediately so next pass uses corrected mpp
