@@ -13,7 +13,7 @@
 #   enc_zero_N / enc_exit_N
 #   bow_est_N
 
-import sys, os as _os
+import sys, os as _os, re
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
 if _extras_dir not in sys.path:
     sys.path.insert(0, _extras_dir)
@@ -101,6 +101,47 @@ class SACalibration:
         """Write a calibration value to save_variables immediately — no restart needed."""
         self.owner.gcode.run_script_from_command(
             "SAVE_VARIABLE VARIABLE=%s VALUE=%s" % (key, str(value)))
+
+    def _patch_hardware_cfg(self, section, option, value):
+        """Edit a key in hardware.cfg directly — no SAVE_CONFIG needed.
+
+        Returns (True, path) on success, (False, error_msg) on failure.
+        Looks for hardware.cfg alongside the primary Klipper config file.
+        """
+        try:
+            config_file = self.owner.printer.get_start_args().get('config_file', '')
+            config_dir  = _os.path.dirname(config_file)
+            hw_cfg      = _os.path.join(
+                config_dir, 'stealth-autoloader', 'hardware.cfg')
+            if not _os.path.exists(hw_cfg):
+                return False, "hardware.cfg not found at %s" % hw_cfg
+
+            with open(hw_cfg, 'r') as f:
+                lines = f.readlines()
+
+            in_section = False
+            patched    = False
+            new_lines  = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('['):
+                    in_section = (stripped == '[%s]' % section)
+                if in_section and re.match(
+                        r'^' + re.escape(option) + r'\s*[=:]', stripped):
+                    line    = re.sub(r'(\s*[=:]\s*)\S+', r'\g<1>' + value, line)
+                    patched = True
+                new_lines.append(line)
+
+            if not patched:
+                return False, ("'%s' not found in [%s]" % (option, section))
+
+            with open(hw_cfg, 'w') as f:
+                f.writelines(new_lines)
+            logging.info("SACalibration: patched %s [%s] %s = %s",
+                         hw_cfg, section, option, value)
+            return True, hw_cfg
+        except Exception as e:
+            return False, str(e)
 
     def _restore_selector_current(self, gcmd, sn):
         owner = self.owner
@@ -393,27 +434,20 @@ class SACalibration:
             self._clear()
 
             if self._yes(value):
-                # Queue hardware.cfg update — takes effect after SAVE_CONFIG + restart
-                try:
-                    configfile = self.owner.printer.lookup_object('configfile')
-                    configfile.set('manual_stepper sa_drive',
-                                   'rotation_distance', '%.4f' % new_rd)
-                    cfg_queued = True
-                except Exception as e:
-                    logging.warning("SA CAL: configfile.set failed: %s", e)
-                    cfg_queued = False
-                # Also persist to variables as backup
                 self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
-                if cfg_queued:
+                ok, result = self._patch_hardware_cfg(
+                    'manual_stepper sa_drive', 'rotation_distance', '%.4f' % new_rd)
+                if ok:
                     gcmd.respond_info(
-                        "SA CAL: rotation_distance=%.4f queued for hardware.cfg.\n"
-                        "Run SAVE_CONFIG then restart Klipper — "
-                        "100mm will equal 100mm." % new_rd)
+                        "SA CAL: rotation_distance=%.4f written to hardware.cfg.\n"
+                        "Restart Klipper — 100mm will equal 100mm." % new_rd)
                 else:
                     gcmd.respond_info(
                         "SA CAL: rotation_distance=%.4f saved to variables.cfg.\n"
-                        "Manually update hardware.cfg [manual_stepper sa_drive] "
-                        "rotation_distance: %.4f then restart Klipper." % (new_rd, new_rd))
+                        "Could not auto-update hardware.cfg (%s).\n"
+                        "Manually set rotation_distance: %.4f in "
+                        "[manual_stepper sa_drive] then restart Klipper."
+                        % (new_rd, result, new_rd))
             else:
                 gcmd.respond_info(
                     "SA CAL: Not saved. rotation_distance remains %.4f." % orig_rd)
