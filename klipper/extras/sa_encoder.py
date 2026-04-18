@@ -9,7 +9,7 @@
 # Usage in hardware.cfg:
 #   [sa_encoder tool0]
 #   sensor_pin: ^autoloader_a:SA_ENCODER_T0
-#   mm_per_pulse: 0.5      # calibrate this per encoder
+#   mm_per_pulse: 1.0      # calibrate this per encoder
 #
 # Python API (called from filament_feed.py):
 #   encoder.set_direction(forward=True)
@@ -26,8 +26,8 @@ class SAEncoder:
         self.name = parts[-1] if len(parts) > 1 else 'main'
 
         # mm of filament per encoder pulse — calibrate with SA_CALIBRATE_ENCODER
-        # Binky default: 23 mm wheel circumference / ~48 pulses per rev ≈ 0.48 mm/pulse
-        self.mm_per_pulse = config.getfloat('mm_per_pulse', 0.5)
+        # Binky default: ~1 pulse per mm of filament movement
+        self.mm_per_pulse = config.getfloat('mm_per_pulse', 1.0)
 
         self._distance  = 0.0
         self._direction = 1     # +1 = forward (loading), -1 = reverse (unloading)
