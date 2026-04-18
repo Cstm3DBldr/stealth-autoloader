@@ -314,7 +314,7 @@ class SACalibration:
 
             data.update({'path': path, 'best_rd': best_rd, 'attempt': 0,
                          'original_rd': best_rd, 'original_sd': orig_sd,
-                         'steppers': steppers})
+                         'steppers': steppers, 'cmd_mm': 100.0})
             owner._cal_state = 'drv_mark'
 
             self._prompt(gcmd,
@@ -325,17 +325,20 @@ class SACalibration:
             attempt        = data['attempt'] + 1
             data['attempt'] = attempt
             path   = data['path']
+            cmd_mm = data.get('cmd_mm', 100.0)
 
-            gcmd.respond_info("SA CAL: Attempt %d/3 — commanding 100mm..." % attempt)
+            gcmd.respond_info(
+                "SA CAL: Attempt %d/3 — commanding %.1fmm..." % (attempt, cmd_mm))
             enc = owner._encoder(path)
             enc.set_direction(forward=True)
             enc.reset_distance()
-            motion.drive_move(100.0, speed=owner.feed_speed * 0.5)
+            motion.drive_move(cmd_mm, speed=owner.feed_speed * 0.5)
             motion.drive_disable()
+            data['last_cmd_mm'] = cmd_mm
 
             owner._cal_state = 'drv_meas'
             self._prompt(gcmd,
-                "100mm commanded. Measure from your mark to the new filament end.",
+                "Measure from your mark to the new filament end (target: 100mm).",
                 "SA_RESPOND VALUE=100.0  (replace with actual mm)")
 
         elif state == 'drv_meas':
@@ -348,32 +351,28 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Must be > 0.")
                 return
 
-            best_rd  = data['best_rd']
+            cmd_mm   = data.get('last_cmd_mm', 100.0)
+            orig_rd  = data['original_rd']
             attempt  = data['attempt']
-            steppers = data.get('steppers', [])
             target   = 100.0
             error    = abs(measured - target)
             pct      = error / target * 100.0
-            new_rd   = best_rd * (measured / target)
 
-            # Apply correction immediately so the next pass uses the new value
-            if steppers:
-                current_sd = steppers[0].get_step_dist()
-                new_sd     = current_sd * (measured / target)
-                try:
-                    steppers[0].set_step_dist(new_sd)
-                except Exception as e:
-                    logging.warning("SA CAL: set_step_dist failed: %s", e)
+            # True rotation_distance based on original rd and actual ratio this pass
+            new_rd   = orig_rd * (measured / cmd_mm)
+            # Command this distance next pass so stepper outputs 100mm
+            next_cmd = cmd_mm * (target / measured)
 
             data['best_rd'] = new_rd
+            data['cmd_mm']  = next_cmd
 
             done = (error <= 1.0 or attempt >= 3)
             gcmd.respond_info(
                 "SA CAL: Pass %d/3 — commanded %.1fmm  measured %.2fmm  "
                 "error %.2fmm (%.1f%%)\n"
-                "  rotation_distance: %.4f → %.4f%s"
-                % (attempt, target, measured, error, pct, best_rd, new_rd,
-                   "  ✓ calibrated" if (done and error <= 1.0) else "  (applied for next pass)" if not done else ""))
+                "  rotation_distance: %.4f → %.4f  next_cmd: %.1fmm%s"
+                % (attempt, cmd_mm, measured, error, pct, orig_rd, new_rd, next_cmd,
+                   "  ✓ done" if done else ""))
 
             if done:
                 motion.servo_disengage()
@@ -391,10 +390,17 @@ class SACalibration:
         elif state == 'drv_save':
             new_rd   = data['best_rd']
             orig_rd  = data.get('original_rd') or new_rd
+            steppers = data.get('steppers', [])
             self._clear()
 
             if self._yes(value):
-                # Correction already applied live during passes — just persist
+                # Apply to live stepper object for rest of session
+                if steppers:
+                    try:
+                        steppers[0].set_step_dist(
+                            steppers[0].get_step_dist() * (new_rd / orig_rd))
+                    except Exception as e:
+                        logging.warning("SA CAL: set_step_dist at save failed: %s", e)
                 self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
                 gcmd.respond_info(
                     "SA CAL: rotation_distance=%.4f saved — effective immediately.\n"
