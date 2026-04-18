@@ -507,37 +507,57 @@ class SACalibration:
             attempt        = data['attempt'] + 1
             data['attempt'] = attempt
             target         = 200.0
-            step           = 5.0
             max_travel     = 350.0
+            poll_interval  = 0.05   # seconds between encoder checks
+            cal_speed      = owner.feed_speed * 0.5
 
             # Apply current best mm_per_pulse so encoder counts correctly
             enc.mm_per_pulse = data['best_mpp']
             enc.set_direction(forward=True)
             enc.reset_distance()
 
-            gcmd.respond_info(
-                "SA CAL: Attempt %d/3 — feeding until encoder reads %.0fmm "
-                "(mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
+            dn = owner._drv_name()
+            motion._cancel_timeout(dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % dn)
 
-            travelled = 0.0
-            while enc.get_distance() < target and travelled < max_travel:
-                motion.drive_move(step, speed=owner.feed_speed * 0.5)
-                travelled += step
+            gcmd.respond_info(
+                "SA CAL: Attempt %d/3 — continuous feed until encoder reads "
+                "%.0fmm (mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
+
+            # Queue long move — returns immediately (SYNC=0)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f SYNC=0"
+                % (dn, max_travel, cal_speed))
+
+            # Poll encoder every 50ms — reactor processes pulse callbacks each pause
+            deadline = owner.reactor.monotonic() + (max_travel / cal_speed) + 2.0
+            while enc.get_distance() < target:
+                owner.reactor.pause(owner.reactor.monotonic() + poll_interval)
+                if owner.reactor.monotonic() > deadline:
+                    break
+
+            # Abrupt stop — at cal speed (~25mm/s) overshoot is <2mm
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=0" % dn)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
 
             enc_reading = enc.get_distance()
 
-            if travelled >= max_travel and enc_reading < target * 0.5:
+            if enc_reading < target * 0.5:
                 motion.servo_disengage()
                 motion.drive_disable()
                 self._clear()
                 raise gcmd.error(
-                    "SA CAL: Encoder %d not responding — %.2fmm counted after "
-                    "%.0fmm commanded. Check wiring and filament grip."
-                    % (path, enc_reading, max_travel))
+                    "SA CAL: Encoder %d not responding — %.2fmm counted. "
+                    "Check wiring and filament grip." % (path, enc_reading))
 
             gcmd.respond_info(
-                "SA CAL: Motor stopped — encoder reads %.2fmm "
-                "(%.0fmm commanded)." % (enc_reading, travelled))
+                "SA CAL: Motor stopped — encoder reads %.2fmm." % enc_reading)
 
             # Hold servo + motor torque while user measures
             dn = owner._drv_name()
