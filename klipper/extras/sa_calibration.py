@@ -554,17 +554,25 @@ class SACalibration:
                     "SA CAL: WARNING — spread %.1f%% — check encoder grip."
                     % (spread / avg_count * 100))
 
-            motion.servo_disengage()
+            # Keep servo engaged and motor holding so filament doesn't slip
+            # while the user measures. Cancel idle timeout to prevent auto-disable.
+            dn = owner._drv_name()
+            motion._cancel_timeout(dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
             data['new_mpp'] = new_mpp
             owner._cal_state = 'enc_exit_%d' % path
 
             self._prompt(gcmd,
-                "Measure filament from zero reference (should be ~200mm). "
-                "Enter distance or 'ok' if correct.",
+                "Servo engaged, drive holding. Measure filament from zero reference "
+                "(should be ~200mm). Enter distance or 'ok' if correct.",
                 "SA_RESPOND VALUE=ok",
                 "SA_RESPOND VALUE=200.5  (replace with actual mm if wrong)")
 
         elif state.startswith('enc_exit_'):
+            motion.servo_disengage()
+            motion.drive_disable()
+
             new_mpp = data['new_mpp']
             if value.lower() not in ('ok', 'yes', 'good'):
                 try:
