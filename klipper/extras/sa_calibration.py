@@ -66,7 +66,17 @@ class SACalibration:
 
     def _abort(self, gcmd):
         gcmd.respond_info("SA CAL: Calibration aborted.")
+        self.owner.motion.servo_disengage()
         self._clear()
+
+    def _safe_selector_move(self, motion, position_mm):
+        """Disengage servo if engaged, move selector, restore servo state."""
+        was_engaged = self.owner._servo_is_engaged
+        if was_engaged:
+            motion.servo_disengage()
+        motion.selector_move_to(position_mm)
+        if was_engaged:
+            motion.servo_engage()
 
     def _clear(self):
         self.owner._cal_state = None
@@ -293,9 +303,9 @@ class SACalibration:
                 return
 
             gcmd.respond_info("SA CAL: Selecting path %d..." % path)
-            motion.servo_disengage()
-            motion.selector_move_to(owner._selector_positions[path])
+            self._safe_selector_move(motion, owner._selector_positions[path])
             owner.current_path = path
+            motion.servo_engage()
 
             drive_obj = owner.printer.lookup_object(owner.drive_stepper_name)
             steppers  = drive_obj.get_steppers()
@@ -316,13 +326,11 @@ class SACalibration:
             data['attempt'] = attempt
             path   = data['path']
 
-            gcmd.respond_info("SA CAL: Attempt %d/3 — engaging and commanding 100mm..." % attempt)
-            motion.servo_engage()
+            gcmd.respond_info("SA CAL: Attempt %d/3 — commanding 100mm..." % attempt)
             enc = owner._encoder(path)
             enc.set_direction(forward=True)
             enc.reset_distance()
             motion.drive_move(100.0, speed=owner.feed_speed * 0.5)
-            motion.servo_disengage()
             motion.drive_disable()
 
             owner._cal_state = 'drv_meas'
@@ -432,9 +440,9 @@ class SACalibration:
             "~2000mm of free filament needed." % (path, path))
 
         gcmd.respond_info("SA CAL: Selecting path %d..." % path)
-        owner.motion.servo_disengage()
-        owner.motion.selector_move_to(owner._selector_positions[path])
+        self._safe_selector_move(owner.motion, owner._selector_positions[path])
         owner.current_path = path
+        owner.motion.servo_engage()
 
         owner._cal_data  = {'path': path}
         owner._cal_state = 'enc_zero_%d' % path
@@ -451,8 +459,7 @@ class SACalibration:
         enc    = owner._encoder(path)
 
         if state.startswith('enc_zero_'):
-            gcmd.respond_info("SA CAL: Engaging drive and running baseline check (200mm)...")
-            motion.servo_engage()
+            gcmd.respond_info("SA CAL: Baseline check — feeding 200mm...")
             enc.set_direction(forward=True)
             enc.reset_distance()
             motion.drive_move(200.0, speed=owner.feed_speed * 0.5)
