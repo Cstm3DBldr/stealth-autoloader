@@ -521,31 +521,23 @@ class SACalibration:
             motion._cancel_timeout(dn)
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % dn)
 
             gcmd.respond_info(
-                "SA CAL: Attempt %d/3 — continuous feed until encoder reads "
+                "SA CAL: Attempt %d/3 — stepping until encoder reads "
                 "%.0fmm (mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
 
-            # Queue long move — returns immediately (SYNC=0)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f SYNC=0"
-                % (dn, max_travel, cal_speed))
+            # Step-by-step: motor stops fully between steps so encoder
+            # pulses are delivered one-by-one (no CAN batching issue).
+            # Fast approach until 80% of target, then 3mm precision steps.
+            fast_step     = 10.0
+            slow_step     = 3.0
+            slow_threshold = target * 0.8
+            travelled     = 0.0
 
-            # Poll encoder every 50ms — reactor processes pulse callbacks each pause
-            deadline = owner.reactor.monotonic() + (max_travel / cal_speed) + 2.0
-            while enc.get_distance() < target:
-                owner.reactor.pause(owner.reactor.monotonic() + poll_interval)
-                if owner.reactor.monotonic() > deadline:
-                    break
-
-            # Abrupt stop — at cal speed (~25mm/s) overshoot is <2mm
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=0" % dn)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+            while enc.get_distance() < target and travelled < max_travel:
+                step = slow_step if enc.get_distance() >= slow_threshold else fast_step
+                motion.drive_move(step, speed=cal_speed)
+                travelled += step
 
             enc_reading = enc.get_distance()
 
