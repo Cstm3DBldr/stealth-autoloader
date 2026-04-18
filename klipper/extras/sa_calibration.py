@@ -702,8 +702,8 @@ class SACalibration:
             approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
 
             # Distances scale with user's estimate:
-            #   blast = 65%, quick = half of remainder (17.5%), approach = final 17.5%+
-            blast_end  = estimated * 0.65
+            #   blast = 75%, quick = half of remainder (12.5%), approach = final 12.5%+
+            blast_end  = estimated * 0.75
             quick_end  = blast_end + (estimated - blast_end) * 0.5   # midpoint of remainder
             # Sensor polling from quick_end; overshoot budget = 20% beyond estimated
             inch_limit = estimated * 0.20
