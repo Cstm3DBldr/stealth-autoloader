@@ -697,7 +697,7 @@ class SACalibration:
                 return
 
             # Three-phase approach speeds (48V / TMC5160)
-            blast_speed    = 300.0             # 0–65% of estimated — no sensor check
+            blast_speed    = 200.0             # 0–65% of estimated — no sensor check
             quick_speed    = 50.0              # 65–82.5% — no sensor check
             approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
 
