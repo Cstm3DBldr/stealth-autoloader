@@ -366,7 +366,7 @@ class SACalibration:
             data['best_rd'] = new_rd
             data['cmd_mm']  = next_cmd
 
-            done = (error <= 1.0 or attempt >= 3)
+            done = (attempt >= 3)
             gcmd.respond_info(
                 "SA CAL: Pass %d/3 — commanded %.1fmm  measured %.2fmm  "
                 "error %.2fmm (%.1f%%)\n"
