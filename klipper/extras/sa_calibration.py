@@ -697,18 +697,26 @@ class SACalibration:
                 return
 
             # Three-phase approach speeds (48V / TMC5160)
-            blast_speed  = 300.0          # phase 1: 0–50%  — no sensor check
-            quick_speed  = 50.0           # phase 2: 50–75% — no sensor check
-            approach_speed = owner.feed_speed  # phase 3: 75–90% + inch — sensor polling
+            blast_speed    = 300.0             # 0–65% of estimated — no sensor check
+            quick_speed    = 50.0              # 65–82.5% — no sensor check
+            approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
 
-            blast_end  = estimated * 0.50
-            quick_end  = estimated * 0.75
-            inch_start = estimated * 0.90
+            # Distances scale with user's estimate:
+            #   blast = 65%, quick = half of remainder (17.5%), approach = final 17.5%+
+            blast_end  = estimated * 0.65
+            quick_end  = blast_end + (estimated - blast_end) * 0.5   # midpoint of remainder
+            # Sensor polling from quick_end; overshoot budget = 20% beyond estimated
+            inch_limit = estimated * 0.20
 
             gcmd.respond_info(
-                "SA CAL: Running 3 trials — "
-                "%.0fmm @%.0fmm/s → %.0fmm @%.0fmm/s → sensor approach..."
-                % (blast_end, blast_speed, quick_end - blast_end, quick_speed))
+                "SA CAL: Running 3 trials\n"
+                "  Blast  %.0f–%.0fmm @ %.0fmm/s (no sensor)\n"
+                "  Quick  %.0f–%.0fmm @ %.0fmm/s (no sensor)\n"
+                "  Approach %.0fmm+ @ %.0fmm/s with sensor polling\n"
+                "  NOTE: accuracy depends on your estimate being close to actual length."
+                % (0, blast_end, blast_speed,
+                   blast_end, quick_end, quick_speed,
+                   quick_end, approach_speed))
 
             for trial in range(3):
                 gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
@@ -722,38 +730,29 @@ class SACalibration:
                 enc.set_direction(forward=True)
                 enc.reset_distance()
 
-                # Phase 1: blast to 50% — single move, no sensor check
+                # Phase 1: blast to 65% — single move, no sensor check
                 motion.drive_move(blast_end, speed=blast_speed)
 
-                # Phase 2: quick to 75% — single move, no sensor check
+                # Phase 2: quick to midpoint of remainder — single move, no sensor check
                 motion.drive_move(quick_end - blast_end, speed=quick_speed)
 
-                # Phase 3: 75%–90% with sensor polling (10mm steps)
-                triggered  = False
-                current_pos = quick_end
-                while current_pos < inch_start and not triggered:
-                    step = min(owner.feed_step_size, inch_start - current_pos)
-                    motion.drive_move(step, speed=approach_speed)
-                    current_pos += step
+                # Phase 3: sensor polling from quick_end until triggered or overshoot limit
+                triggered = False
+                inched    = 0.0
+                while not triggered and inched < inch_limit:
+                    motion.drive_move(owner.feed_step_size, speed=approach_speed)
+                    inched += owner.feed_step_size
                     owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
                     if owner._extruder_sensor_active(path):
                         triggered = True
 
-                # Phase 4: inch past 90% until sensor triggers
                 if not triggered:
-                    inch_max = estimated * 0.3
-                    inched   = 0.0
-                    while not owner._extruder_sensor_active(path) and inched < inch_max:
-                        motion.drive_move(owner.feed_step_size, speed=approach_speed)
-                        inched += owner.feed_step_size
-                        owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
-
-                    if not owner._extruder_sensor_active(path):
-                        motion.servo_disengage()
-                        self._clear()
-                        raise gcmd.error(
-                            "SA CAL: Extruder sensor path %d not triggered after %.0fmm. "
-                            "Check sensor or increase estimate." % (path, estimated))
+                    motion.servo_disengage()
+                    self._clear()
+                    raise gcmd.error(
+                        "SA CAL: Extruder sensor path %d not triggered within %.0fmm of "
+                        "your estimate (%.0fmm). Re-run with a larger estimate."
+                        % (path, inch_limit, estimated))
 
                 length = enc.get_distance()
                 gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
