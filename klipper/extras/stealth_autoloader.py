@@ -138,6 +138,7 @@ class StealthAutoloader:
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
+        self._selector_homed   = False
         self._servo_is_engaged = False
         self.path_states       = [self.STATE_UNKNOWN] * self.num_paths
 

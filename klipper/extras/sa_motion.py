@@ -165,6 +165,7 @@ class SAMotion:
 
         self._arm_timeout(sn)
         owner.current_path = -1
+        owner._selector_homed = True
         self._selector_position = 0.0
         logging.info("SAMotion: selector homed")
         self.save_position()
@@ -229,9 +230,12 @@ class SAMotion:
         if sv is None:
             return
         try:
-            sv.allVariables['sa_selector_pos']   = self._selector_position
-            sv.allVariables['sa_current_path']    = owner.current_path
-            sv.save_variables()
+            owner.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_selector_pos VALUE=%.3f"
+                % self._selector_position)
+            owner.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_current_path VALUE=%d"
+                % owner.current_path)
             logging.debug("SAMotion: position saved (sel=%.3f path=%d)",
                           self._selector_position, owner.current_path)
         except Exception as e:
@@ -277,6 +281,7 @@ class SAMotion:
         if pos != 0.0 or path != -1:
             self._selector_position = pos
             owner.current_path = path
+            owner._selector_homed = True
             logging.info("SAMotion: restored selector position=%.3fmm path=%d from save_variables",
                          pos, path)
         else:

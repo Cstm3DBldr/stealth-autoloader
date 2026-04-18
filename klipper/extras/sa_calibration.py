@@ -255,6 +255,10 @@ class SACalibration:
                 "SA CAL: Calibration already in progress (state=%s).\n"
                 "  SA_RESPOND VALUE=abort" % owner._cal_state)
 
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
+
         gcmd.respond_info(
             "SA DRIVE CALIBRATION\n"
             "====================\n"
@@ -288,11 +292,10 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Path %d out of range." % path)
                 return
 
-            gcmd.respond_info("SA CAL: Selecting path %d and engaging drive gear..." % path)
+            gcmd.respond_info("SA CAL: Selecting path %d..." % path)
             motion.servo_disengage()
             motion.selector_move_to(owner._selector_positions[path])
             owner.current_path = path
-            motion.servo_engage()
 
             drive_obj = owner.printer.lookup_object(owner.drive_stepper_name)
             steppers  = drive_obj.get_steppers()
@@ -313,11 +316,14 @@ class SACalibration:
             data['attempt'] = attempt
             path   = data['path']
 
-            gcmd.respond_info("SA CAL: Attempt %d/3 — commanding 100mm..." % attempt)
+            gcmd.respond_info("SA CAL: Attempt %d/3 — engaging and commanding 100mm..." % attempt)
+            motion.servo_engage()
             enc = owner._encoder(path)
             enc.set_direction(forward=True)
             enc.reset_distance()
             motion.drive_move(100.0, speed=owner.feed_speed * 0.5)
+            motion.servo_disengage()
+            motion.drive_disable()
 
             owner._cal_state = 'drv_meas'
             self._prompt(gcmd,
@@ -404,7 +410,7 @@ class SACalibration:
     # ══════════════════════════════════════════════════════════════════════════
 
     def calibrate_encoder(self, gcmd):
-        """Phase 0 — select and engage path, prompt to zero filament."""
+        """Phase 0 — select path, prompt to zero filament."""
         owner = self.owner
         path  = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
 
@@ -412,6 +418,10 @@ class SACalibration:
             raise gcmd.error(
                 "SA CAL: Calibration already in progress (state=%s).\n"
                 "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
 
         gcmd.respond_info(
             "SA ENCODER CALIBRATION — Path %d\n"
@@ -421,11 +431,10 @@ class SACalibration:
             "Requirements: filament through drive gear AND encoder for path %d.\n"
             "~2000mm of free filament needed." % (path, path))
 
-        gcmd.respond_info("SA CAL: Selecting path %d and engaging drive gear..." % path)
+        gcmd.respond_info("SA CAL: Selecting path %d..." % path)
         owner.motion.servo_disengage()
         owner.motion.selector_move_to(owner._selector_positions[path])
         owner.current_path = path
-        owner.motion.servo_engage()
 
         owner._cal_data  = {'path': path}
         owner._cal_state = 'enc_zero_%d' % path
@@ -442,7 +451,8 @@ class SACalibration:
         enc    = owner._encoder(path)
 
         if state.startswith('enc_zero_'):
-            gcmd.respond_info("SA CAL: Baseline check — feeding 200mm...")
+            gcmd.respond_info("SA CAL: Engaging drive and running baseline check (200mm)...")
+            motion.servo_engage()
             enc.set_direction(forward=True)
             enc.reset_distance()
             motion.drive_move(200.0, speed=owner.feed_speed * 0.5)
@@ -542,6 +552,10 @@ class SACalibration:
             raise gcmd.error(
                 "SA CAL: Calibration already in progress (state=%s).\n"
                 "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
 
         gcmd.respond_info(
             "SA BOWDEN CALIBRATION — Path %d\n"
