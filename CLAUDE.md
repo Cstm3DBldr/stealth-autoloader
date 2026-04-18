@@ -128,6 +128,12 @@ ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 
 Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when empty on this hardware.
 
+**BTT EBB36 toolhead sensor pins (per toolhead MCU `etN`):**
+| Pin | Sensor | Role |
+|---|---|---|
+| `^etN:PB8` | `toolhead_sensor_N` | Filament presence at nozzle end of Bowden tube |
+| `^etN:PB5` | `extruder_sensor_N` | Filament at extruder gears (Bowden cal + load target) |
+
 ---
 
 ## Klipper Config Rules — Strict
