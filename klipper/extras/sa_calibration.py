@@ -390,24 +390,30 @@ class SACalibration:
         elif state == 'drv_save':
             new_rd   = data['best_rd']
             orig_rd  = data.get('original_rd') or new_rd
-            steppers = data.get('steppers', [])
             self._clear()
 
             if self._yes(value):
-                # Apply to live stepper object for rest of session
-                if steppers:
-                    try:
-                        steppers[0].set_step_dist(
-                            steppers[0].get_step_dist() * (new_rd / orig_rd))
-                    except Exception as e:
-                        logging.warning("SA CAL: set_step_dist at save failed: %s", e)
+                # Queue hardware.cfg update — takes effect after SAVE_CONFIG + restart
+                try:
+                    configfile = self.owner.printer.lookup_object('configfile')
+                    configfile.set('manual_stepper sa_drive',
+                                   'rotation_distance', '%.4f' % new_rd)
+                    cfg_queued = True
+                except Exception as e:
+                    logging.warning("SA CAL: configfile.set failed: %s", e)
+                    cfg_queued = False
+                # Also persist to variables as backup
                 self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
-                gcmd.respond_info(
-                    "SA CAL: rotation_distance=%.4f saved — effective immediately.\n"
-                    "Also update hardware.cfg [manual_stepper sa_drive] "
-                    "rotation_distance: %.4f\n"
-                    "so the value survives if variables.cfg is deleted."
-                    % (new_rd, new_rd))
+                if cfg_queued:
+                    gcmd.respond_info(
+                        "SA CAL: rotation_distance=%.4f queued for hardware.cfg.\n"
+                        "Run SAVE_CONFIG then restart Klipper — "
+                        "100mm will equal 100mm." % new_rd)
+                else:
+                    gcmd.respond_info(
+                        "SA CAL: rotation_distance=%.4f saved to variables.cfg.\n"
+                        "Manually update hardware.cfg [manual_stepper sa_drive] "
+                        "rotation_distance: %.4f then restart Klipper." % (new_rd, new_rd))
             else:
                 gcmd.respond_info(
                     "SA CAL: Not saved. rotation_distance remains %.4f." % orig_rd)
