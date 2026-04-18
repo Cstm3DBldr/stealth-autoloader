@@ -206,6 +206,7 @@ class SAMotion:
 
         self._cancel_timeout(dn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % dn)
         owner.gcode.run_script_from_command(
             "MANUAL_STEPPER STEPPER=%s MOVE=%.3f SPEED=%.1f" % (dn, distance_mm, speed))
         owner.gcode.run_script_from_command("M400")
