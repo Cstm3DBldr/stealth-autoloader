@@ -814,19 +814,36 @@ class SACalibration:
                    blast_end, quick_end, quick_speed,
                    quick_end, approach_speed))
 
+            # Select path and engage servo once — stays engaged for all 3 trials
+            motion.servo_disengage()
+            motion.selector_move_to(owner._selector_positions[path])
+            owner.current_path = path
+            motion.servo_engage()
+
+            enc = owner._encoder(path)
+            retract_speed = blast_speed * 0.5
+
+            # Pre-run: retract until encoder stops seeing filament, then zero
+            # Clears any 5–50mm stub left in encoder from prior moves for clean trial 1
+            gcmd.respond_info("SA CAL: Clearing encoder — retracting until filament clears...")
+            enc.set_direction(forward=False)
+            for _ in range(12):    # max 12 × 5mm = 60mm
+                enc.reset_distance()
+                motion.drive_move(-5.0, speed=25.0)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                if abs(enc.get_distance()) < 0.5:   # no pulses this step — encoder is clear
+                    break
+            enc.set_direction(forward=True)
+            enc.reset_distance()
+            gcmd.respond_info("SA CAL: Encoder cleared — starting 3 trials.")
+
             for trial in range(3):
                 gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
 
-                motion.servo_disengage()
-                motion.selector_move_to(owner._selector_positions[path])
-                owner.current_path = path
-                motion.servo_engage()
-
-                enc = owner._encoder(path)
                 enc.set_direction(forward=True)
                 enc.reset_distance()
 
-                # Phase 1: blast to 65% — single move, no sensor check
+                # Phase 1: blast to 75% — single move, no sensor check
                 motion.drive_move(blast_end, speed=blast_speed)
 
                 # Phase 2: quick to midpoint of remainder — single move, no sensor check
@@ -854,14 +871,21 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
                 data['trials'].append(length)
 
-                # Retract fully past encoder — length + 30mm gear-to-encoder gap + 30mm margin
-                # Use half blast speed: long retract fights tube friction, motor stalls at full speed
-                retract_speed = blast_speed * 0.5
+                # Retract past encoder — servo stays engaged, ready for next trial
                 motion.drive_move(-(length + 60.0), speed=retract_speed)
-                # Reset encoder so next trial starts from a known zero
+                # Step-clear: pull back in small steps until encoder confirms clear
+                enc.set_direction(forward=False)
+                for _ in range(12):
+                    enc.reset_distance()
+                    motion.drive_move(-5.0, speed=25.0)
+                    owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                    if abs(enc.get_distance()) < 0.5:
+                        break
+                enc.set_direction(forward=True)
                 enc.reset_distance()
-                motion.servo_disengage()
-                owner.reactor.pause(owner.reactor.monotonic() + 0.5)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
+            motion.servo_disengage()
 
             trials     = data['trials']
             avg_length = sum(trials) / len(trials)
