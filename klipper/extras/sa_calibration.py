@@ -348,35 +348,41 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Must be > 0.")
                 return
 
-            best_rd = data['best_rd']
-            attempt = data['attempt']
-            target  = 100.0
-            error   = abs(measured - target)
-            pct     = error / target * 100.0
-            new_rd  = best_rd * (measured / target)
+            best_rd  = data['best_rd']
+            attempt  = data['attempt']
+            steppers = data.get('steppers', [])
+            target   = 100.0
+            error    = abs(measured - target)
+            pct      = error / target * 100.0
+            new_rd   = best_rd * (measured / target)
 
-            gcmd.respond_info(
-                "SA CAL: Pass %d/3 — commanded %.1fmm  measured %.2fmm  "
-                "error %.2fmm (%.1f%%)\n"
-                "  Old rotation_distance: %.4f\n"
-                "  New rotation_distance: %.4f"
-                % (attempt, target, measured, error, pct, best_rd, new_rd))
+            # Apply correction immediately so the next pass uses the new value
+            if steppers:
+                current_sd = steppers[0].get_step_dist()
+                new_sd     = current_sd * (measured / target)
+                try:
+                    steppers[0].set_step_dist(new_sd)
+                except Exception as e:
+                    logging.warning("SA CAL: set_step_dist failed: %s", e)
 
             data['best_rd'] = new_rd
 
             done = (error <= 1.0 or attempt >= 3)
+            gcmd.respond_info(
+                "SA CAL: Pass %d/3 — commanded %.1fmm  measured %.2fmm  "
+                "error %.2fmm (%.1f%%)\n"
+                "  rotation_distance: %.4f → %.4f%s"
+                % (attempt, target, measured, error, pct, best_rd, new_rd,
+                   "  ✓ calibrated" if (done and error <= 1.0) else "  (applied for next pass)" if not done else ""))
+
             if done:
-                if error <= 1.0:
-                    gcmd.respond_info("SA CAL: Error within 1mm — drive calibrated!")
                 motion.servo_disengage()
                 owner._cal_state = 'drv_save'
                 self._prompt(gcmd,
-                    "Apply rotation_distance=%.4f now?" % new_rd,
+                    "Save rotation_distance=%.4f?" % new_rd,
                     "SA_RESPOND VALUE=yes",
                     "SA_RESPOND VALUE=no")
             else:
-                gcmd.respond_info(
-                    "SA CAL: Error > 1mm — running pass %d." % (attempt + 1))
                 owner._cal_state = 'drv_mark'
                 self._prompt(gcmd,
                     "Re-mark the filament at its new position, then confirm ready.",
@@ -385,29 +391,16 @@ class SACalibration:
         elif state == 'drv_save':
             new_rd   = data['best_rd']
             orig_rd  = data.get('original_rd') or new_rd
-            orig_sd  = data.get('original_sd')
-            steppers = data.get('steppers', [])
             self._clear()
 
             if self._yes(value):
-                # Apply to stepper in memory (survives this session)
-                if orig_sd is not None and orig_rd > 0 and steppers:
-                    try:
-                        new_sd = orig_sd * (new_rd / orig_rd)
-                        steppers[0].set_step_dist(new_sd)
-                        gcmd.respond_info(
-                            "SA CAL: rotation_distance=%.4f applied (step_dist=%.6f)."
-                            % (new_rd, new_sd))
-                    except Exception as e:
-                        logging.warning("SA CAL: set_step_dist failed: %s", e)
-
-                # Persist to save_variables
+                # Correction already applied live during passes — just persist
                 self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
                 gcmd.respond_info(
                     "SA CAL: rotation_distance=%.4f saved — effective immediately.\n"
                     "Also update hardware.cfg [manual_stepper sa_drive] "
                     "rotation_distance: %.4f\n"
-                    "so the value is preserved if variables.cfg is ever deleted."
+                    "so the value survives if variables.cfg is deleted."
                     % (new_rd, new_rd))
             else:
                 gcmd.respond_info(
