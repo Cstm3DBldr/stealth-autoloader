@@ -457,7 +457,7 @@ class SACalibration:
     # ══════════════════════════════════════════════════════════════════════════
 
     def calibrate_encoder(self, gcmd):
-        """Phase 0 — select path, prompt to zero filament."""
+        """Phase 0 — select path, engage, prompt to mark filament."""
         owner = self.owner
         path  = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
 
@@ -473,21 +473,27 @@ class SACalibration:
         gcmd.respond_info(
             "SA ENCODER CALIBRATION — Path %d\n"
             "==================================\n"
-            "5 x 400mm feed/retract cycles, averages pulse counts.\n"
+            "Feeds until encoder reads 200mm, you measure actual — 3 passes.\n"
             "\n"
             "Requirements: filament through drive gear AND encoder for path %d.\n"
-            "~2000mm of free filament needed." % (path, path))
+            "~700mm of free filament needed." % (path, path))
 
         gcmd.respond_info("SA CAL: Selecting path %d..." % path)
         self._safe_selector_move(owner.motion, owner._selector_positions[path])
         owner.current_path = path
         owner.motion.servo_engage()
 
-        owner._cal_data  = {'path': path}
-        owner._cal_state = 'enc_zero_%d' % path
+        enc = owner._encoder(path)
+        owner._cal_data  = {
+            'path':         path,
+            'attempt':      0,
+            'best_mpp':     enc.mm_per_pulse,
+            'original_mpp': enc.mm_per_pulse,
+        }
+        owner._cal_state = 'enc_mark_%d' % path
 
         self._prompt(gcmd,
-            "Position filament flush with encoder exit as a zero reference, then confirm.",
+            "Mark the filament at the encoder exit, then confirm ready.",
             "SA_RESPOND VALUE=yes")
 
     def _enc_respond(self, gcmd, state, value):
@@ -497,101 +503,122 @@ class SACalibration:
         path   = int(state.rsplit('_', 1)[-1])
         enc    = owner._encoder(path)
 
-        if state.startswith('enc_zero_'):
-            gcmd.respond_info("SA CAL: Baseline check — feeding 200mm...")
+        if state.startswith('enc_mark_'):
+            attempt        = data['attempt'] + 1
+            data['attempt'] = attempt
+            target         = 200.0
+            step           = 5.0
+            max_travel     = 350.0
+
+            # Apply current best mm_per_pulse so encoder counts correctly
+            enc.mm_per_pulse = data['best_mpp']
             enc.set_direction(forward=True)
             enc.reset_distance()
-            motion.drive_move(200.0, speed=owner.feed_speed * 0.5)
 
-            if enc.get_distance() < 1.0:
+            gcmd.respond_info(
+                "SA CAL: Attempt %d/3 — feeding until encoder reads %.0fmm "
+                "(mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
+
+            travelled = 0.0
+            while enc.get_distance() < target and travelled < max_travel:
+                motion.drive_move(step, speed=owner.feed_speed * 0.5)
+                travelled += step
+
+            enc_reading = enc.get_distance()
+
+            if travelled >= max_travel and enc_reading < target * 0.5:
                 motion.servo_disengage()
+                motion.drive_disable()
                 self._clear()
                 raise gcmd.error(
-                    "SA CAL: Encoder %d returned < 1mm after 200mm. "
-                    "Check wiring and filament grip." % path)
+                    "SA CAL: Encoder %d not responding — %.2fmm counted after "
+                    "%.0fmm commanded. Check wiring and filament grip."
+                    % (path, enc_reading, max_travel))
 
             gcmd.respond_info(
-                "SA CAL: Encoder responding — %.2f units over 200mm. Good."
-                % enc.get_distance())
+                "SA CAL: Motor stopped — encoder reads %.2fmm "
+                "(%.0fmm commanded)." % (enc_reading, travelled))
 
-            gcmd.respond_info("SA CAL: Running 5 x 400mm cycles...")
-            feed_counts    = []
-            retract_counts = []
-
-            for i in range(5):
-                enc.set_direction(forward=True)
-                enc.reset_distance()
-                motion.drive_move(400.0, speed=owner.feed_speed * 0.5)
-                feed_counts.append(enc.get_distance())
-                owner.reactor.pause(owner.reactor.monotonic() + 0.3)
-
-                enc.set_direction(forward=False)
-                enc.reset_distance()
-                motion.drive_move(-400.0, speed=owner.feed_speed * 0.5)
-                retract_counts.append(enc.get_distance())
-                owner.reactor.pause(owner.reactor.monotonic() + 0.2)
-
-                gcmd.respond_info(
-                    "SA CAL: Cycle %d/5 — feed=%.2f  ret=%.2f"
-                    % (i + 1, feed_counts[-1], retract_counts[-1]))
-
-            all_counts  = feed_counts + retract_counts
-            avg_count   = sum(all_counts) / len(all_counts)
-            current_mpp = enc.mm_per_pulse
-            avg_pulses  = avg_count / current_mpp if current_mpp > 0.0 else 1.0
-            new_mpp     = 400.0 / avg_pulses if avg_pulses > 0.0 else current_mpp
-            spread      = max(all_counts) - min(all_counts)
-
-            gcmd.respond_info(
-                "SA CAL: Path %d encoder results:\n"
-                "  10-pass average: %.3f  spread: %.3f\n"
-                "  Current  mm_per_pulse: %.5f\n"
-                "  New      mm_per_pulse: %.5f"
-                % (path, avg_count, spread, current_mpp, new_mpp))
-
-            if avg_count > 0 and spread / avg_count > 0.05:
-                gcmd.respond_info(
-                    "SA CAL: WARNING — spread %.1f%% — check encoder grip."
-                    % (spread / avg_count * 100))
-
-            # Keep servo engaged and motor holding so filament doesn't slip
-            # while the user measures. Cancel idle timeout to prevent auto-disable.
+            # Hold servo + motor torque while user measures
             dn = owner._drv_name()
             motion._cancel_timeout(dn)
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
-            data['new_mpp'] = new_mpp
-            owner._cal_state = 'enc_exit_%d' % path
+            data['enc_reading'] = enc_reading
+            owner._cal_state = 'enc_meas_%d' % path
 
             self._prompt(gcmd,
-                "Servo engaged, drive holding. Measure filament from zero reference "
-                "(should be ~200mm). Enter distance or 'ok' if correct.",
-                "SA_RESPOND VALUE=ok",
-                "SA_RESPOND VALUE=200.5  (replace with actual mm if wrong)")
+                "Servo engaged, drive holding. Measure from your mark to "
+                "filament end (target 200mm).",
+                "SA_RESPOND VALUE=200.0  (replace with actual mm)")
 
-        elif state.startswith('enc_exit_'):
+        elif state.startswith('enc_meas_'):
             motion.servo_disengage()
             motion.drive_disable()
 
-            new_mpp = data['new_mpp']
-            if value.lower() not in ('ok', 'yes', 'good'):
-                try:
-                    actual = float(value)
-                    if abs(actual - 200.0) > 5.0:
-                        gcmd.respond_info(
-                            "SA CAL: Exit position error %.1fmm — consider "
-                            "running SA_CALIBRATE_DRIVE first." % abs(actual - 200.0))
-                except ValueError:
-                    pass
+            try:
+                actual = float(value)
+            except ValueError:
+                gcmd.respond_info("SA CAL: Enter a number (e.g. 199.5).")
+                return
+            if actual <= 0.0:
+                gcmd.respond_info("SA CAL: Must be > 0.")
+                return
 
-            # Update live encoder immediately
+            current_mpp = data['best_mpp']
+            attempt     = data['attempt']
+            target      = 200.0
+            error       = abs(actual - target)
+            pct         = error / target * 100.0
+            new_mpp     = current_mpp * (actual / target)
+
+            data['best_mpp'] = new_mpp
+            # Apply immediately so next pass uses corrected mpp
             enc.mm_per_pulse = new_mpp
-            # Persist to save_variables
-            self._save_variable('encoder_mpp_%d' % path, '%.5f' % new_mpp)
-            self._clear()
+
+            done = (attempt >= 3)
             gcmd.respond_info(
-                "SA CAL: Encoder %d mm_per_pulse=%.5f saved — "
-                "effective immediately, no restart needed." % (path, new_mpp))
+                "SA CAL: Pass %d/3 — encoder %.2fmm  actual %.2fmm  "
+                "error %.2fmm (%.1f%%)\n"
+                "  mm_per_pulse: %.5f → %.5f%s"
+                % (attempt, data['enc_reading'], actual, error, pct,
+                   current_mpp, new_mpp, "  ✓ done" if done else ""))
+
+            if done:
+                owner._cal_state = 'enc_save_%d' % path
+                self._prompt(gcmd,
+                    "Save mm_per_pulse=%.5f?" % new_mpp,
+                    "SA_RESPOND VALUE=yes",
+                    "SA_RESPOND VALUE=no")
+            else:
+                owner._cal_state = 'enc_mark_%d' % path
+                self._prompt(gcmd,
+                    "Re-mark the filament at its new position, then confirm ready.",
+                    "SA_RESPOND VALUE=yes")
+
+        elif state.startswith('enc_save_'):
+            new_mpp  = data['best_mpp']
+            orig_mpp = data.get('original_mpp') or new_mpp
+            self._clear()
+
+            if self._yes(value):
+                enc.mm_per_pulse = new_mpp
+                self._save_variable('encoder_mpp_%d' % path, '%.5f' % new_mpp)
+                ok, result = self._patch_hardware_cfg(
+                    'sa_encoder %d' % path, 'mm_per_pulse', '%.5f' % new_mpp)
+                if ok:
+                    gcmd.respond_info(
+                        "SA CAL: Encoder %d mm_per_pulse=%.5f written to "
+                        "hardware.cfg — restart Klipper to apply." % (path, new_mpp))
+                else:
+                    gcmd.respond_info(
+                        "SA CAL: Encoder %d mm_per_pulse=%.5f saved to "
+                        "variables.cfg. Could not auto-update hardware.cfg (%s)."
+                        % (path, new_mpp, result))
+            else:
+                enc.mm_per_pulse = orig_mpp
+                gcmd.respond_info(
+                    "SA CAL: Not saved. mm_per_pulse remains %.5f." % orig_mpp)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_BOWDEN
