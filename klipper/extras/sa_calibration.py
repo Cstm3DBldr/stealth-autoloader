@@ -139,9 +139,10 @@ class SACalibration:
 
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        cal_current = owner.selector_cal_current
         owner.gcode.run_script_from_command(
-            "SET_TMC_CURRENT STEPPER=%s CURRENT=0.400" % sn)
-        gcmd.respond_info("SA CAL: Sweeping to far wall (%.0fmm) at 0.4A..." % far_target)
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, cal_current))
+        gcmd.respond_info("SA CAL: Sweeping to far wall (%.0fmm) at %.2fA..." % (far_target, cal_current))
         owner.gcode.run_script_from_command(
             "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
             % (sn, far_target, owner.selector_homing_speed))

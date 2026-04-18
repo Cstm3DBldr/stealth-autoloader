@@ -132,8 +132,9 @@ class StealthAutoloader:
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
         # Selector position calibration geometry
-        self.selector_end_offset = config.getfloat('selector_end_offset', 0.0)
-        self.path_width          = config.getfloat('path_width',          0.0)
+        self.selector_end_offset  = config.getfloat('selector_end_offset',  0.0)
+        self.path_width           = config.getfloat('path_width',            0.0)
+        self.selector_cal_current = config.getfloat('selector_cal_current', 0.4)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
