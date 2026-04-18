@@ -473,10 +473,10 @@ class SACalibration:
         gcmd.respond_info(
             "SA ENCODER CALIBRATION — Path %d\n"
             "==================================\n"
-            "Feeds until encoder reads 200mm, you measure actual — 3 passes.\n"
+            "Feeds until encoder reads 100mm, you measure actual — 3 passes.\n"
             "\n"
             "Requirements: filament through drive gear AND encoder for path %d.\n"
-            "~700mm of free filament needed." % (path, path))
+            "~400mm of free filament needed." % (path, path))
 
         gcmd.respond_info("SA CAL: Selecting path %d..." % path)
         self._safe_selector_move(owner.motion, owner._selector_positions[path])
@@ -506,7 +506,7 @@ class SACalibration:
         if state.startswith('enc_mark_'):
             attempt        = data['attempt'] + 1
             data['attempt'] = attempt
-            target         = 200.0
+            target         = 100.0
             max_travel     = 600.0
             poll_interval  = 0.05   # seconds between encoder checks
             cal_speed      = owner.feed_speed * 0.5
@@ -571,8 +571,8 @@ class SACalibration:
 
             self._prompt(gcmd,
                 "Servo engaged, drive holding. Measure from your mark to "
-                "filament end (target 200mm).",
-                "SA_RESPOND VALUE=200.0  (replace with actual mm)")
+                "filament end (target 100mm).",
+                "SA_RESPOND VALUE=100.0  (replace with actual mm)")
 
         elif state.startswith('enc_meas_'):
             # Release motor torque but keep servo engaged —
@@ -591,12 +591,10 @@ class SACalibration:
             current_mpp = data['best_mpp']
             attempt     = data['attempt']
             enc_reading = data['enc_reading']
-            target      = 200.0
-            error       = abs(actual - target)
-            pct         = error / target * 100.0
             # Use actual enc_reading (not assumed target) so formula is valid
             # whether motor stopped at target or was halted by max_travel limit
             new_mpp     = current_mpp * (actual / enc_reading)
+            correction  = abs(new_mpp - current_mpp) / current_mpp * 100.0
 
             data['best_mpp'] = new_mpp
             # Apply immediately so next pass uses corrected mpp
@@ -605,9 +603,9 @@ class SACalibration:
             done = (attempt >= 3)
             gcmd.respond_info(
                 "SA CAL: Pass %d/3 — encoder %.2fmm  actual %.2fmm  "
-                "error %.2fmm (%.1f%%)\n"
+                "mpp correction %.2f%%\n"
                 "  mm_per_pulse: %.5f → %.5f%s"
-                % (attempt, enc_reading, actual, error, pct,
+                % (attempt, enc_reading, actual, correction,
                    current_mpp, new_mpp, "  ✓ done" if done else ""))
 
             if done:
