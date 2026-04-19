@@ -35,12 +35,11 @@ class SASequences:
         ------
         1. Pre-flight: verify filament at entry sensor.
         2. Select path: disengage servo, position selector, engage servo.
-        3. Engage phase: drive until encoder confirms filament is gripped
-           (up to engage_max_distance mm).
-        4. Bowden feed: drive through tube until extruder_sensor triggers
-           (preferred) or encoder reaches bowden_length.  Slip is monitored.
-        5. Heat & extrude: heat the extruder then push filament to nozzle.
-        6. Purge: purge purge_length mm to clear the previous colour.
+        3. Retract to clear: step back until encoder goes quiet — consistent start.
+        4. Engage: feed until encoder confirms grip.
+        5. Blast: feed 98% of bowden_length at encoder_max_speed*0.75 — no sensor check.
+        6. Approach: feed remaining 2% + overshoot at feed_speed with extruder sensor polling.
+        7. Heat & extrude to nozzle, purge.
         """
         owner  = self.owner
         motion = owner.motion
@@ -62,13 +61,22 @@ class SASequences:
         owner.current_path = path
         motion.servo_engage()
 
-        # Reset encoder for this feed
         enc = owner._encoder(path)
+
+        # ── Phase 2: retract to clear encoder — consistent start position ─────
+        gcmd.respond_info("SA: Clearing encoder for consistent start...")
+        enc.set_direction(forward=False)
+        for _ in range(20):
+            enc.reset_distance()
+            motion.drive_move(-5.0, speed=25.0)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+            if abs(enc.get_distance()) < 0.5:
+                break
+
+        # ── Phase 3: engage — feed until encoder confirms grip ────────────────
+        gcmd.respond_info("SA: Engaging filament with drive gear...")
         enc.set_direction(forward=True)
         enc.reset_distance()
-
-        # ── Phase 2: engage filament with drive gear ──────────────────────────
-        gcmd.respond_info("SA: Phase 2 — engaging filament with drive gear...")
         driven    = 0.0
         mpp       = enc.mm_per_pulse
         threshold = (mpp * 3.0) if mpp else 1.5
@@ -81,58 +89,61 @@ class SASequences:
         if enc.get_distance() < threshold:
             motion.servo_disengage()
             gcmd.respond_info(
-                "SA: ERROR — no encoder motion after %.0fmm. "
-                "Check filament position and encoder %d wiring." % (driven, path))
+                "SA: ERROR — encoder %d not responding after %.0fmm. "
+                "Check filament position and encoder wiring." % (path, driven))
+            return
+
+        gcmd.respond_info("SA: Grip confirmed (%.2fmm). Blasting through tube..." % enc.get_distance())
+
+        # ── Phase 4: blast — 98% of bowden_length at calibrated speed ─────────
+        sv = owner.printer.lookup_object('save_variables', None)
+        saved_max  = float(sv.allVariables.get('encoder_max_speed', 0)) if sv else 0
+        blast_speed = (saved_max * 0.75) if saved_max > 0 else 75.0
+        target_length = owner._bowden_lengths[path]
+        blast_target  = target_length * 0.98
+
+        # Blast from current encoder position to 98% mark (single move)
+        remaining_blast = blast_target - enc.get_distance()
+        if remaining_blast > 0:
+            motion.drive_move(remaining_blast, speed=blast_speed)
+
+        gcmd.respond_info(
+            "SA: Blast complete (enc=%.1fmm). Approaching extruder sensor..."
+            % enc.get_distance())
+
+        # ── Phase 5: approach — sensor polling for final 2% + overshoot ───────
+        has_extruder_sensor = bool(owner._extruder_sensor_names[path])
+        overshoot_limit     = target_length * 0.10   # 10% overshoot budget
+        inched              = 0.0
+        triggered           = False
+
+        while not triggered and inched < overshoot_limit:
+            if has_extruder_sensor and owner._extruder_sensor_active(path):
+                triggered = True
+                break
+            if enc.get_distance() >= target_length and not has_extruder_sensor:
+                break
+            motion.drive_move(owner.feed_step_size)
+            inched += owner.feed_step_size
+            owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+
+        if has_extruder_sensor and not triggered:
+            motion.servo_disengage()
+            gcmd.respond_info(
+                "SA: ERROR — extruder sensor path %d not triggered. "
+                "Check sensor or re-run SA_CALIBRATE_BOWDEN TOOL=%d." % (path, path))
             return
 
         gcmd.respond_info(
-            "SA: Encoder %d engaged (%.2fmm counted). "
-            "Feeding through Bowden tube..." % (path, enc.get_distance()))
-
-        # ── Phase 3: feed through Bowden tube ────────────────────────────────
-        has_extruder_sensor = bool(owner._extruder_sensor_names[path])
-        target_length       = owner._bowden_lengths[path]
-        driven_total        = driven
-
-        while True:
-            # Primary stop condition: extruder sensor (most accurate)
-            if has_extruder_sensor and owner._extruder_sensor_active(path):
-                gcmd.respond_info(
-                    "SA: Extruder sensor triggered at encoder=%.1fmm. "
-                    "Filament arrived at extruder." % enc.get_distance())
-                break
-
-            # Fallback stop: encoder reached configured Bowden length
-            if enc.get_distance() >= target_length:
-                gcmd.respond_info(
-                    "SA: Target length %.1fmm reached (encoder=%.1fmm)."
-                    % (target_length, enc.get_distance()))
-                break
-
-            motion.drive_move(owner.feed_step_size)
-            driven_total += owner.feed_step_size
-            owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
-
-            # Slip check after first 50mm of driven travel
-            if driven_total > 50.0:
-                pct = abs(enc.get_distance() - driven_total) / driven_total * 100.0
-                if pct > owner.slip_tolerance:
-                    gcmd.respond_info(
-                        "SA WARNING path %d: slip %.1f%% "
-                        "(stepper=%.1fmm enc=%.1fmm)"
-                        % (path, pct, driven_total, enc.get_distance()))
-
-        gcmd.respond_info(
-            "SA: Path %d — Bowden feed complete. "
-            "Stepper=%.1fmm  Encoder=%.1fmm"
-            % (path, driven_total, enc.get_distance()))
+            "SA: Filament at extruder (enc=%.1fmm). Releasing drive gear."
+            % enc.get_distance())
 
         # Release drive — extruder motor takes over from here
         motion.servo_disengage()
         owner.path_states[path] = 'partial'
         motion.save_position()
 
-        # ── Phase 4: heat and extrude to nozzle ──────────────────────────────
+        # ── Phase 6: heat and extrude to nozzle ──────────────────────────────
         extruder = owner._extruder_names[path]
         gcmd.respond_info("SA: Heating %s to %.0f°C..." % (extruder, owner.load_temperature))
         owner.gcode.run_script_from_command(
@@ -144,7 +155,7 @@ class SASequences:
         owner.gcode.run_script_from_command("G1 E%.2f F300" % owner.nozzle_distance)
         owner.gcode.run_script_from_command("M400")
 
-        # ── Phase 5: purge ────────────────────────────────────────────────────
+        # ── Phase 7: purge ────────────────────────────────────────────────────
         gcmd.respond_info("SA: Purging %.1fmm..." % owner.purge_length)
         owner.gcode.run_script_from_command("G1 E%.2f F300" % owner.purge_length)
         owner.gcode.run_script_from_command("M400")
