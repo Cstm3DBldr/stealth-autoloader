@@ -823,18 +823,24 @@ class SACalibration:
             enc = owner._encoder(path)
             retract_speed = blast_speed * 0.5
 
-            # Pre-run: retract until encoder stops seeing filament, then zero
-            # Clears any 5–50mm stub left in encoder from prior moves for clean trial 1
-            gcmd.respond_info("SA CAL: Clearing encoder — retracting until filament clears...")
-            enc.set_direction(forward=False)
-            for _ in range(12):    # max 12 × 5mm = 60mm
+            def _retract_to_clear(fast_dist):
+                """Retract fast_dist at retract_speed, then 5mm pulses at 25mm/s
+                until encoder goes quiet (filament tip clears encoder).
+                Max 20 slow pulses (100mm) before giving up."""
+                motion.drive_move(-fast_dist, speed=retract_speed)
+                enc.set_direction(forward=False)
+                for _ in range(20):
+                    enc.reset_distance()
+                    motion.drive_move(-5.0, speed=25.0)
+                    owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                    if abs(enc.get_distance()) < 0.5:
+                        break
+                enc.set_direction(forward=True)
                 enc.reset_distance()
-                motion.drive_move(-5.0, speed=25.0)
-                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
-                if abs(enc.get_distance()) < 0.5:   # no pulses this step — encoder is clear
-                    break
-            enc.set_direction(forward=True)
-            enc.reset_distance()
+
+            # Pre-run: clear any filament stub sitting in encoder before trial 1
+            gcmd.respond_info("SA CAL: Clearing encoder — retracting until filament clears...")
+            _retract_to_clear(0.0)   # no fast phase — just slow pulses from current position
             gcmd.respond_info("SA CAL: Encoder cleared — starting 3 trials.")
 
             for trial in range(3):
@@ -871,18 +877,9 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
                 data['trials'].append(length)
 
-                # Retract past encoder — servo stays engaged, ready for next trial
-                motion.drive_move(-(length + 60.0), speed=retract_speed)
-                # Step-clear: pull back in small steps until encoder confirms clear
-                enc.set_direction(forward=False)
-                for _ in range(12):
-                    enc.reset_distance()
-                    motion.drive_move(-5.0, speed=25.0)
-                    owner.reactor.pause(owner.reactor.monotonic() + 0.15)
-                    if abs(enc.get_distance()) < 0.5:
-                        break
-                enc.set_direction(forward=True)
-                enc.reset_distance()
+                # Retract 95% fast, then slow-pulse until encoder goes quiet
+                # Stops before overshooting drive gears — no fixed overshoot distance
+                _retract_to_clear(length * 0.95)
                 owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
             motion.servo_disengage()
