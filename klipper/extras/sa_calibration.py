@@ -793,7 +793,9 @@ class SACalibration:
             # Blast speed: use calibrated encoder_max_speed if available, else 100mm/s safe default
             sv = owner.printer.lookup_object('save_variables', None)
             saved_max = float(sv.allVariables.get('encoder_max_speed', 0)) if sv else 0
-            blast_speed = saved_max if saved_max > 0 else 100.0
+            # encoder_max_speed tested at 100mm near tube entrance (low friction).
+            # Bowden blast pushes full tube depth — apply 0.75x for tube friction load.
+            blast_speed = (saved_max * 0.75) if saved_max > 0 else 75.0
             quick_speed    = 50.0              # 65–82.5% — no sensor check
             approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
 
