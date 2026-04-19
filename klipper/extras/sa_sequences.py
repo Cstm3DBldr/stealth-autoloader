@@ -534,12 +534,15 @@ class SASequences:
             self._restore_state(gcmd, path, is_printing)
 
     def _prompt_unload_park(self, gcmd, path):
-        """Print the post-unload park confirmation prompt."""
+        """Print the post-unload options prompt."""
+        owner = self.owner
         gcmd.respond_info(
-            "SA: Unload complete — path %d. Ready to park?\n"
+            "SA: Unload complete — path %d. What next?\n"
             "\n"
-            "  SA_RESPOND VALUE=park  — clean nozzle and park on cooling pad"
-            % path)
+            "  SA_RESPOND VALUE=park      — clean nozzle and park on cooling pad\n"
+            "  SA_RESPOND VALUE=load      — load new filament on path %d (same path)\n"
+            "  SA_RESPOND VALUE=<0-%d>    — switch to a different path and load"
+            % (path, path, owner.num_paths - 1))
 
     def _unload_done_respond(self, gcmd, value):
         """Handle SA_RESPOND during the unload_done state."""
@@ -549,7 +552,28 @@ class SASequences:
         is_printing = data['is_printing']
         owner._cal_state = None
         owner._cal_data  = {}
-        self._restore_state(gcmd, path, is_printing)
+
+        v = value.strip().lower()
+
+        # Numeric entry — switch to that path and load
+        try:
+            target = int(v)
+            if 0 <= target < owner.num_paths:
+                gcmd.respond_info("SA: Switching to path %d and loading..." % target)
+                self.do_load(gcmd, target)
+                return
+            else:
+                gcmd.respond_info(
+                    "SA: Path %d out of range (0-%d). Parking instead."
+                    % (target, owner.num_paths - 1))
+        except ValueError:
+            pass
+
+        if v == 'load':
+            gcmd.respond_info("SA: Loading new filament on path %d..." % path)
+            self.do_load(gcmd, path)
+        else:
+            self._restore_state(gcmd, path, is_printing)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
