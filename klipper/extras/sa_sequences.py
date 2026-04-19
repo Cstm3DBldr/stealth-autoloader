@@ -536,13 +536,15 @@ class SASequences:
     def _prompt_unload_park(self, gcmd, path):
         """Print the post-unload options prompt."""
         owner = self.owner
+        n = owner.num_paths - 1
         gcmd.respond_info(
             "SA: Unload complete — path %d. What next?\n"
             "\n"
-            "  SA_RESPOND VALUE=park      — clean nozzle and park on cooling pad\n"
-            "  SA_RESPOND VALUE=load      — load new filament on path %d (same path)\n"
-            "  SA_RESPOND VALUE=<0-%d>    — switch to a different path and load"
-            % (path, path, owner.num_paths - 1))
+            "  SA_RESPOND VALUE=park        — clean nozzle and park on cooling pad\n"
+            "  SA_RESPOND VALUE=load        — load new filament on path %d (same path)\n"
+            "  SA_RESPOND VALUE=load:N      — load filament on path N (0-%d)\n"
+            "  SA_RESPOND VALUE=unload:N    — unload filament on path N (0-%d)"
+            % (path, path, n, n))
 
     def _unload_done_respond(self, gcmd, value):
         """Handle SA_RESPOND during the unload_done state."""
@@ -554,24 +556,33 @@ class SASequences:
         owner._cal_data  = {}
 
         v = value.strip().lower()
+        n = owner.num_paths
 
-        # Numeric entry — switch to that path and load
-        try:
-            target = int(v)
-            if 0 <= target < owner.num_paths:
-                gcmd.respond_info("SA: Switching to path %d and loading..." % target)
-                self.do_load(gcmd, target)
-                return
-            else:
+        def _parse_target(s):
+            try:
+                t = int(s)
+                if 0 <= t < n:
+                    return t
                 gcmd.respond_info(
-                    "SA: Path %d out of range (0-%d). Parking instead."
-                    % (target, owner.num_paths - 1))
-        except ValueError:
-            pass
+                    "SA: Path %d out of range (0-%d) — parking instead." % (t, n - 1))
+            except ValueError:
+                gcmd.respond_info("SA: Unknown response '%s' — parking instead." % s)
+            return None
 
         if v == 'load':
-            gcmd.respond_info("SA: Loading new filament on path %d..." % path)
             self.do_load(gcmd, path)
+        elif v.startswith('load:'):
+            target = _parse_target(v[5:])
+            if target is not None:
+                self.do_load(gcmd, target)
+            else:
+                self._restore_state(gcmd, path, is_printing)
+        elif v.startswith('unload:'):
+            target = _parse_target(v[7:])
+            if target is not None:
+                self.do_unload(gcmd, target)
+            else:
+                self._restore_state(gcmd, path, is_printing)
         else:
             self._restore_state(gcmd, path, is_printing)
 
