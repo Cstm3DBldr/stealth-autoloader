@@ -498,6 +498,38 @@ class SASequences:
         motion.servo_disengage()
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # Post-load purge prompt (state machine phase)
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    def _prompt_purge(self, gcmd, path):
+        """Print the post-load purge-more / done prompt."""
+        owner = self.owner
+        gcmd.respond_info(
+            "SA: Load complete — path %d.\n"
+            "\n"
+            "  SA_RESPOND VALUE=more  — purge %.0fmm again\n"
+            "  SA_RESPOND VALUE=done  — finish" % (path, owner.purge_length))
+
+    def _load_purge_respond(self, gcmd, value):
+        """Handle SA_RESPOND during the load_purge state."""
+        owner = self.owner
+        data  = owner._cal_data
+        path        = data['path']
+        is_printing = data['is_printing']
+
+        if value.lower() == 'more':
+            f = self._extrude_speed_mmm()
+            gcmd.respond_info("SA: Purging %.1fmm more..." % owner.purge_length)
+            owner.gcode.run_script_from_command("M83")
+            self._extrude_mm(owner.purge_length, f)
+            self._prompt_purge(gcmd, path)
+        else:
+            owner._cal_state = None
+            owner._cal_data  = {}
+            gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
+            self._restore_state(gcmd, path, is_printing)
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
     # ═══════════════════════════════════════════════════════════════════════════
 
@@ -653,15 +685,15 @@ class SASequences:
         # Disengages servo on return.
         self._sync_feed_to_toolhead_sensor(gcmd, path)
 
-        # Purge (extruder only — servo already disengaged)
-        f = self._extrude_speed_mmm()
-        gcmd.respond_info("SA: Purging %.1fmm..." % owner.purge_length)
-        owner.gcode.run_script_from_command("M83")
-        self._extrude_mm(owner.purge_length, f)
+        # Fill nozzle (extruder gears → nozzle tip) then initial purge
+        self._fill_and_purge(gcmd, path)
 
         owner.path_states[path] = 'loaded'
-        gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
-        self._restore_state(gcmd, path, is_printing)
+
+        # Set up purge confirmation — _restore_state is deferred until user responds
+        owner._cal_state = 'load_purge'
+        owner._cal_data  = {'path': path, 'is_printing': is_printing}
+        self._prompt_purge(gcmd, path)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Unload sequence
