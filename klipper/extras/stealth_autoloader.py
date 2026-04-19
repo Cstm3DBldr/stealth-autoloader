@@ -144,7 +144,8 @@ class StealthAutoloader:
         self.load_print_park_y = config.getfloat('load_print_park_y', 200.0)
         self.fill_nozzle_length  = config.getfloat('fill_nozzle_length',   70.0)
         self.max_volumetric_flow = config.getfloat('max_volumetric_flow',   8.0)
-        self.cooling_pad_enabled = config.getboolean('cooling_pad_enabled', True)
+        self.cooling_pad_enabled  = config.getboolean('cooling_pad_enabled',  True)
+        self.clean_nozzle_enabled = config.getboolean('clean_nozzle_enabled', True)
 
         # ── Tip forming (unload) ──────────────────────────────────────────────
         self.tip_form_temp          = config.getfloat('tip_form_temp',          185.0)

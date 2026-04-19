@@ -398,6 +398,53 @@ All parameters are set in the `[stealth_autoloader]` section of `hardware.cfg`.
 | `selector_stall_threshold` | `3` | TMC5160 SGT value for stallguard sensitivity (raise to reduce false triggers) |
 | `selector_stall_speed` | `50.0` | Sweep speed (mm/s) during SA_CALIBRATE_SELECTOR |
 
+### Park / clean
+
+| Key | Default | Description |
+|---|---|---|
+| `cooling_pad_enabled` | `True` | Call `PARK_ON_COOLING_PAD` after load/unload |
+| `clean_nozzle_enabled` | `True` | Call `SA_CLEAN_NOZZLE` before parking — disable if you have no brush |
+
+---
+
+## Printer macros required by the autoloader
+
+The autoloader calls two macros that you define in your printer config. Both must exist when the corresponding config options are enabled.
+
+### `PARK_ON_COOLING_PAD`
+
+Moves the toolhead to your cooling pad or parking position. **Do not change Z** — the autoloader holds Z at `load_park_z` throughout the load/unload sequence.
+
+```gcode
+[gcode_macro PARK_ON_COOLING_PAD]
+gcode:
+    G90
+    G0 X0  Y300 F5000
+    G0 Y350 F5000
+    G0 X30  F5000
+```
+
+### `SA_CLEAN_NOZZLE`
+
+Wipes the nozzle on your brush or cleaning pad. Called after the heater is commanded off but while the nozzle is still hot. **Do not change Z** — keep all moves at the current height so the autoloader can maintain `load_park_z`.
+
+A starter template is included in `stealth-autoloader/macros.cfg`. Customize the X/Y coordinates for your brush position:
+
+```gcode
+[gcode_macro SA_CLEAN_NOZZLE]
+description: Wipe nozzle on brush pad. Called by stealth_autoloader after load/unload.
+gcode:
+    G90
+    G0 X80 Y350 F5000   ; approach brush
+    G0 X40 F5000        ; wipe pass 1
+    G0 X70 F5000
+    G0 X40 F5000        ; wipe pass 2
+    G0 X70 F5000
+    G0 X30 Y300 F5000   ; clear brush area
+```
+
+Set `clean_nozzle_enabled: False` in `hardware.cfg` to skip nozzle wiping entirely.
+
 ---
 
 ## Sensor wiring

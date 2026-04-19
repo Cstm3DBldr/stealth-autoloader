@@ -145,13 +145,24 @@ class SASequences:
             gcmd.respond_info("SA: Resuming print...")
             owner.gcode.run_script_from_command("RESUME")
         else:
+            # Re-assert load height — macros below must not lower Z
+            owner.gcode.run_script_from_command(
+                "G0 Z%.3f F600" % owner.load_park_z)
+            owner.gcode.run_script_from_command("M400")
             gcmd.respond_info("SA: Turning off heater...")
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
                 % owner._extruder_names[path])
+            if owner.clean_nozzle_enabled:
+                gcmd.respond_info("SA: Cleaning nozzle...")
+                try:
+                    owner.gcode.run_script_from_command("SA_CLEAN_NOZZLE")
+                except Exception as e:
+                    gcmd.respond_info(
+                        "SA: WARNING — SA_CLEAN_NOZZLE failed (%s). "
+                        "Define it in macros.cfg." % str(e))
             if owner.cooling_pad_enabled:
-                gcmd.respond_info("SA: Cleaning nozzle and parking...")
-                owner.gcode.run_script_from_command("_CLEAN_NOZZLE")
+                gcmd.respond_info("SA: Parking on cooling pad...")
                 owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
             owner.gcode.run_script_from_command("T0")
 
@@ -507,12 +518,15 @@ class SASequences:
     def _prompt_purge(self, gcmd, path):
         """Print the post-load purge-more / park prompt."""
         owner = self.owner
+        n = owner.num_paths - 1
         gcmd.respond_info(
             "SA: Load complete — path %d. Filament purging at nozzle.\n"
             "\n"
-            "  SA_RESPOND VALUE=more  — purge %.0fmm again\n"
-            "  SA_RESPOND VALUE=park  — clean nozzle and park on cooling pad"
-            % (path, owner.purge_length))
+            "  SA_RESPOND VALUE=more      — purge %.0fmm again\n"
+            "  SA_RESPOND VALUE=park      — clean nozzle and park on cooling pad\n"
+            "  SA_RESPOND VALUE=load:N    — switch to path N and load (0-%d)\n"
+            "  SA_RESPOND VALUE=unload:N  — switch to path N and unload (0-%d)"
+            % (path, owner.purge_length, n, n))
 
     def _load_purge_respond(self, gcmd, value):
         """Handle SA_RESPOND during the load_purge state."""
@@ -521,12 +535,41 @@ class SASequences:
         path        = data['path']
         is_printing = data['is_printing']
 
-        if value.lower() == 'more':
+        v = value.strip().lower()
+        n = owner.num_paths
+
+        def _parse_target(s):
+            try:
+                t = int(s)
+                if 0 <= t < n:
+                    return t
+                gcmd.respond_info(
+                    "SA: Path %d out of range (0-%d)." % (t, n - 1))
+            except ValueError:
+                gcmd.respond_info("SA: Unknown path '%s'." % s)
+            return None
+
+        if v == 'more':
             f = self._extrude_speed_mmm()
             gcmd.respond_info("SA: Purging %.1fmm more..." % owner.purge_length)
             owner.gcode.run_script_from_command("M83")
             self._extrude_mm(owner.purge_length, f)
             self._prompt_purge(gcmd, path)
+        elif v.startswith('load:') or v.startswith('unload:'):
+            action, _, n_str = v.partition(':')
+            target = _parse_target(n_str)
+            if target is not None:
+                owner._cal_state = None
+                owner._cal_data  = {}
+                owner.gcode.run_script_from_command(
+                    "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
+                    % owner._extruder_names[path])
+                if action == 'load':
+                    self.do_load(gcmd, target)
+                else:
+                    self.do_unload(gcmd, target)
+            else:
+                self._prompt_purge(gcmd, path)
         else:
             owner._cal_state = None
             owner._cal_data  = {}
