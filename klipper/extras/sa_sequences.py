@@ -138,8 +138,13 @@ class SASequences:
         owner.gcode.run_script_from_command(
             "SET_TOOL_TEMPERATURE T=%d TARGET=%.0f WAIT=1" % (path, owner.load_temperature))
 
-    def _restore_state(self, gcmd, path, is_printing):
-        """After load/unload: resume print or clean + park + heater off."""
+    def _restore_state(self, gcmd, path, is_printing, after_unload=False):
+        """After load/unload: resume print or clean + park + heater off.
+
+        after_unload=True  — nozzle is empty and cold; skip clean+cooling-pad,
+                             just park at the load position and switch T0.
+        after_unload=False — nozzle is hot+primed; clean then park on cooling pad.
+        """
         owner = self.owner
         if is_printing:
             gcmd.respond_info("SA: Resuming print...")
@@ -153,17 +158,26 @@ class SASequences:
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
                 % owner._extruder_names[path])
-            if owner.clean_nozzle_enabled:
-                gcmd.respond_info("SA: Cleaning nozzle...")
-                try:
-                    owner.gcode.run_script_from_command("SA_CLEAN_NOZZLE")
-                except Exception as e:
-                    gcmd.respond_info(
-                        "SA: WARNING — SA_CLEAN_NOZZLE failed (%s). "
-                        "Define it in macros.cfg." % str(e))
-            if owner.cooling_pad_enabled:
-                gcmd.respond_info("SA: Parking on cooling pad...")
-                owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
+            if after_unload:
+                # Nozzle is empty — move to load park position and done
+                gcmd.respond_info("SA: Parking at load position...")
+                owner.gcode.run_script_from_command(
+                    "G0 X%.3f Y%.3f F5000"
+                    % (owner.load_park_x, owner.load_park_y))
+                owner.gcode.run_script_from_command("M400")
+            else:
+                # Nozzle is hot+primed — wipe then cool
+                if owner.clean_nozzle_enabled:
+                    gcmd.respond_info("SA: Cleaning nozzle...")
+                    try:
+                        owner.gcode.run_script_from_command("SA_CLEAN_NOZZLE")
+                    except Exception as e:
+                        gcmd.respond_info(
+                            "SA: WARNING — SA_CLEAN_NOZZLE failed (%s). "
+                            "Define it in macros.cfg." % str(e))
+                if owner.cooling_pad_enabled:
+                    gcmd.respond_info("SA: Parking on cooling pad...")
+                    owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
             owner.gcode.run_script_from_command("T0")
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -619,15 +633,15 @@ class SASequences:
             if target is not None:
                 self.do_load(gcmd, target)
             else:
-                self._restore_state(gcmd, path, is_printing)
+                self._restore_state(gcmd, path, is_printing, after_unload=True)
         elif v.startswith('unload:'):
             target = _parse_target(v[7:])
             if target is not None:
                 self.do_unload(gcmd, target)
             else:
-                self._restore_state(gcmd, path, is_printing)
+                self._restore_state(gcmd, path, is_printing, after_unload=True)
         else:
-            self._restore_state(gcmd, path, is_printing)
+            self._restore_state(gcmd, path, is_printing, after_unload=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
@@ -867,6 +881,9 @@ class SASequences:
                 owner.gcode.run_script_from_command(
                     "TEMPERATURE_WAIT SENSOR=%s MAXIMUM=%.0f"
                     % (extruder_name, owner.tip_form_temp + 5))
+
+            # Move away from cooling pad to purge position before tip form
+            self._move_to_purge_position(gcmd, is_printing)
 
             # Tip form: push → fast retract through melt zone → slow finish
             owner.gcode.run_script_from_command("M83")
