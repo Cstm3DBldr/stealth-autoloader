@@ -151,6 +151,11 @@ class StealthAutoloader:
         self.tip_form_push_length   = config.getfloat('tip_form_push_length',     8.0)
         self.tip_form_push_speed    = config.getfloat('tip_form_push_speed',     20.0)
         self.tip_form_retract_speed = config.getfloat('tip_form_retract_speed', 100.0)
+        self.min_unload_temp        = config.getfloat('min_unload_temp',        170.0)
+
+        # ── Sensor verify / park ──────────────────────────────────────────────
+        self.encoder_to_gear_distance = config.getfloat('encoder_to_gear_distance', 30.0)
+        self.wiggle_distance          = config.getfloat('wiggle_distance',           10.0)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
@@ -357,6 +362,12 @@ class StealthAutoloader:
             ('SA_RESPOND',
              self._cmd_respond,
              "Send a value back to a waiting calibration routine. VALUE=x"),
+            ('SA_PARK_FILAMENT',
+             self._cmd_park_filament,
+             "Park filament at encoder for consistent load start. TOOL=N"),
+            ('SA_FILAMENT_INSERT',
+             self._cmd_filament_insert,
+             "Auto-called by entry sensor insert_gcode. TOOL=N"),
         ]
         for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
@@ -592,6 +603,22 @@ class StealthAutoloader:
             gcmd.respond_info(
                 "SA: Responding '%s' (state=%s)" % (value, self._cal_state))
         self.calibration.respond(gcmd, value)
+
+    def _cmd_park_filament(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.sequences.park_filament(gcmd, path)
+
+    def _cmd_filament_insert(self, gcmd):
+        """Called by entry sensor insert_gcode. Parks filament if not printing."""
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        if self._cal_state is not None:
+            return  # don't interrupt calibration
+        if self.sequences._is_printing():
+            gcmd.respond_info(
+                "SA: Filament detected at path %d entry (print in progress — not parking)." % path)
+            return
+        gcmd.respond_info("SA: Filament inserted at path %d — auto-parking..." % path)
+        self.sequences.park_filament(gcmd, path)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
