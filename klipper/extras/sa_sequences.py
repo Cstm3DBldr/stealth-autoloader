@@ -157,6 +157,11 @@ class SASequences:
         self._park(gcmd, is_printing)
 
         # ── Phase 5: select path ──────────────────────────────────────────────
+        if not owner._selector_homed:
+            gcmd.respond_info("SA: Selector not homed — homing now...")
+            motion.selector_home()
+            gcmd.respond_info("SA: Selector homed.")
+
         gcmd.respond_info("SA: Selecting path %d (%.1fmm from home)..."
                           % (path, owner._selector_positions[path]))
         motion.servo_disengage()
@@ -363,6 +368,11 @@ class SASequences:
             "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0" % extruder)
 
         # ── Step 3: select path and engage drive gear ─────────────────────────
+        if not owner._selector_homed:
+            gcmd.respond_info("SA: Selector not homed — homing now...")
+            motion.selector_home()
+            gcmd.respond_info("SA: Selector homed.")
+
         gcmd.respond_info(
             "SA: Selecting path %d — pulling filament to entry sensor..." % path)
         motion.servo_disengage()
