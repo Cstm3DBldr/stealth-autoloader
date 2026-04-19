@@ -119,6 +119,7 @@ class StealthAutoloader:
         self.tube_length             = config.getfloat('tube_length',             800.0)
         self.nozzle_distance         = config.getfloat('nozzle_distance',          50.0)
         self.purge_length            = config.getfloat('purge_length',             30.0)
+        self.sensor_retry_dist       = config.getfloat('sensor_retry_dist',        20.0)
         self.load_temperature        = config.getfloat('load_temperature',        200.0)
         self.engage_max_distance     = config.getfloat('engage_max_distance',      60.0)
         self.slip_tolerance          = config.getfloat('slip_tolerance',           15.0)

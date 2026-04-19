@@ -945,7 +945,7 @@ class SASequences:
                     "SA: Extruder sensor still active — retracting further...")
                 cleared = False
                 for attempt in range(1, 4):
-                    self._extrude_mm(-owner.nozzle_distance, slow_f)
+                    self._extrude_mm(-owner.sensor_retry_dist, slow_f)
                     if not owner._extruder_sensor_active(path):
                         gcmd.respond_info(
                             "SA: Extruder sensor cleared on attempt %d." % attempt)
