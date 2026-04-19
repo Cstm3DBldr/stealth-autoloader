@@ -829,7 +829,8 @@ class SACalibration:
                 """Retract fast_dist at retract_speed, then 5mm pulses at 25mm/s
                 until encoder goes quiet (filament tip clears encoder).
                 Max 20 slow pulses (100mm) before giving up."""
-                motion.drive_move(-fast_dist, speed=retract_speed)
+                if fast_dist > 0:
+                    motion.drive_move(-fast_dist, speed=retract_speed)
                 enc.set_direction(forward=False)
                 for _ in range(20):
                     enc.reset_distance()
