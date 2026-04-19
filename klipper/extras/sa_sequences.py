@@ -1006,6 +1006,33 @@ class SASequences:
             else:
                 gcmd.respond_info("SA: Extruder sensor already clear.")
 
+            # ── Zero at extruder sensor ──────────────────────────────────────────
+            # Push filament forward slowly until the extruder sensor re-triggers.
+            # This gives an exact reference position so the bowden retract distance
+            # is based on the calibrated bowden_length from a known point.
+            if has_ext_sensor:
+                gcmd.respond_info(
+                    "SA: Zeroing — pushing forward to extruder sensor...")
+                enc.set_direction(forward=True)
+                enc.reset_distance()
+                zeroed   = False
+                max_zero = owner.sensor_retry_dist * 3   # 60mm ceiling
+                while abs(enc.get_distance()) < max_zero:
+                    motion.drive_move(5.0, speed=owner.tip_form_slow_speed)
+                    owner.reactor.pause(
+                        owner.reactor.monotonic() + owner.sensor_delay)
+                    if owner._extruder_sensor_active(path):
+                        zeroed = True
+                        gcmd.respond_info(
+                            "SA: Zero confirmed — %.1fmm forward to sensor."
+                            % abs(enc.get_distance()))
+                        break
+                if not zeroed:
+                    gcmd.respond_info(
+                        "SA: WARNING — extruder sensor did not re-trigger "
+                        "after %.0fmm forward. "
+                        "Proceeding with bowden_length as estimate." % max_zero)
+
             # ── Fast bowden blast — pull filament 95% of bowden length ──────────
             # Filament tip is now clear of the extruder sensor.  One fast continuous
             # drive move brings the tip to just inside the drive gear area.
