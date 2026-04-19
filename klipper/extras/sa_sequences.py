@@ -944,85 +944,103 @@ class SASequences:
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0" % extruder_name)
 
-            # If extruder sensor still triggered after tip form:
-            # Filament tip has passed the extruder gears but hasn't cleared the
-            # entry sensor at the top of the extruder — extruder motor can't grip
-            # it anymore.  Engage the drive motor and sync both motors backward
-            # at slow speed; encoder confirms the drive has grip.
+            # Engage drive servo — filament tip is past the heatbreak and extruder
+            # gears.  From here all retraction is done by the drive motor.
+            motion.servo_engage()
+
+            enc = owner._encoder(path)
+            enc.set_direction(forward=False)
+            enc.reset_distance()
+
+            # If extruder sensor still triggered: filament tip has passed the gears
+            # but hasn't fully cleared the sensor.  The extruder motor can no longer
+            # grip it — sync drive + extruder together in one continuous move.
             has_ext_sensor = bool(owner._extruder_sensor_names[path])
             if has_ext_sensor and owner._extruder_sensor_active(path):
                 gcmd.respond_info(
-                    "SA: Filament past gears but extruder sensor still active — "
-                    "engaging drive motor to pull through...")
-
-                motion.servo_engage()
-
-                enc = owner._encoder(path)
-                enc.set_direction(forward=False)
-                enc.reset_distance()
+                    "SA: Extruder sensor still active — sync drive+extruder "
+                    "to pull filament clear...")
 
                 dn       = owner._drv_name()
                 sync_spd = owner.tip_form_slow_speed
                 sync_f   = int(sync_spd * 60)
-                step     = owner.feed_step_size
-                max_sync = owner.sensor_retry_dist * 3
-                driven   = 0.0
-                cleared  = False
+                max_sync = owner.sensor_retry_dist * 3   # e.g. 60mm
 
                 owner.gcode.run_script_from_command("M83")
                 motion._cancel_timeout(dn)
                 owner.gcode.run_script_from_command(
                     "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
 
-                while driven < max_sync:
-                    # Drive + extruder retract together at same speed
-                    owner.gcode.run_script_from_command(
-                        "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 "
-                        "MOVE=%.2f SPEED=%.1f SYNC=0"
-                        % (dn, -step, sync_spd))
-                    owner.gcode.run_script_from_command(
-                        "G1 E%.2f F%d" % (-step, sync_f))
-                    owner.gcode.run_script_from_command("M400")
-                    driven += step
-                    owner.reactor.pause(
-                        owner.reactor.monotonic() + owner.sensor_delay)
-
-                    # Encoder grip check — warn if drive gear not moving filament
-                    enc_dist = abs(enc.get_distance())
-                    if driven >= step * 2 and enc_dist < step * 0.3:
-                        gcmd.respond_info(
-                            "SA: WARNING — low encoder motion (%.1fmm) after "
-                            "%.0fmm drive retract on path %d. "
-                            "Possible jam in bowden tube."
-                            % (enc_dist, driven, path))
-
-                    if not owner._extruder_sensor_active(path):
-                        gcmd.respond_info(
-                            "SA: Extruder sensor cleared after %.1fmm "
-                            "drive-assist retract (encoder: %.1fmm)."
-                            % (driven, abs(enc.get_distance())))
-                        cleared = True
-                        break
-
+                # Single continuous move — drive starts async, extruder follows,
+                # M400 inside _extrude_mm waits for both to complete.
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 "
+                    "MOVE=%.2f SPEED=%.1f SYNC=0"
+                    % (dn, -max_sync, sync_spd))
+                self._extrude_mm(-max_sync, sync_f)
                 motion._arm_timeout(dn)
 
-                if not cleared:
+                # Encoder grip check
+                enc_dist = abs(enc.get_distance())
+                if enc_dist < max_sync * 0.3:
+                    gcmd.respond_info(
+                        "SA: WARNING — low encoder motion (%.1fmm / %.0fmm) "
+                        "on path %d. Drive gear may not have grip."
+                        % (enc_dist, max_sync, path))
+
+                if owner._extruder_sensor_active(path):
                     motion.servo_disengage()
                     gcmd.respond_info(
-                        "SA: ERROR — extruder sensor path %d not cleared after "
-                        "%.0fmm drive-assist retract.\n"
-                        "Troubleshoot: check for jam near extruder_sensor_%d "
-                        "or verify sensor wiring is not shorted/stuck.\n"
+                        "SA: ERROR — extruder sensor path %d still active after "
+                        "%.0fmm sync retract.\n"
+                        "Check for jam near extruder_sensor_%d or verify "
+                        "sensor wiring.\n"
                         "Clear manually then re-run SA_UNLOAD TOOL=%d."
                         % (path, max_sync, path, path))
                     owner._cal_state = None
                     owner._cal_data  = {}
                     return
-                # Servo already engaged — fall through to bowden retract below
 
+                gcmd.respond_info(
+                    "SA: Extruder sensor cleared (encoder: %.1fmm)." % enc_dist)
             else:
-                # Sensor already clear or not configured — engage drive for bowden pull
-                motion.servo_engage()
+                gcmd.respond_info("SA: Extruder sensor already clear.")
+
+            # ── Fast bowden blast — pull filament 95% of bowden length ──────────
+            # Filament tip is now clear of the extruder sensor.  One fast continuous
+            # drive move brings the tip to just inside the drive gear area.
+            # The entry sensor is on the roll side of the drive gears so the
+            # filament exits the gears before the entry sensor ever clears —
+            # we park here and let the user physically remove the filament.
+            sv          = owner.printer.lookup_object('save_variables', None)
+            saved_max   = float(sv.allVariables.get('encoder_max_speed', 0)) if sv else 0
+            blast_spd   = (saved_max * 0.75) if saved_max > 0 else owner.feed_speed
+            bowden      = owner._bowden_lengths[path]
+            blast_dist  = bowden * 0.95
+            gcmd.respond_info(
+                "SA: Blast retract %.0fmm at %.0fmm/s "
+                "(95%% of bowden %.0fmm)..."
+                % (blast_dist, blast_spd, bowden))
+            enc.reset_distance()
+            motion.drive_move(-blast_dist, speed=blast_spd)
+
+            motion.servo_disengage()
+            owner.path_states[path] = 'partial'
+            motion.save_position()
+            gcmd.respond_info(
+                "SA: Filament parked near drive gears — path %d "
+                "(encoder: %.1fmm retracted). "
+                "Pull from roll end to remove."
+                % (path, abs(enc.get_distance())))
+
+            if is_printing:
+                gcmd.respond_info("SA: Resuming print...")
+                owner.gcode.run_script_from_command("RESUME")
+            else:
+                owner._cal_state = 'unload_done'
+                owner._cal_data  = {'path': path, 'is_printing': is_printing}
+                self._prompt_unload_park(gcmd, path)
+            return  # Branch A complete — do not fall through to entry-sensor loop
 
         # ══════════════════════════════════════════════════════════════════════
         # Branch B: ENTRY + EXTRUDER — filament at gears, not at nozzle
