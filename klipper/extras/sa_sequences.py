@@ -75,7 +75,12 @@ class SASequences:
             return 0.0
 
     def _park(self, gcmd, is_printing):
-        """Park active toolhead. Mid-print = safe side park; idle = load park."""
+        """Park active toolhead out of the way for drive work.
+
+        No-print: raise to load_park_z then park on cooling pad.
+                  Purge position (load_park_x/y) is applied AFTER heating.
+        Mid-print: raise to z_safe, move to safe side position.
+        """
         owner = self.owner
         if is_printing:
             z = self._z_safe()
@@ -87,15 +92,21 @@ class SASequences:
                 "G0 X%.3f Y%.3f F5000"
                 % (owner.load_print_park_x, owner.load_print_park_y))
         else:
-            gcmd.respond_info(
-                "SA: Parking X%.1f Y%.1f Z%.1f..."
-                % (owner.load_park_x, owner.load_park_y, owner.load_park_z))
-            owner.gcode.run_script_from_command(
-                "G0 Z%.3f F600" % owner.load_park_z)
-            owner.gcode.run_script_from_command(
-                "G0 X%.3f Y%.3f F5000"
-                % (owner.load_park_x, owner.load_park_y))
+            gcmd.respond_info("SA: Raising Z to %.1f and parking on cooling pad..." % owner.load_park_z)
+            owner.gcode.run_script_from_command("G0 Z%.3f F600" % owner.load_park_z)
+            owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
         owner.gcode.run_script_from_command("M400")
+
+    def _move_to_purge_position(self, gcmd, is_printing):
+        """After heating, move toolhead to the purge/extrude position."""
+        owner = self.owner
+        if not is_printing:
+            gcmd.respond_info(
+                "SA: Moving to purge position X%.1f Y%.1f..."
+                % (owner.load_park_x, owner.load_park_y))
+            owner.gcode.run_script_from_command(
+                "G0 X%.3f Y%.3f F5000" % (owner.load_park_x, owner.load_park_y))
+            owner.gcode.run_script_from_command("M400")
 
     def _switch_tool(self, gcmd, path):
         """Switch to toolhead *path* if not already active."""
@@ -388,6 +399,21 @@ class SASequences:
             % enc.get_distance())
         return True
 
+    def _extrude_mm(self, total_mm, speed_mmm, chunk=49.0):
+        """Extrude *total_mm* in ≤49mm chunks to stay under max_extrude_only_distance.
+
+        Handles both positive (extrude) and negative (retract) values.
+        """
+        owner = self.owner
+        remaining = abs(total_mm)
+        sign = 1.0 if total_mm >= 0 else -1.0
+        while remaining > 0.0:
+            move = min(remaining, chunk)
+            owner.gcode.run_script_from_command(
+                "G1 E%.2f F%d" % (sign * move, speed_mmm))
+            remaining -= move
+        owner.gcode.run_script_from_command("M400")
+
     def _fill_and_purge(self, gcmd, path):
         """Fill nozzle + purge at volumetric flow rate. Extruder must be hot."""
         owner = self.owner
@@ -396,12 +422,8 @@ class SASequences:
             "SA: Filling nozzle %.1fmm + purge %.1fmm at %dmm/min..."
             % (owner.fill_nozzle_length, owner.purge_length, f))
         owner.gcode.run_script_from_command("M83")
-        owner.gcode.run_script_from_command(
-            "G1 E%.2f F%d" % (owner.fill_nozzle_length, f))
-        owner.gcode.run_script_from_command("M400")
-        owner.gcode.run_script_from_command(
-            "G1 E%.2f F%d" % (owner.purge_length, f))
-        owner.gcode.run_script_from_command("M400")
+        self._extrude_mm(owner.fill_nozzle_length, f)
+        self._extrude_mm(owner.purge_length, f)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
@@ -462,19 +484,13 @@ class SASequences:
             gcmd.respond_info(
                 "SA: All sensors active — heating and verifying toolhead...")
             self._heat_for_load(gcmd, path)
-
-            if owner.cooling_pad_enabled:
-                owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
-                owner.gcode.run_script_from_command("M400")
-
+            self._move_to_purge_position(gcmd, is_printing)
             self._wiggle_check_toolhead(gcmd, path)
 
             gcmd.respond_info("SA: Purging %.1fmm..." % owner.purge_length)
             f = self._extrude_speed_mmm()
             owner.gcode.run_script_from_command("M83")
-            owner.gcode.run_script_from_command(
-                "G1 E%.2f F%d" % (owner.purge_length, f))
-            owner.gcode.run_script_from_command("M400")
+            self._extrude_mm(owner.purge_length, f)
 
             owner.path_states[path] = 'loaded'
             gcmd.respond_info(
@@ -551,12 +567,10 @@ class SASequences:
         # ══════════════════════════════════════════════════════════════════════
         # Common: cooling pad → heat → fill nozzle → purge → restore
         # ══════════════════════════════════════════════════════════════════════
-        if owner.cooling_pad_enabled:
-            gcmd.respond_info("SA: Moving to cooling pad while heating...")
-            owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
-            owner.gcode.run_script_from_command("M400")
-
+        # Heat (cooling pad already set by _park for no-print loads)
         self._heat_for_load(gcmd, path)
+        # Move to purge position after heating (no-print: cooling pad → X175 Y0)
+        self._move_to_purge_position(gcmd, is_printing)
         self._fill_and_purge(gcmd, path)
 
         owner.path_states[path] = 'loaded'
@@ -649,19 +663,15 @@ class SASequences:
                 "SA: Tip form push %.1fmm at %dmm/min..."
                 % (owner.tip_form_push_length, push_f))
             owner.gcode.run_script_from_command("M83")
-            owner.gcode.run_script_from_command(
-                "G1 E%.2f F%d" % (owner.tip_form_push_length, push_f))
-            owner.gcode.run_script_from_command("M400")
+            self._extrude_mm(owner.tip_form_push_length, push_f)
 
-            # Fast retract past extruder gears
+            # Fast retract past extruder gears — chunked to avoid extrude limit
             retract_dist = (owner.fill_nozzle_length + owner.purge_length
                             + owner.tip_form_push_length)
             retract_f = int(owner.tip_form_retract_speed * 60)
             gcmd.respond_info(
                 "SA: Fast retract %.1fmm at %dmm/min..." % (retract_dist, retract_f))
-            owner.gcode.run_script_from_command(
-                "G1 E-%.2f F%d" % (retract_dist, retract_f))
-            owner.gcode.run_script_from_command("M400")
+            self._extrude_mm(-retract_dist, retract_f)
             owner.path_states[path] = 'partial'
 
             # Heater off — filament is out of melt zone
