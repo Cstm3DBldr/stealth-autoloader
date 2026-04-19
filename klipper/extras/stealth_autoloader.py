@@ -136,6 +136,22 @@ class StealthAutoloader:
         self.path_width           = config.getfloat('path_width',            0.0)
         self.selector_cal_current = config.getfloat('selector_cal_current', 0.4)
 
+        # ── Load positioning ──────────────────────────────────────────────────
+        self.load_park_x       = config.getfloat('load_park_x',        175.0)
+        self.load_park_y       = config.getfloat('load_park_y',          0.0)
+        self.load_park_z       = config.getfloat('load_park_z',        100.0)
+        self.load_print_park_x = config.getfloat('load_print_park_x',   0.0)
+        self.load_print_park_y = config.getfloat('load_print_park_y', 200.0)
+        self.fill_nozzle_length  = config.getfloat('fill_nozzle_length',   70.0)
+        self.max_volumetric_flow = config.getfloat('max_volumetric_flow',   8.0)
+        self.cooling_pad_enabled = config.getboolean('cooling_pad_enabled', True)
+
+        # ── Tip forming (unload) ──────────────────────────────────────────────
+        self.tip_form_temp          = config.getfloat('tip_form_temp',          185.0)
+        self.tip_form_push_length   = config.getfloat('tip_form_push_length',     8.0)
+        self.tip_form_push_speed    = config.getfloat('tip_form_push_speed',     20.0)
+        self.tip_form_retract_speed = config.getfloat('tip_form_retract_speed', 100.0)
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
         self._selector_homed   = False
