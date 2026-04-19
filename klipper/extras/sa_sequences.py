@@ -749,15 +749,15 @@ class SASequences:
         if has_toolhead:
             current_temp = self._extruder_temp(path)
 
-            if current_temp < owner.min_unload_temp:
+            # Bring to tip_form_temp if too cold or too hot
+            if current_temp < owner.tip_form_temp - 10:
                 gcmd.respond_info(
-                    "SA: ERROR — %s too cold (%.0f°C) to unload from nozzle. "
-                    "Heat to at least %.0f°C first."
-                    % (extruder_name, current_temp, owner.min_unload_temp))
-                return
-
-            # Adjust to tip form temp
-            if current_temp > owner.tip_form_temp + 10:
+                    "SA: Heating %s to %.0f°C for tip forming..."
+                    % (extruder_name, owner.tip_form_temp))
+                owner.gcode.run_script_from_command(
+                    "SET_TOOL_TEMPERATURE T=%d TARGET=%.0f WAIT=1"
+                    % (path, owner.tip_form_temp))
+            elif current_temp > owner.tip_form_temp + 10:
                 gcmd.respond_info(
                     "SA: Cooling %s to %.0f°C for tip forming..."
                     % (extruder_name, owner.tip_form_temp))
@@ -767,13 +767,6 @@ class SASequences:
                 owner.gcode.run_script_from_command(
                     "TEMPERATURE_WAIT SENSOR=%s MAXIMUM=%.0f"
                     % (extruder_name, owner.tip_form_temp + 5))
-            elif current_temp < owner.tip_form_temp - 10:
-                gcmd.respond_info(
-                    "SA: Heating %s to %.0f°C for tip forming..."
-                    % (extruder_name, owner.tip_form_temp))
-                owner.gcode.run_script_from_command(
-                    "SET_TOOL_TEMPERATURE T=%d TARGET=%.0f WAIT=1"
-                    % (path, owner.tip_form_temp))
 
             # Cooling push — shapes pointed tip
             push_f = int(owner.tip_form_push_speed * 60)
