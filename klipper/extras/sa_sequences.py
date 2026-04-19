@@ -425,6 +425,78 @@ class SASequences:
         self._extrude_mm(owner.fill_nozzle_length, f)
         self._extrude_mm(owner.purge_length, f)
 
+    def _sync_feed_to_toolhead_sensor(self, gcmd, path):
+        """Run drive motor and extruder together at feed_speed until toolhead sensor fires.
+
+        Covers the dead zone between extruder sensor and extruder gear engagement
+        (~20mm), then continues until filament is confirmed at the toolhead.
+
+        Servo must be engaged before calling.  Disengages servo on return.
+        Falls back to fill_nozzle_length fixed extrusion if no toolhead sensor.
+        """
+        owner  = self.owner
+        motion = owner.motion
+        dn     = owner._drv_name()
+
+        has_sensor = bool(owner._toolhead_sensor_names[path])
+        sync_speed = owner.feed_speed
+        sync_f     = int(sync_speed * 60)
+        step       = owner.feed_step_size
+        # Safety ceiling: 2× fill_nozzle_length or 200mm, whichever is larger
+        max_dist   = max(owner.fill_nozzle_length * 2.0, 200.0)
+
+        if not has_sensor:
+            gcmd.respond_info(
+                "SA: No toolhead sensor — extruding %.1fmm to fill nozzle..."
+                % owner.fill_nozzle_length)
+            owner.gcode.run_script_from_command("M83")
+            self._extrude_mm(owner.fill_nozzle_length, self._extrude_speed_mmm())
+            motion.servo_disengage()
+            return
+
+        if owner._toolhead_sensor_active(path):
+            gcmd.respond_info("SA: Toolhead sensor already active on path %d." % path)
+            motion.servo_disengage()
+            return
+
+        gcmd.respond_info(
+            "SA: Sync feed — drive + extruder at %.0fmm/s until toolhead sensor (path %d)..."
+            % (sync_speed, path))
+
+        owner.gcode.run_script_from_command("M83")
+        motion._cancel_timeout(dn)
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+
+        driven    = 0.0
+        triggered = False
+
+        while driven < max_dist:
+            # SYNC=0 starts drive move immediately without waiting for the extruder queue.
+            # G1 E queues right after — both execute in parallel, same distance and speed.
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 MOVE=%.2f SPEED=%.1f SYNC=0"
+                % (dn, step, sync_speed))
+            owner.gcode.run_script_from_command(
+                "G1 E%.2f F%d" % (step, sync_f))
+            owner.gcode.run_script_from_command("M400")
+            driven += step
+            owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+
+            if owner._toolhead_sensor_active(path):
+                gcmd.respond_info(
+                    "SA: Toolhead sensor triggered after %.1fmm sync feed on path %d."
+                    % (driven, path))
+                triggered = True
+                break
+
+        if not triggered:
+            gcmd.respond_info(
+                "SA: WARNING — toolhead sensor path %d not triggered after %.0fmm. "
+                "Check sensor wiring." % (path, max_dist))
+
+        motion._arm_timeout(dn)
+        motion.servo_disengage()
+
     # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
     # ═══════════════════════════════════════════════════════════════════════════
@@ -559,19 +631,33 @@ class SASequences:
             if not self._blast_and_approach(gcmd, path):
                 return
 
-            motion.servo_disengage()
+            # Keep servo engaged — common section needs it for sync feed
             owner.path_states[path] = 'partial'
             motion.save_position()
-            # Fall through to heat + fill + purge
+            # Fall through to heat + sync feed + purge
 
         # ══════════════════════════════════════════════════════════════════════
         # Common: cooling pad → heat → fill nozzle → purge → restore
         # ══════════════════════════════════════════════════════════════════════
         # Heat (cooling pad already set by _park for no-print loads)
         self._heat_for_load(gcmd, path)
-        # Move to purge position after heating (no-print: cooling pad → X175 Y0)
+        # Move to purge position (no-print: cooling pad → X175 Y0)
         self._move_to_purge_position(gcmd, is_printing)
-        self._fill_and_purge(gcmd, path)
+
+        # Re-engage servo if Branch B disengaged it; Branch C is already engaged
+        if not owner._servo_is_engaged:
+            motion.servo_engage()
+
+        # Sync drive + extruder together until toolhead sensor confirms grip.
+        # Handles dead zone (extruder sensor → extruder gears, ~20mm) and beyond.
+        # Disengages servo on return.
+        self._sync_feed_to_toolhead_sensor(gcmd, path)
+
+        # Purge (extruder only — servo already disengaged)
+        f = self._extrude_speed_mmm()
+        gcmd.respond_info("SA: Purging %.1fmm..." % owner.purge_length)
+        owner.gcode.run_script_from_command("M83")
+        self._extrude_mm(owner.purge_length, f)
 
         owner.path_states[path] = 'loaded'
         gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
