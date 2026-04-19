@@ -939,39 +939,90 @@ class SASequences:
 
             owner.path_states[path] = 'partial'
 
-            # Verify extruder sensor actually cleared — retry up to 3 times
-            if owner._extruder_sensor_names[path] and owner._extruder_sensor_active(path):
-                gcmd.respond_info(
-                    "SA: Extruder sensor still active — retracting further...")
-                cleared = False
-                for attempt in range(1, 4):
-                    self._extrude_mm(-owner.sensor_retry_dist, slow_f)
-                    if not owner._extruder_sensor_active(path):
-                        gcmd.respond_info(
-                            "SA: Extruder sensor cleared on attempt %d." % attempt)
-                        cleared = True
-                        break
-                    gcmd.respond_info(
-                        "SA: Attempt %d — extruder sensor path %d still active."
-                        % (attempt, path))
-                if not cleared:
-                    gcmd.respond_info(
-                        "SA: ERROR — extruder sensor path %d still triggered after "
-                        "3 retract attempts.\n"
-                        "Troubleshoot: check for filament jammed at extruder gears, "
-                        "or verify extruder_sensor_%d wiring is not shorted/stuck.\n"
-                        "Clear the jam manually, then re-run SA_UNLOAD TOOL=%d."
-                        % (path, path, path))
-                    owner._cal_state = None
-                    owner._cal_data  = {}
-                    return
-
-            # Heater off — filament is clear of melt zone
+            # Heater off — tip is past heatbreak (60mm+), safe to cool now
+            gcmd.respond_info("SA: Heater off — filament clear of melt zone.")
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0" % extruder_name)
 
-            # Engage drive to pull remaining bowden length
-            motion.servo_engage()
+            # If extruder sensor still triggered after tip form:
+            # Filament tip has passed the extruder gears but hasn't cleared the
+            # entry sensor at the top of the extruder — extruder motor can't grip
+            # it anymore.  Engage the drive motor and sync both motors backward
+            # at slow speed; encoder confirms the drive has grip.
+            has_ext_sensor = bool(owner._extruder_sensor_names[path])
+            if has_ext_sensor and owner._extruder_sensor_active(path):
+                gcmd.respond_info(
+                    "SA: Filament past gears but extruder sensor still active — "
+                    "engaging drive motor to pull through...")
+
+                motion.servo_engage()
+
+                enc = owner._encoder(path)
+                enc.set_direction(forward=False)
+                enc.reset_distance()
+
+                dn       = owner._drv_name()
+                sync_spd = owner.tip_form_slow_speed
+                sync_f   = int(sync_spd * 60)
+                step     = owner.feed_step_size
+                max_sync = owner.sensor_retry_dist * 3
+                driven   = 0.0
+                cleared  = False
+
+                owner.gcode.run_script_from_command("M83")
+                motion._cancel_timeout(dn)
+                owner.gcode.run_script_from_command(
+                    "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+
+                while driven < max_sync:
+                    # Drive + extruder retract together at same speed
+                    owner.gcode.run_script_from_command(
+                        "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 "
+                        "MOVE=%.2f SPEED=%.1f SYNC=0"
+                        % (dn, -step, sync_spd))
+                    owner.gcode.run_script_from_command(
+                        "G1 E%.2f F%d" % (-step, sync_f))
+                    owner.gcode.run_script_from_command("M400")
+                    driven += step
+                    owner.reactor.pause(
+                        owner.reactor.monotonic() + owner.sensor_delay)
+
+                    # Encoder grip check — warn if drive gear not moving filament
+                    enc_dist = abs(enc.get_distance())
+                    if driven >= step * 2 and enc_dist < step * 0.3:
+                        gcmd.respond_info(
+                            "SA: WARNING — low encoder motion (%.1fmm) after "
+                            "%.0fmm drive retract on path %d. "
+                            "Possible jam in bowden tube."
+                            % (enc_dist, driven, path))
+
+                    if not owner._extruder_sensor_active(path):
+                        gcmd.respond_info(
+                            "SA: Extruder sensor cleared after %.1fmm "
+                            "drive-assist retract (encoder: %.1fmm)."
+                            % (driven, abs(enc.get_distance())))
+                        cleared = True
+                        break
+
+                motion._arm_timeout(dn)
+
+                if not cleared:
+                    motion.servo_disengage()
+                    gcmd.respond_info(
+                        "SA: ERROR — extruder sensor path %d not cleared after "
+                        "%.0fmm drive-assist retract.\n"
+                        "Troubleshoot: check for jam near extruder_sensor_%d "
+                        "or verify sensor wiring is not shorted/stuck.\n"
+                        "Clear manually then re-run SA_UNLOAD TOOL=%d."
+                        % (path, max_sync, path, path))
+                    owner._cal_state = None
+                    owner._cal_data  = {}
+                    return
+                # Servo already engaged — fall through to bowden retract below
+
+            else:
+                # Sensor already clear or not configured — engage drive for bowden pull
+                motion.servo_engage()
 
         # ══════════════════════════════════════════════════════════════════════
         # Branch B: ENTRY + EXTRUDER — filament at gears, not at nozzle
