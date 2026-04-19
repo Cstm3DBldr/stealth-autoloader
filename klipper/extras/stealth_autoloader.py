@@ -148,11 +148,15 @@ class StealthAutoloader:
         self.clean_nozzle_enabled = config.getboolean('clean_nozzle_enabled', True)
 
         # ── Tip forming (unload) ──────────────────────────────────────────────
-        self.tip_form_temp          = config.getfloat('tip_form_temp',          185.0)
-        self.tip_form_push_length   = config.getfloat('tip_form_push_length',     8.0)
-        self.tip_form_push_speed    = config.getfloat('tip_form_push_speed',     20.0)
-        self.tip_form_retract_speed = config.getfloat('tip_form_retract_speed',  40.0)
-        self.tip_form_dwell         = config.getfloat('tip_form_dwell',           3.0)
+        self.tip_form_temp             = config.getfloat('tip_form_temp',             185.0)
+        self.tip_form_push_length      = config.getfloat('tip_form_push_length',       8.0)
+        self.tip_form_push_speed       = config.getfloat('tip_form_push_speed',       20.0)
+        self.tip_form_retract_speed    = config.getfloat('tip_form_retract_speed',    40.0)
+        self.tip_form_heatbreak_dist   = config.getfloat('tip_form_heatbreak_dist',   30.0)
+        self.tip_form_heatbreak_speed  = config.getfloat('tip_form_heatbreak_speed',   5.0)
+        self.tip_form_slow_speed       = config.getfloat('tip_form_slow_speed',       12.0)
+        self.tip_form_dwell            = config.getfloat('tip_form_dwell',             0.0)
+        self.nozzle_to_sensor_dist     = config.getfloat('nozzle_to_sensor_dist',    120.0)
         self.min_unload_temp        = config.getfloat('min_unload_temp',        170.0)
 
         # ── Sensor verify / park ──────────────────────────────────────────────

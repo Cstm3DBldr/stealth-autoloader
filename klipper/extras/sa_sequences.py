@@ -885,7 +885,13 @@ class SASequences:
             # Move away from cooling pad to purge position before tip form
             self._move_to_purge_position(gcmd, is_printing)
 
-            # Tip form: push → dwell → fast through melt zone → slow through gears
+            # Tip form — 3-phase retract:
+            #   Phase 1 fast  : nozzle → heatbreak start (clears melt zone)
+            #   Phase 2 hb    : through heatbreak at 5mm/s (optional dwell at midpoint)
+            #   Phase 3 slow  : heatbreak end → sensor clearance+5%
+            #
+            # Total = nozzle_to_sensor_dist × 1.05
+            # Slow speed tuned so phase-3 time ≈ previous slow phase × 1.25 (25% longer)
             owner.gcode.run_script_from_command("M83")
             push_f = int(owner.tip_form_push_speed * 60)
             gcmd.respond_info(
@@ -893,31 +899,43 @@ class SASequences:
                 % (owner.tip_form_push_length, push_f))
             self._extrude_mm(owner.tip_form_push_length, push_f)
 
-            # Dwell — let the shaped tip cool/harden before any retraction
+            # Phase 1 — fast: nozzle to heatbreak start
+            fast_dist = owner.tip_form_heatbreak_dist + owner.tip_form_push_length
+            fast_f    = int(owner.tip_form_retract_speed * 60)
             gcmd.respond_info(
-                "SA: Tip dwell %.1fs (cooling)..." % owner.tip_form_dwell)
-            owner.reactor.pause(
-                owner.reactor.monotonic() + owner.tip_form_dwell)
-
-            # Phase 1 — fast: clear only the melt zone (half nozzle_distance).
-            # Stops well before the extruder gears so the soft tip never hits them fast.
-            fast_clearance = owner.nozzle_distance * 0.5
-            fast_dist      = fast_clearance + owner.tip_form_push_length
-            fast_f         = int(owner.tip_form_retract_speed * 60)
-            gcmd.respond_info(
-                "SA: Fast retract %.1fmm at %dmm/min (melt zone only)..."
+                "SA: Fast retract %.1fmm at %dmm/min (nozzle → heatbreak)..."
                 % (fast_dist, fast_f))
             self._extrude_mm(-fast_dist, fast_f)
 
-            # Phase 2 — slow: approach gears + cross gear nip + continue clear
-            slow_dist = (owner.nozzle_distance - fast_clearance) \
-                      + (owner.fill_nozzle_length - owner.nozzle_distance) \
-                      + owner.purge_length
-            slow_f    = int(owner.tip_form_push_speed * 60)
+            # Phase 2 — heatbreak: 5mm/s, optional dwell at midpoint (45mm from nozzle)
+            hb_half  = owner.tip_form_heatbreak_dist * 0.5
+            hb_f     = int(owner.tip_form_heatbreak_speed * 60)
             gcmd.respond_info(
-                "SA: Slow retract %.1fmm at %dmm/min (through gears)..."
-                % (slow_dist, slow_f))
-            self._extrude_mm(-slow_dist, slow_f)
+                "SA: Heatbreak retract %.1fmm at %dmm/min (first half)..."
+                % (hb_half, hb_f))
+            self._extrude_mm(-hb_half, hb_f)
+            if owner.tip_form_dwell > 0:
+                gcmd.respond_info(
+                    "SA: Tip dwell %.1fs at heatbreak midpoint..."
+                    % owner.tip_form_dwell)
+                owner.reactor.pause(
+                    owner.reactor.monotonic() + owner.tip_form_dwell)
+            gcmd.respond_info(
+                "SA: Heatbreak retract %.1fmm at %dmm/min (second half)..."
+                % (hb_half, hb_f))
+            self._extrude_mm(-hb_half, hb_f)
+
+            # Phase 3 — slow: heatbreak exit through gears to sensor clearance+5%
+            total_target = owner.nozzle_to_sensor_dist * 1.05
+            covered      = fast_dist + owner.tip_form_heatbreak_dist
+            slow_dist    = total_target - covered
+            slow_f       = int(owner.tip_form_slow_speed * 60)
+            if slow_dist > 0:
+                gcmd.respond_info(
+                    "SA: Slow retract %.1fmm at %dmm/min "
+                    "(gears → sensor clearance %.0fmm)..."
+                    % (slow_dist, slow_f, total_target))
+                self._extrude_mm(-slow_dist, slow_f)
 
             owner.path_states[path] = 'partial'
 
