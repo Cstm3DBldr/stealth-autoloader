@@ -139,18 +139,21 @@ class SASequences:
             "SET_TOOL_TEMPERATURE T=%d TARGET=%.0f WAIT=1" % (path, owner.load_temperature))
 
     def _restore_state(self, gcmd, path, is_printing):
-        """After load/unload: resume print or park + heater off."""
+        """After load/unload: resume print or clean + park + heater off."""
         owner = self.owner
         if is_printing:
             gcmd.respond_info("SA: Resuming print...")
             owner.gcode.run_script_from_command("RESUME")
         else:
+            gcmd.respond_info("SA: Turning off heater...")
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
                 % owner._extruder_names[path])
-            owner.gcode.run_script_from_command("T0")
             if owner.cooling_pad_enabled:
+                gcmd.respond_info("SA: Cleaning nozzle and parking...")
+                owner.gcode.run_script_from_command("_CLEAN_NOZZLE")
                 owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
+            owner.gcode.run_script_from_command("T0")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Wiggle checks
@@ -502,13 +505,14 @@ class SASequences:
     # ═══════════════════════════════════════════════════════════════════════════
 
     def _prompt_purge(self, gcmd, path):
-        """Print the post-load purge-more / done prompt."""
+        """Print the post-load purge-more / park prompt."""
         owner = self.owner
         gcmd.respond_info(
-            "SA: Load complete — path %d.\n"
+            "SA: Load complete — path %d. Filament purging at nozzle.\n"
             "\n"
             "  SA_RESPOND VALUE=more  — purge %.0fmm again\n"
-            "  SA_RESPOND VALUE=done  — finish" % (path, owner.purge_length))
+            "  SA_RESPOND VALUE=park  — clean nozzle and park on cooling pad"
+            % (path, owner.purge_length))
 
     def _load_purge_respond(self, gcmd, value):
         """Handle SA_RESPOND during the load_purge state."""
@@ -528,6 +532,24 @@ class SASequences:
             owner._cal_data  = {}
             gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
             self._restore_state(gcmd, path, is_printing)
+
+    def _prompt_unload_park(self, gcmd, path):
+        """Print the post-unload park confirmation prompt."""
+        gcmd.respond_info(
+            "SA: Unload complete — path %d. Ready to park?\n"
+            "\n"
+            "  SA_RESPOND VALUE=park  — clean nozzle and park on cooling pad"
+            % path)
+
+    def _unload_done_respond(self, gcmd, value):
+        """Handle SA_RESPOND during the unload_done state."""
+        owner = self.owner
+        data  = owner._cal_data
+        path        = data['path']
+        is_printing = data['is_printing']
+        owner._cal_state = None
+        owner._cal_data  = {}
+        self._restore_state(gcmd, path, is_printing)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Load sequence
@@ -768,21 +790,30 @@ class SASequences:
                     "TEMPERATURE_WAIT SENSOR=%s MAXIMUM=%.0f"
                     % (extruder_name, owner.tip_form_temp + 5))
 
-            # Cooling push — shapes pointed tip
+            # Tip form: push → fast retract through melt zone → slow finish
+            owner.gcode.run_script_from_command("M83")
             push_f = int(owner.tip_form_push_speed * 60)
             gcmd.respond_info(
                 "SA: Tip form push %.1fmm at %dmm/min..."
                 % (owner.tip_form_push_length, push_f))
-            owner.gcode.run_script_from_command("M83")
             self._extrude_mm(owner.tip_form_push_length, push_f)
 
-            # Fast retract past extruder gears — chunked to avoid extrude limit
-            retract_dist = (owner.fill_nozzle_length + owner.purge_length
-                            + owner.tip_form_push_length)
-            retract_f = int(owner.tip_form_retract_speed * 60)
+            # Phase 1 — fast: clear the melt zone before filament re-freezes
+            fast_dist = owner.fill_nozzle_length + owner.tip_form_push_length
+            fast_f    = int(owner.tip_form_retract_speed * 60)
             gcmd.respond_info(
-                "SA: Fast retract %.1fmm at %dmm/min..." % (retract_dist, retract_f))
-            self._extrude_mm(-retract_dist, retract_f)
+                "SA: Fast retract %.1fmm at %dmm/min (clearing melt zone)..."
+                % (fast_dist, fast_f))
+            self._extrude_mm(-fast_dist, fast_f)
+
+            # Phase 2 — slow: controlled finish past extruder gears
+            slow_dist = owner.purge_length
+            slow_f    = int(owner.tip_form_push_speed * 60)
+            gcmd.respond_info(
+                "SA: Slow retract %.1fmm at %dmm/min (finish)..."
+                % (slow_dist, slow_f))
+            self._extrude_mm(-slow_dist, slow_f)
+
             owner.path_states[path] = 'partial'
 
             # Heater off — filament is out of melt zone
@@ -831,14 +862,13 @@ class SASequences:
         owner.path_states[path] = 'empty'
         motion.save_position()
         gcmd.respond_info(
-            "SA: === UNLOAD COMPLETE — path %d (%.1fmm retracted by drive) ==="
+            "SA: Drive retract complete — path %d (%.1fmm retracted)."
             % (path, abs(enc.get_distance())))
 
-        # ── State restoration ─────────────────────────────────────────────────
         if is_printing:
             gcmd.respond_info("SA: Resuming print...")
             owner.gcode.run_script_from_command("RESUME")
         else:
-            owner.gcode.run_script_from_command("T0")
-            if owner.cooling_pad_enabled:
-                owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
+            owner._cal_state = 'unload_done'
+            owner._cal_data  = {'path': path, 'is_printing': is_printing}
+            self._prompt_unload_park(gcmd, path)

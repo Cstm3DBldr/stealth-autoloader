@@ -55,6 +55,8 @@ class SACalibration:
                 self._bow_respond(gcmd, state, val)
             elif state == 'load_purge':
                 self.owner.sequences._load_purge_respond(gcmd, val)
+            elif state == 'unload_done':
+                self.owner.sequences._unload_done_respond(gcmd, val)
             else:
                 gcmd.respond_info(
                     "SA CAL: Unknown calibration state '%s' — clearing." % state)
