@@ -885,7 +885,7 @@ class SASequences:
             # Move away from cooling pad to purge position before tip form
             self._move_to_purge_position(gcmd, is_printing)
 
-            # Tip form: push → fast retract through melt zone → slow finish
+            # Tip form: push → fast retract to gears → slow through gears → verify clear
             owner.gcode.run_script_from_command("M83")
             push_f = int(owner.tip_form_push_speed * 60)
             gcmd.respond_info(
@@ -893,25 +893,54 @@ class SASequences:
                 % (owner.tip_form_push_length, push_f))
             self._extrude_mm(owner.tip_form_push_length, push_f)
 
-            # Phase 1 — fast: clear the melt zone before filament re-freezes
-            fast_dist = owner.fill_nozzle_length + owner.tip_form_push_length
+            # Phase 1 — fast: clear the melt zone, stop just at extruder gears
+            # Use nozzle_distance (physical gears→nozzle) not fill_nozzle_length —
+            # avoids slamming the hot tip into the gears at speed.
+            fast_dist = owner.nozzle_distance + owner.tip_form_push_length
             fast_f    = int(owner.tip_form_retract_speed * 60)
             gcmd.respond_info(
-                "SA: Fast retract %.1fmm at %dmm/min (clearing melt zone)..."
+                "SA: Fast retract %.1fmm at %dmm/min (clearing melt zone to gears)..."
                 % (fast_dist, fast_f))
             self._extrude_mm(-fast_dist, fast_f)
 
-            # Phase 2 — slow: controlled finish past extruder gears
-            slow_dist = owner.purge_length
+            # Phase 2 — slow: cross the extruder gears + extra margin
+            slow_dist = (owner.fill_nozzle_length - owner.nozzle_distance) + owner.purge_length
             slow_f    = int(owner.tip_form_push_speed * 60)
             gcmd.respond_info(
-                "SA: Slow retract %.1fmm at %dmm/min (finish)..."
+                "SA: Slow retract %.1fmm at %dmm/min (crossing gears)..."
                 % (slow_dist, slow_f))
             self._extrude_mm(-slow_dist, slow_f)
 
             owner.path_states[path] = 'partial'
 
-            # Heater off — filament is out of melt zone
+            # Verify extruder sensor actually cleared — retry up to 3 times
+            if owner._extruder_sensor_names[path] and owner._extruder_sensor_active(path):
+                gcmd.respond_info(
+                    "SA: Extruder sensor still active — retracting further...")
+                cleared = False
+                for attempt in range(1, 4):
+                    self._extrude_mm(-owner.nozzle_distance, slow_f)
+                    if not owner._extruder_sensor_active(path):
+                        gcmd.respond_info(
+                            "SA: Extruder sensor cleared on attempt %d." % attempt)
+                        cleared = True
+                        break
+                    gcmd.respond_info(
+                        "SA: Attempt %d — extruder sensor path %d still active."
+                        % (attempt, path))
+                if not cleared:
+                    gcmd.respond_info(
+                        "SA: ERROR — extruder sensor path %d still triggered after "
+                        "3 retract attempts.\n"
+                        "Troubleshoot: check for filament jammed at extruder gears, "
+                        "or verify extruder_sensor_%d wiring is not shorted/stuck.\n"
+                        "Clear the jam manually, then re-run SA_UNLOAD TOOL=%d."
+                        % (path, path, path))
+                    owner._cal_state = None
+                    owner._cal_data  = {}
+                    return
+
+            # Heater off — filament is clear of melt zone
             owner.gcode.run_script_from_command(
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0" % extruder_name)
 
