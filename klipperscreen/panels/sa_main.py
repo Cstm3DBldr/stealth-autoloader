@@ -58,7 +58,7 @@ class Panel(ScreenPanel):
         _css.load_from_data(b"""
 .sa-bar-btn {
     padding: 4px 8px;
-    min-height: 48px;
+    min-height: 62px;
     min-width: 0px;
     border-radius: 4px;
     background: #1565C0;
