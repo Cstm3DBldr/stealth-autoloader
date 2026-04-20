@@ -478,7 +478,7 @@ class Panel(ScreenPanel):
             if self._wz.get('color_hex'):
                 self._gcode(self._set_material_gcode())
                 self._gcode(f"SA_LOAD TOOL={self._sel_path}")
-                self._screen.show_popup_message(f"Loading T{self._sel_path} …")
+                self._screen.show_popup_message(f"Loading T{self._sel_path} …", level=1)
                 self._reset()
         else:
             idx = self._page_index(self._cur)
@@ -491,7 +491,7 @@ class Panel(ScreenPanel):
             return
         self._gcode(self._set_material_gcode())
         self._screen.show_popup_message(
-            f"T{self._sel_path} profile saved (not loaded)")
+            f"T{self._sel_path} profile saved (not loaded)", level=1)
         self._reset()
 
     def _do_unload(self):
@@ -499,7 +499,7 @@ class Panel(ScreenPanel):
         if path is None:
             return
         self._gcode(f"SA_UNLOAD TOOL={path}")
-        self._screen.show_popup_message(f"Unloading T{path} …")
+        self._screen.show_popup_message(f"Unloading T{path} …", level=1)
         self._reset()
 
     def _reset(self):
