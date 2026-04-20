@@ -159,12 +159,16 @@ class SASequences:
                 "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
                 % owner._extruder_names[path])
             if after_unload:
-                # Nozzle is empty — move to load park position and done
-                gcmd.respond_info("SA: Parking at load position...")
-                owner.gcode.run_script_from_command(
-                    "G0 X%.3f Y%.3f F5000"
-                    % (owner.load_park_x, owner.load_park_y))
-                owner.gcode.run_script_from_command("M400")
+                # Nozzle is empty — park on cooling pad if enabled, else load position
+                if owner.cooling_pad_enabled:
+                    gcmd.respond_info("SA: Parking on cooling pad...")
+                    owner.gcode.run_script_from_command("PARK_ON_COOLING_PAD")
+                else:
+                    gcmd.respond_info("SA: Parking at load position...")
+                    owner.gcode.run_script_from_command(
+                        "G0 X%.3f Y%.3f F5000"
+                        % (owner.load_park_x, owner.load_park_y))
+                    owner.gcode.run_script_from_command("M400")
             else:
                 # Nozzle is hot+primed — wipe then cool
                 if owner.clean_nozzle_enabled:
@@ -690,8 +694,8 @@ class SASequences:
 
         is_printing = self._is_printing()
         gcmd.respond_info("SA: Print state: %s." % ("PRINTING" if is_printing else "idle"))
-        self._switch_tool(gcmd, path)
         self._park(gcmd, is_printing)
+        self._switch_tool(gcmd, path)
         self._ensure_selector(gcmd, path)
 
         # ══════════════════════════════════════════════════════════════════════
@@ -850,8 +854,8 @@ class SASequences:
 
         is_printing = self._is_printing()
         gcmd.respond_info("SA: Print state: %s." % ("PRINTING" if is_printing else "idle"))
-        self._switch_tool(gcmd, path)
         self._park(gcmd, is_printing)
+        self._switch_tool(gcmd, path)
         self._ensure_selector(gcmd, path)
 
         extruder_name = owner._extruder_names[path]
