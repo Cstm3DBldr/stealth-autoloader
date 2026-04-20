@@ -215,3 +215,59 @@ class SASequences:
         gcmd.respond_info(
             "SA: === UNLOAD COMPLETE — path %d (%.1fmm retracted by drive) ==="
             % (path, abs(enc.get_distance())))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Park sequence
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def do_park(self, gcmd, path):
+        """Park filament at the drive encoder (phases 0–2 of load only).
+
+        Selects the path, engages the drive gear, and feeds until the encoder
+        confirms the filament tip is gripped.  Leaves the servo disengaged so
+        the operator can start a full SA_LOAD when ready.
+        """
+        owner  = self.owner
+        motion = owner.motion
+
+        gcmd.respond_info("SA: === PARK path %d ===" % path)
+
+        if not owner._entry_sensor_active(path):
+            gcmd.respond_info(
+                "SA: No filament at entry of path %d — nothing to park." % path)
+            return
+
+        gcmd.respond_info(
+            "SA: Parking — selecting path %d (%.1fmm)..."
+            % (path, owner._selector_positions[path]))
+        motion.servo_disengage()
+        motion.selector_move_to(owner._selector_positions[path])
+        owner.current_path = path
+        motion.servo_engage()
+
+        enc = owner._encoder(path)
+        enc.set_direction(forward=True)
+        enc.reset_distance()
+
+        driven    = 0.0
+        mpp       = enc.mm_per_pulse
+        threshold = (mpp * 3.0) if mpp else 1.5
+
+        while enc.get_distance() < threshold and driven < owner.engage_max_distance:
+            motion.drive_move(owner.feed_step_size)
+            driven += owner.feed_step_size
+            owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+
+        motion.servo_disengage()
+
+        if enc.get_distance() < threshold:
+            gcmd.respond_info(
+                "SA: PARK — encoder did not detect filament after %.0fmm on path %d. "
+                "Check filament position." % (driven, path))
+            return
+
+        owner.path_states[path] = 'partial'
+        owner.save_path_state(path)
+        gcmd.respond_info(
+            "SA: Path %d parked at drive encoder (%.1fmm driven). "
+            "Run SA_LOAD TOOL=%d to complete." % (path, driven, path))
