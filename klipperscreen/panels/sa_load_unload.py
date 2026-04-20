@@ -247,19 +247,20 @@ class Panel(ScreenPanel):
         t_lbl = Gtk.Label()
         t_lbl.set_markup(f'<b>T{i}</b>')
 
-        # Swatch symbol + colour
+        # Swatch: show assigned colour whenever one exists, regardless of state.
+        # Fall back to state-based symbols only when no colour is stored.
         swatch = Gtk.Label()
-        if state == 'loaded' and hex_c:
+        if hex_c:
             h = hex_c if hex_c.startswith('#') else '#' + hex_c
-            swatch.set_markup(f'<span font_size="x-large" foreground="{h}">{COLOR_SWATCH}</span>')
-        elif state == 'loaded':
-            swatch.set_markup(f'<span font_size="x-large" foreground="#888888">{COLOR_SWATCH}</span>')
+            swatch.set_markup(f'<span font_size="xx-large" foreground="{h}">{COLOR_SWATCH}</span>')
         elif state == 'empty':
-            swatch.set_markup(f'<span font_size="x-large" foreground="#666666">{EMPTY_SWATCH}</span>')
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#666666">{EMPTY_SWATCH}</span>')
         elif state == 'partial':
-            swatch.set_markup(f'<span font_size="x-large" foreground="#E65100">{PARTIAL_SWATCH}</span>')
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#E65100">{PARTIAL_SWATCH}</span>')
+        elif state == 'loaded':
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#888888">{COLOR_SWATCH}</span>')
         else:
-            swatch.set_markup(f'<span font_size="x-large" foreground="#F9A825">{UNKNOWN_SWATCH}</span>')
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#F9A825">{UNKNOWN_SWATCH}</span>')
 
         # Short material label
         mat_lbl = Gtk.Label()
