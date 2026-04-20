@@ -17,8 +17,8 @@ _BTNS = [
     ("STATUS REPORT",   "SA_STATUS",                     False),
     ("BUZZ DRIVE",      "SA_BUZZ_DRIVE",                 False),
     ("BUZZ SELECTOR",   "SA_BUZZ_SELECTOR",              False),
-    ("CAL SELECTOR",    "SA_CALIBRATE_SELECTOR",         False),
-    ("CAL ENCODER T0",  "SA_CALIBRATE_ENCODER TOOL=0",   False),
+    ("CAL SELECTOR T0", "SA_CALIBRATE_SELECTOR TOOL=0",   False),
+    ("CAL ENCODER",     "SA_CALIBRATE_ENCODER",           False),
 ]
 
 

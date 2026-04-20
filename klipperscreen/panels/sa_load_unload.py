@@ -443,6 +443,7 @@ class Panel(ScreenPanel):
         for label, callback, arg in items:
             btn = _sbs.make(label)
             btn.set_hexpand(True)
+            btn.connect("clicked", callback, arg)
             flowbox.add(btn)
         flowbox.show_all()
 
