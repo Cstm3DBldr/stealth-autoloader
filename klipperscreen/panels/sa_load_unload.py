@@ -51,7 +51,7 @@ class Panel(ScreenPanel):
         self._pages['path']     = self._make_path_page()
         self._pages['brand']    = self._make_scroll_page()
         self._pages['material'] = self._make_scroll_page()
-        self._pages['color']    = self._make_scroll_page()
+        self._pages['color']    = self._make_scroll_page(color_mode=True)
 
         for name in ('path', 'brand', 'material', 'color'):
             self._nb.append_page(self._pages[name]['outer'], None)
@@ -98,15 +98,21 @@ class Panel(ScreenPanel):
 
         return {'outer': outer}
 
-    def _make_scroll_page(self):
+    def _make_scroll_page(self, color_mode=False):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
         hdr = Gtk.Label(label="")
         hdr.set_halign(Gtk.Align.START)
         scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # Color page: always-visible scrollbar; other pages: auto
+        v_policy = Gtk.PolicyType.ALWAYS if color_mode else Gtk.PolicyType.AUTOMATIC
+        scroll.set_policy(Gtk.PolicyType.NEVER, v_policy)
         inner = Gtk.FlowBox()
-        inner.set_max_children_per_line(4)
-        inner.set_min_children_per_line(2)
+        if color_mode:
+            inner.set_max_children_per_line(6)
+            inner.set_min_children_per_line(4)
+        else:
+            inner.set_max_children_per_line(4)
+            inner.set_min_children_per_line(2)
         inner.set_selection_mode(Gtk.SelectionMode.NONE)
         inner.set_homogeneous(True)
         scroll.add(inner)
@@ -239,30 +245,28 @@ class Panel(ScreenPanel):
         name  = c.get('name', '?')
         btn = Gtk.Button()
         btn.get_style_context().add_class("color3")
+        btn.set_size_request(110, 72)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         vbox.set_valign(Gtk.Align.CENTER)
         vbox.set_halign(Gtk.Align.CENTER)
 
         swatch = Gtk.Label()
-        rgba = _rgba_from_hex(hex_c)
-        if rgba:
-            swatch.set_text(COLOR_SWATCH)
-            swatch.override_color(Gtk.StateType.NORMAL, rgba)
-        else:
-            swatch.set_text(EMPTY_SWATCH)
-        swatch.set_margin_top(2)
+        swatch.set_markup(
+            f'<span font_size="xx-large" foreground="{hex_c if hex_c.startswith("#") else "#" + hex_c if hex_c else "#808080"}">{COLOR_SWATCH}</span>'
+            if hex_c else EMPTY_SWATCH
+        )
 
         name_lbl = Gtk.Label(label=name)
         name_lbl.set_line_wrap(True)
-        name_lbl.set_max_width_chars(10)
+        name_lbl.set_max_width_chars(9)
         name_lbl.set_justify(Gtk.Justification.CENTER)
+        name_lbl.set_markup(f'<span font_size="small">{name}</span>')
 
-        vbox.pack_start(swatch,   True, True, 0)
-        vbox.pack_start(name_lbl, True, True, 0)
+        vbox.pack_start(swatch,   False, False, 0)
+        vbox.pack_start(name_lbl, False, False, 0)
         btn.add(vbox)
         btn.connect("clicked", self._select_color, c)
-        btn.set_hexpand(True)
         return btn
 
     def _select_color(self, widget, c):
@@ -271,13 +275,11 @@ class Panel(ScreenPanel):
         self._wz['color_id']   = c.get('id',   '')
         page = self._pages['color']
         hex_c = self._wz['color_hex']
-        rgba = _rgba_from_hex(hex_c)
-        swatch_str = ''
-        if rgba:
-            r, g, b = int(rgba.red*255), int(rgba.green*255), int(rgba.blue*255)
-            swatch_str = f' <span foreground="{hex_c if hex_c.startswith("#") else "#"+hex_c}">{COLOR_SWATCH}</span>'
+        h = hex_c if hex_c.startswith('#') else '#' + hex_c if hex_c else '#808080'
         page['hdr'].set_markup(
-            f"T{self._wz['path']} — Selected:{swatch_str} {self._wz['color_name']}  ({hex_c})")
+            f"T{self._wz['path']} — "
+            f'<span foreground="{h}">{COLOR_SWATCH}</span>'
+            f" {self._wz['color_name']}  ({hex_c})")
         self._conf_btn.set_sensitive(True)
 
     # ── Utilities ─────────────────────────────────────────────────────────
