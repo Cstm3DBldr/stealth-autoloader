@@ -68,10 +68,11 @@ class Panel(ScreenPanel):
         scroll.add(center_box)
         self.content.pack_start(scroll, True, True, 0)
 
-        bar = Gtk.Box(spacing=8, margin=6)
+        bar = Gtk.Box(spacing=4, margin=2)
         for label, cmd in [("HOME", "SA_HOME"), ("ENGAGE", "SA_ENGAGE"),
                            ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None)]:
             btn = self._gtk.Button(label=label, style="color1", scale=self.bts)
+            btn.set_size_request(-1, 36)
             if cmd:
                 btn.connect("clicked", self._send, cmd)
             else:
@@ -87,8 +88,8 @@ class Panel(ScreenPanel):
             self._grid.attach(lbl, col, 0, 1, 1)
 
     def _row_h(self):
-        """Target row height — fits 6 paths on a 480p screen with room for header+bar."""
-        return max(44, (self._screen.height - 120) // max(self._num_paths, 1))
+        """Target row height — compact but readable."""
+        return max(32, (self._screen.height - 160) // (max(self._num_paths, 1) * 2))
 
     def _build_rows(self, num_paths):
         for key in [k for k in self.labels if k.startswith('row_')]:
