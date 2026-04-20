@@ -714,6 +714,7 @@ class StealthAutoloader:
             'path_color_hexes'   : list(self.path_color_hexes),
             'path_load_temps'    : list(self.path_load_temps),
             'path_unload_temps'  : list(self.path_unload_temps),
+            'bowden_lengths'     : list(self._bowden_lengths),
         }
 
     # ══════════════════════════════════════════════════════════════════════════
