@@ -101,12 +101,26 @@ class Panel(ScreenPanel):
     def _send(self, widget, gcode):
         self._screen._ws.klippy.gcode_script(gcode)
 
+    def _query_sa(self):
+        """Direct API query — bypasses printer.data which only has subscribed objects."""
+        try:
+            resp = self._screen.apiclient.send_request(
+                "printer/objects/query?stealth_autoloader")
+            if resp and 'status' in resp:
+                return resp['status'].get('stealth_autoloader', {})
+        except Exception as e:
+            logger.warning("sa_main: query failed: %s", e)
+        return {}
+
     def _refresh(self, widget=None):
-        sa = self._printer.data.get("stealth_autoloader", {})
+        sa = self._query_sa()
         if sa:
             self._apply_sa(sa)
 
     def activate(self):
+        # Subscribe so process_update receives future stealth_autoloader events
+        self._screen._ws.klippy.object_subscription(
+            {"objects": {"stealth_autoloader": None}})
         self._refresh()
 
     def process_update(self, action, data):

@@ -341,8 +341,20 @@ class Panel(ScreenPanel):
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
+    def _query_sa(self):
+        try:
+            resp = self._screen.apiclient.send_request(
+                "printer/objects/query?stealth_autoloader")
+            if resp and 'status' in resp:
+                return resp['status'].get('stealth_autoloader', {})
+        except Exception as e:
+            logger.error("sa_load_unload: query failed: %s", e)
+        return {}
+
     def activate(self):
-        sa = self._printer.data.get("stealth_autoloader", {})
+        self._screen._ws.klippy.object_subscription(
+            {"objects": {"stealth_autoloader": None}})
+        sa     = self._query_sa()
         states = sa.get("path_states", [])
         num    = sa.get("num_paths", 0)
         if not states and num:
