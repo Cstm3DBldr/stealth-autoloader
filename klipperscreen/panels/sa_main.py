@@ -102,7 +102,7 @@ class Panel(ScreenPanel):
         self._screen._ws.klippy.gcode_script(gcode)
 
     def _refresh(self, widget=None):
-        sa = self._printer.get_stat("stealth_autoloader")
+        sa = self._printer.data.get("stealth_autoloader", {})
         if sa:
             self._apply_sa(sa)
 

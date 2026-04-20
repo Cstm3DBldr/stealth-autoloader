@@ -342,8 +342,12 @@ class Panel(ScreenPanel):
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def activate(self):
-        sa = self._printer.get_stat("stealth_autoloader") or {}
-        self._path_states = sa.get("path_states", [])
+        sa = self._printer.data.get("stealth_autoloader", {})
+        states = sa.get("path_states", [])
+        num    = sa.get("num_paths", 0)
+        if not states and num:
+            states = ['unknown'] * num
+        self._path_states = states
         self._populate_path_page()
         self._reset()
 
@@ -352,4 +356,7 @@ class Panel(ScreenPanel):
             return
         sa = data.get("stealth_autoloader")
         if sa is not None:
-            self._path_states = sa.get("path_states", self._path_states)
+            new_states = sa.get("path_states", self._path_states)
+            if new_states != self._path_states:
+                self._path_states = new_states
+                GLib.idle_add(self._populate_path_page)
