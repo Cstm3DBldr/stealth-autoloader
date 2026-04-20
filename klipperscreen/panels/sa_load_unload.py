@@ -48,6 +48,7 @@ class Panel(ScreenPanel):
         super().__init__(screen, title or "Load / Unload")
         _sbs.apply()
 
+        self._op          = 'load'
         self._wz          = {}
         self._path_states = []
         self._path_hexes  = []
@@ -74,21 +75,18 @@ class Panel(ScreenPanel):
 
         self.content.pack_start(self._nb, True, True, 0)
 
-        # ── Nav bar — always 4 buttons side by side ──────────────────────────
+        # ── Nav bar — 3 buttons always visible ──────────────────────────────
         nav = Gtk.Box(spacing=4, margin=4)
 
-        self._back_btn   = _sbs.make("← Back",    "sa-btn-alt")
-        self._unload_btn = _sbs.make("◀ UNLOAD",  "sa-btn-warn")
-        self._save_btn   = _sbs.make("SAVE ONLY", "sa-btn-warn")
-        self._conf_btn   = _sbs.make("Next →",    "sa-btn")
+        self._back_btn = _sbs.make("← Back",    "sa-btn-alt")
+        self._save_btn = _sbs.make("SAVE ONLY", "sa-btn-warn")
+        self._conf_btn = _sbs.make("Next →",    "sa-btn")
 
-        self._back_btn.connect("clicked",   self._go_back)
-        self._unload_btn.connect("clicked", self._do_unload)
-        self._save_btn.connect("clicked",   self._save_only)
-        self._conf_btn.connect("clicked",   self._confirm)
+        self._back_btn.connect("clicked", self._go_back)
+        self._save_btn.connect("clicked", self._save_only)
+        self._conf_btn.connect("clicked", self._confirm)
 
-        for btn in (self._back_btn, self._unload_btn,
-                    self._save_btn, self._conf_btn):
+        for btn in (self._back_btn, self._save_btn, self._conf_btn):
             nav.pack_start(btn, True, True, 0)
 
         self.content.pack_end(nav, False, False, 0)
@@ -100,13 +98,27 @@ class Panel(ScreenPanel):
     def _make_path_page(self):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=6)
 
-        self._path_hdr = Gtk.Label(label="Select a tool path")
-        self._path_hdr.set_halign(Gtk.Align.CENTER)
-        outer.pack_start(self._path_hdr, False, False, 0)
+        hdr = Gtk.Label(label="Select tool, then choose Load or Unload")
+        hdr.set_halign(Gtk.Align.CENTER)
+        outer.pack_start(hdr, False, False, 0)
 
         self._path_grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
                                    row_spacing=4, column_spacing=4)
         outer.pack_start(self._path_grid, True, True, 0)
+
+        op_box = Gtk.Box(spacing=6)
+        self._load_btn   = _sbs.make("▶  LOAD",   "sa-btn")
+        self._unload_btn = _sbs.make("◀  UNLOAD", "sa-btn-alt")
+        self._load_btn.connect("clicked",   self._set_op, 'load')
+        self._unload_btn.connect("clicked", self._set_op, 'unload')
+        op_box.pack_start(self._load_btn,   True, True, 0)
+        op_box.pack_start(self._unload_btn, True, True, 0)
+        outer.pack_start(op_box, False, False, 0)
+
+        self._path_status = Gtk.Label(label="No tool selected")
+        self._path_status.set_halign(Gtk.Align.CENTER)
+        self._path_status.set_size_request(-1, 28)
+        outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
 
@@ -160,24 +172,18 @@ class Panel(ScreenPanel):
         has_path = self._sel_path is not None
         has_color = bool(self._wz.get('color_hex'))
 
-        # ── Back ──
         self._back_btn.set_sensitive(idx > 0)
 
-        # ── UNLOAD — active only on path page when a path is selected ──
-        self._unload_btn.set_sensitive(is_path and has_path)
-
-        # ── SAVE ONLY — active only on color page when a color is selected ──
+        # SAVE ONLY: active only on color page when a color is selected
         self._save_btn.set_sensitive(is_color and has_color)
 
-        # ── Confirm / Next / LOAD ──
         if is_path:
-            self._conf_btn.set_label("▶ LOAD")
-            self._conf_btn.set_sensitive(has_path)
-            if has_path:
-                self._path_hdr.set_markup(
-                    f'<b>T{self._sel_path}</b>  selected')
+            has_op = has_path
+            if self._op == 'unload' and has_path:
+                self._conf_btn.set_label("START UNLOAD")
             else:
-                self._path_hdr.set_text("Select a tool path")
+                self._conf_btn.set_label("Next →")
+            self._conf_btn.set_sensitive(has_op)
         elif is_color:
             self._conf_btn.set_label("START LOAD")
             self._conf_btn.set_sensitive(has_color)
@@ -255,6 +261,11 @@ class Panel(ScreenPanel):
         btn.connect("clicked", self._select_path, i)
         return btn
 
+    def _set_op(self, widget, op):
+        self._op = op
+        self._update_path_status()
+        self._show_page('path')
+
     def _select_path(self, widget, path):
         if self._sel_btn is not None:
             self._sel_btn.get_style_context().remove_class('path-selected')
@@ -262,7 +273,27 @@ class Panel(ScreenPanel):
         self._sel_btn  = widget
         self._sel_path = path
         self._wz['path'] = path
+        self._update_path_status()
         self._show_page('path')
+
+    def _update_path_status(self):
+        if self._sel_path is None:
+            self._path_status.set_text("No tool selected")
+            return
+        op_txt = "LOAD" if self._op == 'load' else "UNLOAD"
+        i      = self._sel_path
+        state  = self._effective_state(i)
+        mat    = self._path_mats[i]  if i < len(self._path_mats)  else ''
+        hex_c  = self._path_hexes[i] if i < len(self._path_hexes) else ''
+        info   = f" · {mat}" if mat else ''
+        if hex_c:
+            h = hex_c if hex_c.startswith('#') else '#' + hex_c
+            swatch_mu = f' <span foreground="{h}">{COLOR_SWATCH}</span>'
+        else:
+            swatch_mu = ''
+        self._path_status.set_markup(
+            f'<span foreground="{_LIME}"><b>T{i}</b></span>'
+            f'{swatch_mu}  {state.upper()}{info}  —  {op_txt}')
 
     def _effective_state(self, i):
         entry = self._path_entry[i] if i < len(self._path_entry) else None
@@ -441,7 +472,11 @@ class Panel(ScreenPanel):
 
     def _confirm(self, widget=None):
         if self._cur == 'path':
-            if self._sel_path is not None:
+            if self._sel_path is None:
+                return
+            if self._op == 'unload':
+                self._do_unload()
+            else:
                 self._go_to_brand()
         elif self._cur == 'color':
             if self._wz.get('color_hex'):
@@ -474,6 +509,7 @@ class Panel(ScreenPanel):
         self._wz       = {}
         self._sel_path = None
         self._sel_btn  = None
+        self._op       = 'load'
         self._show_page('path')
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -549,13 +585,14 @@ class Panel(ScreenPanel):
             self._path_ex     = new_ex
             GLib.idle_add(self._populate_path_page)
             if self._sel_path is not None:
-                GLib.idle_add(self._show_page, self._cur)
+                GLib.idle_add(self._update_path_status)
 
     def _on_filament_inserted(self, path):
         self._screen.show_panel('sa_load_unload', 'Load / Unload')
         self._sel_path = path
         self._wz['path'] = path
         self._populate_path_page()
+        self._update_path_status()
         self._show_page('path')
         self._gcode(f"SA_PARK TOOL={path}")
         return False
