@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stealth Autoloader</title>
+<style>
+  :root { --bg:#1e1e1e; --card:#2a2a2a; --border:#444; --text:#eee; --muted:#888;
+          --green:#4caf50; --grey:#666; --orange:#ff9800; --amber:#ffc107;
+          --blue:#42a5f5; --accent:#1976d2; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:'Roboto',sans-serif;
+         font-size:14px; padding:12px; }
+  h2 { font-size:16px; margin-bottom:10px; color:var(--blue); }
+  .card { background:var(--card); border:1px solid var(--border);
+           border-radius:8px; padding:12px; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; }
+  th { font-size:11px; text-transform:uppercase; color:var(--muted);
+       padding:4px 8px; text-align:left; }
+  td { padding:5px 8px; border-top:1px solid var(--border); vertical-align:middle; }
+  .dot-on  { color:var(--green); }
+  .dot-off { color:var(--grey); }
+  .s-loaded  { color:var(--green); font-weight:600; }
+  .s-empty   { color:var(--grey); }
+  .s-partial { color:var(--orange); }
+  .s-unknown { color:var(--amber); }
+  .swatch { display:inline-block; width:12px; height:12px; border-radius:50%;
+             vertical-align:middle; margin-right:4px; }
+  .footer { font-size:12px; color:var(--muted); border-top:1px solid var(--border);
+             padding-top:8px; margin-top:8px; }
+  /* Buttons */
+  .btn { display:inline-block; padding:6px 14px; border:none; border-radius:4px;
+          background:var(--accent); color:#fff; cursor:pointer; font-size:13px;
+          margin:2px; }
+  .btn:hover { background:#1565c0; }
+  .btn-sm { padding:3px 8px; font-size:12px; }
+  .btn-row { background:#333; color:var(--blue); border:1px solid var(--blue); }
+  .btn-row:hover { background:var(--blue); color:#fff; }
+  .btn-cancel { background:#555; }
+  .btn-cancel:hover { background:#777; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  /* Dialog overlay */
+  .overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7);
+              z-index:100; align-items:center; justify-content:center; }
+  .overlay.open { display:flex; }
+  .dialog { background:var(--card); border:1px solid var(--border); border-radius:8px;
+             padding:16px; max-width:560px; width:90%; max-height:90vh;
+             overflow-y:auto; }
+  .dialog h3 { margin-bottom:10px; color:var(--blue); }
+  .chip-grid { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .chip { padding:6px 14px; border-radius:4px; background:#333; cursor:pointer;
+           border:1px solid #555; color:var(--text); }
+  .chip:hover { border-color:var(--blue); color:var(--blue); }
+  .chip.sel { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .color-chip { display:inline-flex; flex-direction:column; align-items:center;
+                 width:72px; cursor:pointer; padding:4px; border-radius:4px;
+                 border:2px solid transparent; }
+  .color-chip:hover { border-color:var(--blue); }
+  .color-chip.sel { border-color:var(--blue); }
+  .color-chip .cs { width:36px; height:36px; border-radius:50%; }
+  .color-chip .cn { font-size:10px; text-align:center; margin-top:2px;
+                     word-break:break-word; }
+  .step-indicator { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .info-box { background:#1a2a3a; border:1px solid #2a4a6a; border-radius:4px;
+               padding:8px 12px; margin-bottom:8px; font-size:13px; }
+  .dialog-actions { display:flex; gap:8px; margin-top:12px; justify-content:flex-end; }
+  .scroll-x { overflow-x:auto; display:flex; gap:8px; padding-bottom:4px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h2>⚙ Stealth Autoloader</h2>
+  <div class="bar">
+    <button class="btn btn-sm" onclick="sendGcode('SA_HOME')">🏠 Home</button>
+    <button class="btn btn-sm" onclick="sendGcode('SA_ENGAGE')">▲ Engage</button>
+    <button class="btn btn-sm" onclick="sendGcode('SA_DISENGAGE')">▼ Disengage</button>
+    <button class="btn btn-sm btn-cancel" onclick="fetchStatus()">↻ Refresh</button>
+  </div>
+
+  <table id="status-table">
+    <thead>
+      <tr>
+        <th>#</th><th>State</th><th>EN</th><th>TH</th><th>EX</th>
+        <th>Material</th><th>Color / Brand</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="status-body">
+      <tr><td colspan="8" style="color:var(--muted);padding:12px">Loading…</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer" id="footer">Selector: — | Drive: —</div>
+</div>
+
+<!-- Load Wizard Overlay -->
+<div class="overlay" id="overlay">
+  <div class="dialog">
+    <h3 id="dlg-title">Load T0</h3>
+    <div class="step-indicator" id="step-indicator"></div>
+    <div id="dlg-body"></div>
+    <div class="dialog-actions">
+      <button class="btn btn-cancel" onclick="closeDialog()">Cancel</button>
+      <button class="btn btn-cancel" id="back-btn" onclick="stepBack()" style="display:none">← Back</button>
+      <button class="btn" id="confirm-btn" onclick="confirmLoad()" style="display:none">LOAD</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';  // same-origin; if served from :7125 use 'http://'+location.hostname+':7125'
+
+// ── State ──────────────────────────────────────────────────────────────────
+let _status = null;
+let _wz = {};   // wizard state
+let _step = 0;  // 0=brand, 1=material, 2=line, 3=color
+let _brands = [], _lines = [], _colors = [], _materials = [];
+
+// ── Polling ────────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const r = await fetch(API + '/machine/stealth_autoloader/status');
+    if (r.ok) { _status = await r.json(); renderTable(); }
+  } catch(e) {}
+}
+
+async function fetchBrands() {
+  try {
+    const r = await fetch(API + '/machine/stealth_autoloader/brands');
+    if (r.ok) { const d = await r.json(); _brands = d.brands || []; }
+  } catch(e) {}
+}
+
+setInterval(fetchStatus, 2000);
+fetchStatus();
+fetchBrands();
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function stateClass(s) {
+  return {loaded:'s-loaded', empty:'s-empty', partial:'s-partial', unknown:'s-unknown'}[s] || 's-unknown';
+}
+function stateLabel(s) {
+  return {loaded:'● LOADED', empty:'○ EMPTY', partial:'≈ PARTIAL', unknown:'? UNKNOWN'}[s] || '? UNKNOWN';
+}
+function dot(v) {
+  return `<span class="${v ? 'dot-on' : 'dot-off'}">${v ? '●' : '○'}</span>`;
+}
+
+function renderTable() {
+  if (!_status) return;
+  const st  = _status;
+  const num = st.num_paths || 0;
+  const rows = [];
+  for (let i = 0; i < num; i++) {
+    const state  = (st.path_states       || [])[i] || 'unknown';
+    const mat    = (st.path_materials    || [])[i] || '---';
+    const brand  = (st.path_brands       || [])[i] || '';
+    const cname  = (st.path_color_names  || [])[i] || '---';
+    const chex   = (st.path_color_hexes  || [])[i] || '';
+    const swatch = chex ? `<span class="swatch" style="background:${chex}"></span>` : '';
+    const brandTxt = brand ? `<span style="color:var(--muted);font-size:11px"> · ${brand}</span>` : '';
+    rows.push(`<tr>
+      <td><b>T${i}</b></td>
+      <td class="${stateClass(state)}">${stateLabel(state)}</td>
+      <td>${dot((st.entry_filament    ||[])[i])}</td>
+      <td>${dot((st.toolhead_filament ||[])[i])}</td>
+      <td>${dot((st.extruder_filament ||[])[i])}</td>
+      <td>${mat}</td>
+      <td>${swatch}${cname}${brandTxt}</td>
+      <td><button class="btn btn-sm btn-row" onclick="openWizard(${i})">LOAD</button></td>
+    </tr>`);
+  }
+  document.getElementById('status-body').innerHTML = rows.join('') || '<tr><td colspan="8">No data</td></tr>';
+  const cp = st.current_path >= 0 ? `Path ${st.current_path}` : 'unhomed';
+  const dr = st.servo_engaged ? 'ENGAGED' : 'neutral';
+  document.getElementById('footer').textContent = `Selector: ${cp}  |  Drive: ${dr}`;
+}
+
+// ── Gcode ──────────────────────────────────────────────────────────────────
+async function sendGcode(cmd) {
+  await fetch(API + '/printer/gcode/script', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({script: cmd})
+  });
+}
+
+// ── Wizard ─────────────────────────────────────────────────────────────────
+function openWizard(path) {
+  _wz = {path};
+  _step = 0;
+  document.getElementById('dlg-title').textContent = `Load T${path}`;
+  document.getElementById('overlay').classList.add('open');
+  renderStep();
+}
+function closeDialog() {
+  document.getElementById('overlay').classList.remove('open');
+}
+
+const _STEP_NAMES = ['Brand', 'Material', 'Product Line', 'Color'];
+
+function renderStep() {
+  const indicator = document.getElementById('step-indicator');
+  indicator.textContent = _STEP_NAMES.map((n,i)=> i===_step ? `[${n}]` : n).join(' › ');
+  document.getElementById('back-btn').style.display  = _step > 0 ? '' : 'none';
+  document.getElementById('confirm-btn').style.display = (_step === 3 && _wz.colorHex) ? '' : 'none';
+
+  const body = document.getElementById('dlg-body');
+  if (_step === 0) renderBrandStep(body);
+  else if (_step === 1) renderMaterialStep(body);
+  else if (_step === 2) renderLineStep(body);
+  else renderColorStep(body);
+}
+
+function stepBack() {
+  if (_step > 0) { _step--; renderStep(); }
+}
+
+function renderBrandStep(body) {
+  body.innerHTML = '<div class="chip-grid" id="brand-grid">Loading brands…</div>';
+  if (!_brands.length) {
+    fetch(API + '/machine/stealth_autoloader/brands').then(r=>r.json()).then(d=>{
+      _brands = d.brands||[];
+      _fillBrands();
+    });
+  } else { _fillBrands(); }
+}
+function _fillBrands() {
+  const g = document.getElementById('brand-grid');
+  if (!g) return;
+  g.innerHTML = _brands.map(b =>
+    `<div class="chip ${_wz.brandPath===b.filepath?'sel':''}" onclick='selectBrand(${JSON.stringify(b)})'>${b.display_name}</div>`
+  ).join('');
+}
+
+async function selectBrand(b) {
+  _wz.brandPath = b.filepath;
+  _wz.brandName = b.display_name;
+  const r = await fetch(API + '/machine/stealth_autoloader/filaments?brand=' + encodeURIComponent(b.filepath));
+  const d = await r.json();
+  _lines = d.product_lines || [];
+  const seen = new Set();
+  _materials = _lines.map(pl=>pl.material).filter(m=>{ if(seen.has(m)) return false; seen.add(m); return true; });
+  _step = 1;
+  renderStep();
+}
+
+function renderMaterialStep(body) {
+  body.innerHTML = `<div class="chip-grid">${
+    _materials.map(m =>
+      `<div class="chip ${_wz.material===m?'sel':''}" onclick="selectMaterial('${m}')">${m}</div>`
+    ).join('')
+  }</div>`;
+}
+
+function selectMaterial(m) {
+  _wz.material = m;
+  _step = 2;
+  renderStep();
+}
+
+function renderLineStep(body) {
+  const filtered = _lines.filter(pl=>pl.material===_wz.material);
+  body.innerHTML = `<div class="chip-grid">${
+    filtered.map(pl =>
+      `<div class="chip ${_wz.lineId===pl.line_id?'sel':''}" onclick='selectLine(${JSON.stringify(pl)})'>`+
+      `<b>${pl.display_name}</b><br><span style="font-size:11px;color:var(--muted)">Load: ${pl.load_temp}°C · Bed: ${pl.bed_temp}°C</span></div>`
+    ).join('')
+  }</div>`;
+}
+
+function selectLine(pl) {
+  _wz.lineId      = pl.line_id;
+  _wz.lineName    = pl.display_name;
+  _wz.loadTemp    = pl.load_temp;
+  _wz.unloadTemp  = pl.unload_temp;
+  _wz.purgeSpeed  = pl.purge_speed;
+  _wz.purgeLength = pl.purge_length;
+  _colors = pl.colors || [];
+  _step = 3;
+  _wz.colorHex = '';
+  renderStep();
+}
+
+function renderColorStep(body) {
+  const chips = _colors.map(c =>
+    `<div class="color-chip ${_wz.colorHex===c.hex?'sel':''}" onclick='selectColor(${JSON.stringify(c)})'>`+
+    `<div class="cs" style="background:${c.hex}"></div>`+
+    `<div class="cn">${c.name}</div></div>`
+  ).join('');
+  const info = _wz.colorHex ? `<div class="info-box">
+    <span class="swatch" style="background:${_wz.colorHex};width:20px;height:20px;vertical-align:middle"></span>
+    <b>${_wz.colorName}</b> &nbsp; ${_wz.colorHex}<br>
+    Load: ${_wz.loadTemp}°C · Purge: ${_wz.purgeSpeed}mm/s × ${_wz.purgeLength}mm
+  </div>` : '';
+  body.innerHTML = `<div class="scroll-x">${chips}</div>${info}`;
+}
+
+function selectColor(c) {
+  _wz.colorId   = c.id;
+  _wz.colorName = c.name;
+  _wz.colorHex  = c.hex;
+  renderStep();
+}
+
+async function confirmLoad() {
+  const wz = _wz;
+  await fetch(API + '/machine/stealth_autoloader/set_material', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      tool: wz.path, material: wz.material, brand: wz.brandName,
+      line: wz.lineId, color_name: wz.colorName, color_hex: wz.colorHex,
+      load_temp: wz.loadTemp, unload_temp: wz.unloadTemp,
+      purge_speed: wz.purgeSpeed, purge_length: wz.purgeLength
+    })
+  });
+  await fetch(API + '/machine/stealth_autoloader/load', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tool: wz.path})
+  });
+  closeDialog();
+}
+</script>
+</body>
+</html>

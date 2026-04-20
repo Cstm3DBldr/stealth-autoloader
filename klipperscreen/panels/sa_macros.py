@@ -1,118 +1,57 @@
-# sa_macros.py — Stealth Autoloader KlipperScreen macro/diagnostics panel
-#
-# Tab 3: Motion, Calibration, and Diagnostics button grid.
-# Homing-dependent buttons are disabled when selector is unhomed (current_path == -1).
-
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 import logging
+from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_macros')
 
-# (label, gcode, requires_homed)
-_MOTION_BTNS = [
-    ("⌂  HOME SELECTOR",   "SA_HOME",       False),
-    ("▲  ENGAGE DRIVE",    "SA_ENGAGE",     True),
-    ("▼  DISENGAGE DRIVE", "SA_DISENGAGE",  True),
-]
-
-_DIAGNOSTICS_BTNS = [
-    ("▤  STATUS REPORT",   "SA_STATUS",     False),
-    ("↕  ENCODER QUERY",   "SA_ENCODER_QUERY", False),
-    ("⚙  BUZZ DRIVE",      "SA_BUZZ_DRIVE", False),
-    ("⚙  BUZZ SELECTOR",   "SA_BUZZ_SELECTOR", False),
-]
-
-_CALIBRATION_BTNS = [
-    ("⚙  CAL SELECTOR",    "SA_CALIBRATE_SELECTOR", False),
-    ("⚙  CAL DRIVE",       "SA_CALIBRATE_DRIVE",    False),
-    ("⚙  CAL ENCODER T0",  "SA_CALIBRATE_ENCODER TOOL=0", False),
-    ("⚙  CAL BOWDEN T0",   "SA_CALIBRATE_BOWDEN TOOL=0",  True),
-    ("✏  SET STATE T0",    "SA_SET_STATE TOOL=0 STATE=loaded", False),
+_BTNS = [
+    # (label, gcode, requires_homed, color)
+    ("HOME SELECTOR",   "SA_HOME",              False, "color1"),
+    ("ENGAGE DRIVE",    "SA_ENGAGE",            True,  "color2"),
+    ("DISENGAGE DRIVE", "SA_DISENGAGE",         True,  "color2"),
+    ("STATUS REPORT",   "SA_STATUS",            False, "color3"),
+    ("BUZZ DRIVE",      "SA_BUZZ_DRIVE",        False, "color4"),
+    ("BUZZ SELECTOR",   "SA_BUZZ_SELECTOR",     False, "color4"),
+    ("CAL SELECTOR",    "SA_CALIBRATE_SELECTOR",False, "color4"),
+    ("CAL ENCODER T0",  "SA_CALIBRATE_ENCODER TOOL=0", False, "color4"),
 ]
 
 
-class Panel:
-    """KlipperScreen macros / diagnostics panel for Stealth Autoloader."""
-
+class Panel(ScreenPanel):
     def __init__(self, screen, title):
-        self._screen = screen
-        self._gtk    = screen.gtk
-        self._title  = title
-        self._homed  = False
+        super().__init__(screen, title or "SA Macros")
         self._homed_btns = []
 
-        self.content = self._build()
+        grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
+                        row_spacing=5, column_spacing=5, margin=10)
 
-    def _build(self):
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        main_box.set_margin_start(12)
-        main_box.set_margin_end(12)
-        main_box.set_margin_top(8)
-
-        hdr = Gtk.Label(label="Stealth Autoloader — Macros & Diagnostics")
-        hdr.get_style_context().add_class('title_2')
-        hdr.set_halign(Gtk.Align.START)
-        main_box.pack_start(hdr, False, False, 0)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
-
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self._add_section(left, "MOTION",      _MOTION_BTNS)
-        self._add_section(left, "CALIBRATION", _CALIBRATION_BTNS)
-        body.pack_start(left, True, True, 0)
-
-        sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        body.pack_start(sep, False, False, 0)
-
-        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self._add_section(right, "DIAGNOSTICS", _DIAGNOSTICS_BTNS)
-        body.pack_start(right, True, True, 0)
-
-        main_box.pack_start(body, True, True, 0)
-
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.add(main_box)
-        return scroll
-
-    def _add_section(self, parent, title, buttons):
-        lbl = Gtk.Label(label=title)
-        lbl.get_style_context().add_class('color4')
-        lbl.set_halign(Gtk.Align.START)
-        parent.pack_start(lbl, False, False, 0)
-
-        for label, gcode, req_homed in buttons:
-            btn = Gtk.Button(label=label)
-            btn.set_halign(Gtk.Align.FILL)
-            btn.set_size_request(-1, 44)
-            btn.connect("clicked", self._on_btn, gcode)
+        for i, (label, gcode, req_homed, style) in enumerate(_BTNS):
+            btn = self._gtk.Button(label=label, style=style, scale=self.bts)
+            btn.connect("clicked", self._send, gcode)
             if req_homed:
-                btn.set_sensitive(self._homed)
                 self._homed_btns.append(btn)
-            parent.pack_start(btn, False, False, 0)
+            grid.attach(btn, i % 2, i // 2, 1, 1)
 
-    def _on_btn(self, btn, gcode):
+        self.content.add(grid)
+
+    def _send(self, widget, gcode):
         self._screen._ws.klippy.gcode_script(gcode)
 
     def activate(self):
-        pass
+        data = self._printer.data
+        self._update_homed(data.get("stealth_autoloader", {}))
 
     def process_update(self, action, data):
         if action != "notify_status_update":
             return
         sa = data.get("stealth_autoloader")
-        if not sa:
-            return
-        GLib.idle_add(self._refresh_state, sa)
+        if sa is not None:
+            GLib.idle_add(self._update_homed, sa)
 
-    def _refresh_state(self, sa):
-        self._homed = sa.get('current_path', -1) >= 0
+    def _update_homed(self, sa):
+        homed = sa.get("current_path", -1) >= 0
         for btn in self._homed_btns:
-            btn.set_sensitive(self._homed)
+            btn.set_sensitive(homed)
         return False
-
-
-def create_panel(*args):
-    return Panel(*args)
