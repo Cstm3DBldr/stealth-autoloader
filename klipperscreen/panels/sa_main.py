@@ -73,18 +73,22 @@ class Panel(ScreenPanel):
         scroll.add(center_box)
         self.content.pack_start(scroll, True, True, 0)
 
-        bar = Gtk.Box(spacing=4, margin=4)
-        for label, cmd in [("HOME", "SA_HOME"), ("ENGAGE", "SA_ENGAGE"),
-                           ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None),
-                           ("SETTINGS", "settings")]:
+        bar = Gtk.Grid(row_spacing=4, column_spacing=4, margin=4,
+                       row_homogeneous=True, column_homogeneous=True)
+        for (label, cmd), (col, row) in zip(
+            [("HOME",      "SA_HOME"),
+             ("ENGAGE",    "SA_ENGAGE"),
+             ("DISENGAGE", "SA_DISENGAGE"),
+             ("SETTINGS",  "settings")],
+            [(0,0), (1,0), (0,1), (1,1)]
+        ):
             btn = _sbs.make(label)
             if cmd == "settings":
                 btn.connect("clicked", self._open_settings)
-            elif cmd:
-                btn.connect("clicked", self._send, cmd)
             else:
-                btn.connect("clicked", self._refresh)
-            bar.pack_start(btn, True, True, 0)
+                btn.connect("clicked", self._send, cmd)
+            btn.set_hexpand(True)
+            bar.attach(btn, col, row, 1, 1)
         self.content.pack_end(bar, False, False, 0)
 
     def _build_header(self):
