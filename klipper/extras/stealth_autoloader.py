@@ -344,6 +344,9 @@ class StealthAutoloader:
              "Store filament profile for a path. TOOL=N MATERIAL=PLA BRAND=x "
              "LINE=x COLOR_NAME=x COLOR_HEX=#rrggbb "
              "LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30"),
+            ('SA_PARK',
+             self._cmd_park,
+             "Park filament at drive encoder (phases 0-2 only). TOOL=N"),
         ]
         for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
@@ -382,6 +385,10 @@ class StealthAutoloader:
     def _cmd_unload(self, gcmd):
         path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
         self.sequences.do_unload(gcmd, path)
+
+    def _cmd_park(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.sequences.do_park(gcmd, path)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Command handlers — status and diagnostics

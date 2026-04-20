@@ -36,6 +36,7 @@ class Panel(ScreenPanel):
         super().__init__(screen, title or "SA Status")
         self.labels = {}
         self._num_paths = 0
+        self._entry_prev = []  # previous entry sensor state for transition detection
 
         scroll = self._gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -121,17 +122,30 @@ class Panel(ScreenPanel):
             self._apply_sa(sa)
 
     def activate(self):
-        # Subscribe so process_update receives future stealth_autoloader events
         self._screen._ws.klippy.object_subscription(
             {"objects": {"stealth_autoloader": None}})
-        self._refresh()
+        sa = self._query_sa()
+        if sa:
+            self._entry_prev = list(sa.get("entry_filament", []))
+            self._apply_sa(sa)
+        else:
+            self._refresh()
 
     def process_update(self, action, data):
         if action != "notify_status_update":
             return
         sa = data.get("stealth_autoloader")
-        if sa is not None:
-            GLib.idle_add(self._apply_sa, sa)
+        if sa is None:
+            return
+        new_entry = sa.get("entry_filament", [])
+        for i, active in enumerate(new_entry):
+            was_active = self._entry_prev[i] if i < len(self._entry_prev) else False
+            if not was_active and active:
+                # Filament inserted — hand off to load/unload panel
+                GLib.idle_add(
+                    self._screen.show_panel, 'sa_load_unload', 'Load / Unload')
+        self._entry_prev = list(new_entry)
+        GLib.idle_add(self._apply_sa, sa)
 
     def _apply_sa(self, sa):
         num = sa.get("num_paths", 0)

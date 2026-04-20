@@ -67,6 +67,9 @@ class Panel(ScreenPanel):
         self._path_states = []
         self._path_hexes  = []   # current colour per path (for swatch)
         self._path_mats   = []   # current material per path (for label)
+        self._path_entry  = []   # entry sensor state per path
+        self._path_th     = []   # toolhead sensor state per path
+        self._path_ex     = []   # extruder sensor state per path
         self._sel_path    = None
         self._sel_btn     = None  # currently highlighted path button
 
@@ -290,17 +293,40 @@ class Panel(ScreenPanel):
         self._update_path_status()
         self._show_page('path')
 
+    def _effective_state(self, i):
+        """Derive a display state from live sensor data when available."""
+        entry = self._path_entry[i] if i < len(self._path_entry) else None
+        th    = self._path_th[i]    if i < len(self._path_th)    else None
+        ex    = self._path_ex[i]    if i < len(self._path_ex)    else None
+        if entry is None:
+            return self._path_states[i] if i < len(self._path_states) else 'unknown'
+        if not entry and not th and not ex:
+            return 'empty'
+        if entry and th and ex:
+            return 'loaded'
+        if entry or th or ex:
+            return 'partial'
+        return self._path_states[i] if i < len(self._path_states) else 'unknown'
+
     def _update_path_status(self):
         if self._sel_path is None:
             self._path_status.set_text("No tool selected")
         else:
             op_txt = "LOAD" if self._op == 'load' else "UNLOAD"
-            state  = self._path_states[self._sel_path] if self._sel_path < len(self._path_states) else 'unknown'
-            mat    = self._path_mats[self._sel_path]   if self._sel_path < len(self._path_mats)   else ''
+            i      = self._sel_path
+            state  = self._effective_state(i)
+            mat    = self._path_mats[i]   if i < len(self._path_mats)   else ''
+            hex_c  = self._path_hexes[i]  if i < len(self._path_hexes)  else ''
             info   = f" · {mat}" if mat else ''
+            # Color swatch in status if a hex is stored
+            if hex_c:
+                h = hex_c if hex_c.startswith('#') else '#' + hex_c
+                swatch_markup = f' <span foreground="{h}">{COLOR_SWATCH}</span>'
+            else:
+                swatch_markup = ''
             self._path_status.set_markup(
-                f'<span foreground="{_LIME}"><b>T{self._sel_path}</b></span>'
-                f'  {state.upper()}{info}  —  {op_txt}')
+                f'<span foreground="{_LIME}"><b>T{i}</b></span>'
+                f'{swatch_markup}  {state.upper()}{info}  —  {op_txt}')
 
     # ── Brand page ────────────────────────────────────────────────────────
 
@@ -530,9 +556,12 @@ class Panel(ScreenPanel):
 
     def _apply_sa(self, sa):
         num = sa.get("num_paths", 0)
-        self._path_states = sa.get("path_states",     ['unknown'] * num)
+        self._path_states = sa.get("path_states",      ['unknown'] * num)
         self._path_hexes  = sa.get("path_color_hexes", [''] * num)
         self._path_mats   = sa.get("path_materials",   [''] * num)
+        self._path_entry  = sa.get("entry_filament",   [False] * num)
+        self._path_th     = sa.get("toolhead_filament",[False] * num)
+        self._path_ex     = sa.get("extruder_filament",[False] * num)
         self._populate_path_page()
 
     def process_update(self, action, data):
@@ -541,22 +570,64 @@ class Panel(ScreenPanel):
         sa = data.get("stealth_autoloader")
         if sa is None:
             return
-        new_states = sa.get("path_states", self._path_states)
-        # If a loaded path goes empty/unknown, clear its stored material
-        for i, (old, new) in enumerate(zip(self._path_states, new_states)):
-            if old == 'loaded' and new in ('empty', 'unknown'):
-                GLib.idle_add(
-                    self._gcode,
-                    f'SA_SET_MATERIAL TOOL={i} MATERIAL="" BRAND="" LINE="" '
-                    f'COLOR_NAME="" COLOR_HEX="" LOAD_TEMP=200 UNLOAD_TEMP=185 '
-                    f'PURGE_SPEED=5 PURGE_LENGTH=30')
-        new_hexes = sa.get("path_color_hexes", self._path_hexes)
-        new_mats  = sa.get("path_materials",   self._path_mats)
+
+        new_entry  = sa.get("entry_filament",    self._path_entry)
+        new_th     = sa.get("toolhead_filament",  self._path_th)
+        new_ex     = sa.get("extruder_filament",  self._path_ex)
+        new_states = sa.get("path_states",        self._path_states)
+        new_hexes  = sa.get("path_color_hexes",   self._path_hexes)
+        new_mats   = sa.get("path_materials",     self._path_mats)
+
+        for i in range(len(new_entry)):
+            old_entry = self._path_entry[i] if i < len(self._path_entry) else False
+            old_th    = self._path_th[i]    if i < len(self._path_th)    else False
+            old_ex    = self._path_ex[i]    if i < len(self._path_ex)    else False
+
+            # Filament inserted: entry sensor fires — park it and navigate here
+            if not old_entry and new_entry[i]:
+                GLib.idle_add(self._on_filament_inserted, i)
+
+            # All sensors just went dark: filament removed — clear material profile
+            had_fil  = old_entry or old_th or old_ex
+            has_fil  = new_entry[i] or (new_th[i] if i < len(new_th) else False) or \
+                       (new_ex[i] if i < len(new_ex) else False)
+            if had_fil and not has_fil:
+                GLib.idle_add(self._clear_material, i)
+
         changed = (new_states != self._path_states or
                    new_hexes  != self._path_hexes  or
-                   new_mats   != self._path_mats)
+                   new_mats   != self._path_mats   or
+                   new_entry  != self._path_entry  or
+                   new_th     != self._path_th     or
+                   new_ex     != self._path_ex)
         if changed:
             self._path_states = new_states
             self._path_hexes  = new_hexes
             self._path_mats   = new_mats
+            self._path_entry  = new_entry
+            self._path_th     = new_th
+            self._path_ex     = new_ex
             GLib.idle_add(self._populate_path_page)
+            if self._sel_path is not None:
+                GLib.idle_add(self._update_path_status)
+
+    def _on_filament_inserted(self, path):
+        """Entry sensor went False→True: navigate here, pre-select path, park."""
+        self._screen.show_panel('sa_load_unload', 'Load / Unload')
+        # Pre-select the path on the path page
+        self._sel_path = path
+        self._wz['path'] = path
+        self._populate_path_page()
+        self._update_path_status()
+        self._show_page('path')
+        # Park the filament at the drive encoder
+        self._gcode(f"SA_PARK TOOL={path}")
+        return False
+
+    def _clear_material(self, path):
+        """All sensors went dark: wipe stored material profile for this path."""
+        self._gcode(
+            f'SA_SET_MATERIAL TOOL={path} MATERIAL="" BRAND="" LINE="" '
+            f'COLOR_NAME="" COLOR_HEX="" LOAD_TEMP=200 UNLOAD_TEMP=185 '
+            f'PURGE_SPEED=5 PURGE_LENGTH=30')
+        return False
