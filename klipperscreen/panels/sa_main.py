@@ -79,14 +79,14 @@ class Panel(ScreenPanel):
             [("HOME",      "SA_HOME"),
              ("ENGAGE",    "SA_ENGAGE"),
              ("DISENGAGE", "SA_DISENGAGE"),
-             ("SETTINGS",  "settings")],
+             ("REFRESH",   None)],
             [(0,0), (1,0), (0,1), (1,1)]
         ):
             btn = _sbs.make(label)
-            if cmd == "settings":
-                btn.connect("clicked", self._open_settings)
-            else:
+            if cmd:
                 btn.connect("clicked", self._send, cmd)
+            else:
+                btn.connect("clicked", self._refresh)
             btn.set_hexpand(True)
             bar.attach(btn, col, row, 1, 1)
         self.content.pack_end(bar, False, False, 0)
