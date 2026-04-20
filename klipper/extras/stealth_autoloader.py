@@ -140,6 +140,17 @@ class StealthAutoloader:
         self._servo_is_engaged = False
         self.path_states       = [self.STATE_UNKNOWN] * self.num_paths
 
+        # ── Per-path material/color profiles (restored from save_variables) ────
+        self.path_materials     = [''] * self.num_paths
+        self.path_brands        = [''] * self.num_paths
+        self.path_product_lines = [''] * self.num_paths
+        self.path_color_names   = [''] * self.num_paths
+        self.path_color_hexes   = [''] * self.num_paths
+        self.path_load_temps    = [self.load_temperature]       * self.num_paths
+        self.path_unload_temps  = [self.load_temperature - 15.] * self.num_paths
+        self.path_purge_speeds  = [5.0]                         * self.num_paths
+        self.path_purge_lengths = [self.purge_length]           * self.num_paths
+
         # SA_RESPOND mailbox (used by calibration routines)
         self._pending_response = None
         self._response_ready   = False
@@ -163,6 +174,42 @@ class StealthAutoloader:
 
     def _init_hardware(self, eventtime):
         self.motion.on_ready()
+        self._restore_material_profiles()
+
+    def save_path_state(self, path):
+        """Persist path_states[path] to save_variables."""
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv:
+            self.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE='%s'"
+                % (path, self.path_states[path]))
+
+    def _restore_material_profiles(self):
+        """Read per-path material/color/temp fields from save_variables on boot."""
+        sv = self.printer.lookup_object('save_variables', None)
+        if not sv:
+            return
+        svars = sv.allVariables()
+        for i in range(self.num_paths):
+            self.path_materials[i]     = svars.get('sa_material_%d'      % i, '')
+            self.path_brands[i]        = svars.get('sa_brand_%d'         % i, '')
+            self.path_product_lines[i] = svars.get('sa_product_line_%d'  % i, '')
+            self.path_color_names[i]   = svars.get('sa_color_name_%d'    % i, '')
+            self.path_color_hexes[i]   = svars.get('sa_color_hex_%d'     % i, '')
+            self.path_load_temps[i]    = float(svars.get(
+                'sa_load_temp_%d'   % i, self.load_temperature))
+            self.path_unload_temps[i]  = float(svars.get(
+                'sa_unload_temp_%d' % i, self.load_temperature - 15.))
+            self.path_purge_speeds[i]  = float(svars.get(
+                'sa_purge_speed_%d' % i, 5.0))
+            self.path_purge_lengths[i] = float(svars.get(
+                'sa_purge_length_%d' % i, self.purge_length))
+            # Restore path state as well if saved
+            saved_state = svars.get('sa_state_%d' % i, None)
+            if saved_state in (self.STATE_UNKNOWN, self.STATE_EMPTY,
+                               self.STATE_PARTIAL, self.STATE_LOADED):
+                self.path_states[i] = saved_state
+        logging.info("StealthAutoloader: material profiles restored from save_variables")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hardware name helpers
@@ -292,6 +339,11 @@ class StealthAutoloader:
             ('SA_RESPOND',
              self._cmd_respond,
              "Send a value back to a waiting calibration routine. VALUE=x"),
+            ('SA_SET_MATERIAL',
+             self._cmd_set_material,
+             "Store filament profile for a path. TOOL=N MATERIAL=PLA BRAND=x "
+             "LINE=x COLOR_NAME=x COLOR_HEX=#rrggbb "
+             "LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30"),
         ]
         for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
@@ -515,7 +567,57 @@ class StealthAutoloader:
                 "SA: Invalid STATE '%s'. Valid values: %s" % (state, ', '.join(valid)))
             return
         self.path_states[path] = state
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv:
+            self.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE='%s'" % (path, state))
         gcmd.respond_info("SA: Path %d state set to '%s'." % (path, state))
+
+    def _cmd_set_material(self, gcmd):
+        """SA_SET_MATERIAL — store and persist a filament profile for one path."""
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+
+        material     = gcmd.get('MATERIAL',    '')
+        brand        = gcmd.get('BRAND',       '')
+        product_line = gcmd.get('LINE',        '')
+        color_name   = gcmd.get('COLOR_NAME',  '')
+        color_hex    = gcmd.get('COLOR_HEX',   '')
+        load_temp    = gcmd.get_float('LOAD_TEMP',    self.load_temperature)
+        unload_temp  = gcmd.get_float('UNLOAD_TEMP',  load_temp - 15.)
+        purge_speed  = gcmd.get_float('PURGE_SPEED',  5.0)
+        purge_length = gcmd.get_float('PURGE_LENGTH', self.purge_length)
+
+        self.path_materials[path]     = material
+        self.path_brands[path]        = brand
+        self.path_product_lines[path] = product_line
+        self.path_color_names[path]   = color_name
+        self.path_color_hexes[path]   = color_hex
+        self.path_load_temps[path]    = load_temp
+        self.path_unload_temps[path]  = unload_temp
+        self.path_purge_speeds[path]  = purge_speed
+        self.path_purge_lengths[path] = purge_length
+
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv:
+            def _save(var, val):
+                self.gcode.run_script_from_command(
+                    "SAVE_VARIABLE VARIABLE=%s VALUE='%s'" % (var, str(val)))
+            _save('sa_material_%d'      % path, material)
+            _save('sa_brand_%d'         % path, brand)
+            _save('sa_product_line_%d'  % path, product_line)
+            _save('sa_color_name_%d'    % path, color_name)
+            _save('sa_color_hex_%d'     % path, color_hex)
+            _save('sa_load_temp_%d'     % path, load_temp)
+            _save('sa_unload_temp_%d'   % path, unload_temp)
+            _save('sa_purge_speed_%d'   % path, purge_speed)
+            _save('sa_purge_length_%d'  % path, purge_length)
+
+        gcmd.respond_info(
+            "SA: Path %d profile set — %s %s %s | %s %s | "
+            "%.0f°C load / %.0f°C unload / %.0fmm purge"
+            % (path, brand, product_line, material,
+               color_name, color_hex,
+               load_temp, unload_temp, purge_length))
 
     def _cmd_respond(self, gcmd):
         """SA_RESPOND VALUE=x — deliver a console response to a waiting calibration routine."""
@@ -547,16 +649,23 @@ class StealthAutoloader:
                    if self.current_path >= 0 else -1.0)
 
         return {
-            'num_paths'         : self.num_paths,
-            'current_path'      : self.current_path,
-            'servo_engaged'     : self._servo_is_engaged,
-            'path_states'       : list(self.path_states),
-            'encoder_dist'      : enc_distances,
-            'entry_filament'    : entry_filament,
-            'toolhead_filament' : toolhead_filament,
-            'extruder_filament' : extruder_filament,
-            'filament_loaded'   : filament_loaded,
-            'selector_position' : sel_pos,
+            'num_paths'          : self.num_paths,
+            'current_path'       : self.current_path,
+            'servo_engaged'      : self._servo_is_engaged,
+            'path_states'        : list(self.path_states),
+            'encoder_dist'       : enc_distances,
+            'entry_filament'     : entry_filament,
+            'toolhead_filament'  : toolhead_filament,
+            'extruder_filament'  : extruder_filament,
+            'filament_loaded'    : filament_loaded,
+            'selector_position'  : sel_pos,
+            'path_materials'     : list(self.path_materials),
+            'path_brands'        : list(self.path_brands),
+            'path_product_lines' : list(self.path_product_lines),
+            'path_color_names'   : list(self.path_color_names),
+            'path_color_hexes'   : list(self.path_color_hexes),
+            'path_load_temps'    : list(self.path_load_temps),
+            'path_unload_temps'  : list(self.path_unload_temps),
         }
 
     # ══════════════════════════════════════════════════════════════════════════

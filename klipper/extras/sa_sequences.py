@@ -133,11 +133,11 @@ class SASequences:
         motion.save_position()
 
         # ── Phase 4: heat and extrude to nozzle ──────────────────────────────
-        extruder = owner._extruder_names[path]
-        gcmd.respond_info("SA: Heating %s to %.0f°C..." % (extruder, owner.load_temperature))
+        extruder  = owner._extruder_names[path]
+        load_temp = owner.path_load_temps[path]
+        gcmd.respond_info("SA: Heating %s to %.0f°C..." % (extruder, load_temp))
         owner.gcode.run_script_from_command(
-            "TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.0f"
-            % (extruder, owner.load_temperature))
+            "TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.0f" % (extruder, load_temp))
 
         gcmd.respond_info("SA: Extruding to nozzle tip (%.1fmm)..." % owner.nozzle_distance)
         owner.gcode.run_script_from_command("M83")
@@ -145,11 +145,16 @@ class SASequences:
         owner.gcode.run_script_from_command("M400")
 
         # ── Phase 5: purge ────────────────────────────────────────────────────
-        gcmd.respond_info("SA: Purging %.1fmm..." % owner.purge_length)
-        owner.gcode.run_script_from_command("G1 E%.2f F300" % owner.purge_length)
+        purge_len   = owner.path_purge_lengths[path]
+        purge_speed = owner.path_purge_speeds[path]
+        purge_f     = purge_speed * 60.0
+        gcmd.respond_info("SA: Purging %.1fmm @ %.0fmm/s..." % (purge_len, purge_speed))
+        owner.gcode.run_script_from_command("G1 E%.2f F%.0f" % (purge_len, purge_f))
         owner.gcode.run_script_from_command("M400")
 
         owner.path_states[path] = 'loaded'
+        owner.save_path_state(path)
+        motion.save_position()
         gcmd.respond_info("SA: === LOAD COMPLETE — path %d ===" % path)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -172,7 +177,13 @@ class SASequences:
         gcmd.respond_info("SA: === UNLOAD path %d ===" % path)
 
         # Step 1: pull filament back from nozzle via extruder
-        retract = owner.nozzle_distance + owner.purge_length
+        retract     = owner.nozzle_distance + owner.path_purge_lengths[path]
+        unload_temp = owner.path_unload_temps[path]
+        extruder    = owner._extruder_names[path]
+        gcmd.respond_info(
+            "SA: Ensuring %s is at %.0f°C for retract..." % (extruder, unload_temp))
+        owner.gcode.run_script_from_command(
+            "TEMPERATURE_WAIT SENSOR=%s MINIMUM=%.0f" % (extruder, unload_temp))
         gcmd.respond_info("SA: Retracting %.1fmm from nozzle tip via extruder..." % retract)
         owner.gcode.run_script_from_command("M83")
         owner.gcode.run_script_from_command("G1 E-%.2f F300" % retract)
@@ -199,6 +210,7 @@ class SASequences:
         # Step 4: release drive gear
         motion.servo_disengage()
         owner.path_states[path] = 'empty'
+        owner.save_path_state(path)
         motion.save_position()
         gcmd.respond_info(
             "SA: === UNLOAD COMPLETE — path %d (%.1fmm retracted by drive) ==="
