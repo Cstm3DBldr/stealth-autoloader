@@ -34,7 +34,7 @@ def _rgba_from_hex(hex_c):
 
 
 class Panel(ScreenPanel):
-    """Load/Unload wizard: path → brand → material → color → confirm."""
+    """Load/Unload wizard: path → brand → material → line → color → confirm."""
 
     def __init__(self, screen, title):
         super().__init__(screen, title or "Load / Unload")
@@ -43,7 +43,7 @@ class Panel(ScreenPanel):
         self._wz    = {}
         self._path_states = []
 
-        # ── Notebook (pages: path, brand, material, color) ─────────────────
+        # ── Notebook (pages: path, brand, material, line, color) ───────────
         self._nb = Gtk.Notebook()
         self._nb.set_show_tabs(False)
 
@@ -51,9 +51,10 @@ class Panel(ScreenPanel):
         self._pages['path']     = self._make_path_page()
         self._pages['brand']    = self._make_scroll_page()
         self._pages['material'] = self._make_scroll_page()
+        self._pages['line']     = self._make_scroll_page()
         self._pages['color']    = self._make_scroll_page(color_mode=True)
 
-        for name in ('path', 'brand', 'material', 'color'):
+        for name in ('path', 'brand', 'material', 'line', 'color'):
             self._nb.append_page(self._pages[name]['outer'], None)
 
         self.content.pack_start(self._nb, True, True, 0)
@@ -102,10 +103,11 @@ class Panel(ScreenPanel):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
         hdr = Gtk.Label(label="")
         hdr.set_halign(Gtk.Align.START)
+
         scroll = Gtk.ScrolledWindow()
-        # Color page: always-visible scrollbar; other pages: auto
-        v_policy = Gtk.PolicyType.ALWAYS if color_mode else Gtk.PolicyType.AUTOMATIC
-        scroll.set_policy(Gtk.PolicyType.NEVER, v_policy)
+        scroll.set_overlay_scrolling(False)  # always-visible non-overlay scrollbar
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+
         inner = Gtk.FlowBox()
         if color_mode:
             inner.set_max_children_per_line(6)
@@ -122,7 +124,7 @@ class Panel(ScreenPanel):
 
     # ── Page navigation ───────────────────────────────────────────────────
 
-    _STEPS = ['path', 'brand', 'material', 'color']
+    _STEPS = ['path', 'brand', 'material', 'line', 'color']
 
     def _page_index(self, name):
         return self._STEPS.index(name)
@@ -200,32 +202,33 @@ class Panel(ScreenPanel):
 
     def _select_material(self, widget, material):
         self._wz['material'] = material
-        # get_product_lines returns [(line_id, line_dict), ...] — merge line_id in
         raw = _db.get_product_lines(self._wz['brand_data'], material)
         lines = [{**pl, 'line_id': lid} for lid, pl in raw]
         if len(lines) == 1:
             self._select_line(None, lines[0])
             return
-        page = self._pages['color']
-        page['hdr'].set_text(f"T{self._wz['path']} — Select Product Line")
+        page = self._pages['line']
+        page['hdr'].set_text(
+            f"T{self._wz['path']} — {self._wz['brand_name']} {material} — Select Product Line")
         self._fill_flow(page['inner'], [
             (f"{pl['display_name']}\n{pl['load_temp']}°C", self._select_line, pl)
             for pl in lines
         ])
-        self._wz['_picking_line'] = True
-        self._show_page('color')
+        self._show_page('line')
+
+    # ── Line page ─────────────────────────────────────────────────────────
 
     def _select_line(self, widget, pl):
-        self._wz['line']          = pl.get('line_id', '')
-        self._wz['line_name']     = pl.get('display_name', '')
-        self._wz['load_temp']     = pl.get('load_temp',    200)
-        self._wz['unload_temp']   = pl.get('unload_temp',  185)
-        self._wz['purge_speed']   = pl.get('purge_speed',  5)
-        self._wz['purge_length']  = pl.get('purge_length', 30)
-        self._wz['_picking_line'] = False
+        self._wz['line']         = pl.get('line_id', '')
+        self._wz['line_name']    = pl.get('display_name', '')
+        self._wz['load_temp']    = pl.get('load_temp',    200)
+        self._wz['unload_temp']  = pl.get('unload_temp',  185)
+        self._wz['purge_speed']  = pl.get('purge_speed',  5)
+        self._wz['purge_length'] = pl.get('purge_length', 30)
         colors = pl.get('colors', [])
         page = self._pages['color']
-        page['hdr'].set_text(f"T{self._wz['path']} — {pl.get('display_name','')} — Select Color")
+        page['hdr'].set_text(
+            f"T{self._wz['path']} — {pl.get('display_name', '')} — Select Color")
         self._fill_color_flow(page['inner'], colors)
         self._wz['color_hex'] = ''
         self._show_page('color')
@@ -245,19 +248,16 @@ class Panel(ScreenPanel):
         name  = c.get('name', '?')
         btn = Gtk.Button()
         btn.get_style_context().add_class("color3")
-        btn.set_size_request(110, 72)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         vbox.set_valign(Gtk.Align.CENTER)
         vbox.set_halign(Gtk.Align.CENTER)
 
         swatch = Gtk.Label()
-        swatch.set_markup(
-            f'<span font_size="xx-large" foreground="{hex_c if hex_c.startswith("#") else "#" + hex_c if hex_c else "#808080"}">{COLOR_SWATCH}</span>'
-            if hex_c else EMPTY_SWATCH
-        )
+        h = hex_c if hex_c.startswith('#') else ('#' + hex_c if hex_c else '#808080')
+        swatch.set_markup(f'<span font_size="xx-large" foreground="{h}">{COLOR_SWATCH}</span>')
 
-        name_lbl = Gtk.Label(label=name)
+        name_lbl = Gtk.Label()
         name_lbl.set_line_wrap(True)
         name_lbl.set_max_width_chars(9)
         name_lbl.set_justify(Gtk.Justification.CENTER)
@@ -304,7 +304,7 @@ class Panel(ScreenPanel):
         path = wz.get('path')
         if path is None:
             return
-        if self._cur == 'color' and not wz.get('_picking_line', False):
+        if self._cur == 'color':
             if wz.get('color_hex'):
                 self._gcode(
                     'SA_SET_MATERIAL TOOL={tool} MATERIAL={mat} BRAND="{brand}" '
@@ -326,7 +326,6 @@ class Panel(ScreenPanel):
                 self._screen.show_popup_message(f"Loading T{path} …")
                 self._reset()
         else:
-            # Not on last step: advance
             idx = self._page_index(self._cur)
             if idx < len(self._STEPS) - 1:
                 self._show_page(self._STEPS[idx + 1])
