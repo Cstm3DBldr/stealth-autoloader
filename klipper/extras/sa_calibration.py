@@ -1,695 +1,785 @@
 # sa_calibration.py — Stealth Autoloader calibration routines
 #
-# Interactive and automated calibration for:
-#   - Drive motor rotation_distance (SA_CALIBRATE_DRIVE)
-#   - Per-path encoder mm_per_pulse   (SA_CALIBRATE_ENCODER TOOL=N)
-#   - Selector path positions         (SA_CALIBRATE_SELECTOR — automated)
-#   - Bowden tube length per path     (SA_CALIBRATE_BOWDEN TOOL=N)
+# Phase-based state machine design:
+#   - Each calibration command kicks off phase 0 (automated work + prompt).
+#   - SA_RESPOND VALUE=<answer> dispatches to the next phase — no blocking wait loops.
+#   - State stored in owner._cal_state / owner._cal_data; cleared on Klipper restart.
+#   - Calibrated values are written immediately to save_variables (no SAVE_CONFIG needed).
+#   - Values are loaded from save_variables at klippy:ready, overriding hardware.cfg defaults.
 #
-# All interactive routines use SA_RESPOND VALUE=<answer> for console I/O
-# (polling owner._response_ready / owner._pending_response).
+# Calibration states:
+#   sel_confirm
+#   drv_path / drv_mark / drv_meas / drv_save
+#   enc_zero_N / enc_exit_N
+#   bow_est_N
 
-import sys, os as _os
+import sys, os as _os, re
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
 if _extras_dir not in sys.path:
     sys.path.insert(0, _extras_dir)
 
 import logging
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SACalibration
-# ══════════════════════════════════════════════════════════════════════════════
 
 class SACalibration:
-    """All calibration routines for the Stealth Autoloader.
-
-    ``owner`` is the StealthAutoloader instance.
-    """
 
     def __init__(self, owner):
         self.owner = owner
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Console interaction helpers
+    # SA_RESPOND dispatch  (called from StealthAutoloader._cmd_respond)
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _wait_for_value(self, gcmd, prompt, example="", timeout=300.0):
-        """Send *prompt* to the console and block until SA_RESPOND VALUE=xxx arrives.
-
-        Returns the raw string value the user entered.
-        Raises gcmd.error on timeout or if the user sends VALUE=abort.
-        """
+    def respond(self, gcmd, value):
+        """Route an SA_RESPOND value to the correct phase handler."""
         owner = self.owner
-        owner._pending_response = None
-        owner._response_ready   = False
+        state = owner._cal_state
 
-        msg = "SA CAL: %s" % prompt
-        if example:
-            msg += "\n  Example: %s" % example
-        msg += "\n  -> Send:  SA_RESPOND VALUE=<answer>  (SA_RESPOND VALUE=abort to cancel)"
-        gcmd.respond_info(msg)
+        if state is None:
+            gcmd.respond_info("SA: No calibration is waiting for input.")
+            return
 
-        deadline = owner.reactor.monotonic() + timeout
-        while not owner._response_ready:
-            if owner.reactor.monotonic() > deadline:
-                raise gcmd.error("SA CAL: Timeout waiting for SA_RESPOND")
-            owner.reactor.pause(owner.reactor.monotonic() + 0.25)
+        val = value.strip()
+        if val.lower() in ('abort', 'cancel'):
+            self._abort(gcmd)
+            return
 
-        val = (owner._pending_response or "").strip()
-        if val.lower() == 'abort':
-            raise gcmd.error("SA CAL: Calibration aborted by user")
-        return val
-
-    def _prompt_yes_no(self, gcmd, question, timeout=120.0):
-        """Ask a yes/no question via the console.  Returns True for affirmative."""
-        val = self._wait_for_value(gcmd, question, "yes or no", timeout)
-        return val.lower() in ('yes', 'y', '1', 'true', 'ok')
-
-    def _save_config_value(self, section, key, value):
-        """Queue a config value to be written by the next SAVE_CONFIG."""
-        configfile = self.owner.printer.lookup_object('configfile')
-        configfile.set(section, key, str(value))
-
-    def _trigger_save_config(self, gcmd):
-        """Inform the user and execute SAVE_CONFIG (restarts Klipper)."""
-        gcmd.respond_info(
-            "SA CAL: Calibration complete. "
-            "Running SAVE_CONFIG — printer will restart.")
-        self.owner.gcode.run_script_from_command("SAVE_CONFIG")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Drive motor calibration
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def calibrate_drive(self, gcmd):
-        """SA_CALIBRATE_DRIVE — interactive rotation_distance calibration.
-
-        Because there is one drive motor for all 6 paths, this needs to be
-        done only once.  The routine:
-          1. Asks which path has filament loaded.
-          2. Moves selector to that path and engages the drive gear.
-          3. Commands 100mm and asks the user to measure actual movement.
-          4. Recalculates rotation_distance and repeats up to 3 times.
-          5. Queues the final value via configfile.set and optionally saves.
-        """
-        owner  = self.owner
-        motion = owner.motion
-
-        gcmd.respond_info(
-            "SA DRIVE CALIBRATION\n"
-            "====================\n"
-            "This calibrates the drive motor rotation_distance.\n"
-            "Only needed once — same motor drives all paths.\n"
-            "\n"
-            "Requirements:\n"
-            "  - Filament loaded past the drive gear on at least one path.\n"
-            "  - A ruler or calipers to measure filament exit movement.")
-
-        # ── Ask which path to use ─────────────────────────────────────────────
-        val = self._wait_for_value(
-            gcmd, "Which path number has filament loaded past the drive gear?",
-            "0  through  %d" % (owner.num_paths - 1))
         try:
-            path = int(val)
-        except ValueError:
-            raise gcmd.error("SA CAL: Invalid path number '%s'" % val)
-        if not (0 <= path < owner.num_paths):
-            raise gcmd.error("SA CAL: Path %d out of range (0-%d)" % (path, owner.num_paths - 1))
-
-        # ── Move selector to path and engage ──────────────────────────────────
-        gcmd.respond_info("SA CAL: Selecting path %d and engaging drive gear..." % path)
-        motion.servo_disengage()
-        motion.selector_move_to(owner._selector_positions[path])
-        owner.current_path = path
-        motion.servo_engage()
-
-        # ── Read current rotation_distance from the stepper ───────────────────
-        drive_obj = owner.printer.lookup_object(owner.drive_stepper_name)
-        steppers  = drive_obj.get_steppers()
-        if steppers:
-            current_rd = steppers[0].get_rotation_distance()[0]
-        else:
-            current_rd = 22.0
-            logging.warning("SACalibration: could not read rotation_distance — defaulting to 22.0")
-
-        target    = 100.0
-        best_rd   = current_rd
-
-        for attempt in range(3):
-            gcmd.respond_info(
-                "SA CAL: Attempt %d/3 — will command %.0fmm.\n"
-                "  Mark the filament at the encoder exit (or put a piece of tape)\n"
-                "  so you can measure how far it actually moves."
-                % (attempt + 1, target))
-
-            # Wait for user ready
-            self._wait_for_value(
-                gcmd,
-                "Filament marked? Ready to run?",
-                "yes")
-
-            # Feed 100mm
-            enc = owner._encoder(path)
-            enc.set_direction(forward=True)
-            enc.reset_distance()
-            motion.drive_move(target, speed=owner.feed_speed * 0.5)
-
-            gcmd.respond_info(
-                "SA CAL: %.0fmm commanded. "
-                "Measure the distance from your mark to the new filament end." % target)
-            measured_str = self._wait_for_value(
-                gcmd,
-                "How many mm did the filament actually travel?",
-                "103.5")
-            try:
-                measured = float(measured_str)
-            except ValueError:
-                raise gcmd.error("SA CAL: Invalid measurement '%s'" % measured_str)
-            if measured <= 0.0:
-                raise gcmd.error("SA CAL: Measured distance must be > 0")
-
-            error = abs(measured - target)
-            pct   = error / target * 100.0
-            new_rd = best_rd * (measured / target)
-
-            gcmd.respond_info(
-                "SA CAL: Commanded %.1fmm  |  Measured %.2fmm  |  "
-                "Error %.2fmm (%.1f%%)\n"
-                "  Current  rotation_distance: %.4f\n"
-                "  Suggested rotation_distance: %.4f"
-                % (target, measured, error, pct, best_rd, new_rd))
-
-            best_rd = new_rd
-
-            if error <= 1.0:
-                gcmd.respond_info("SA CAL: Error within 1mm tolerance — drive calibrated!")
-                break
-            if attempt < 2:
+            if state.startswith('sel_'):
+                self._sel_respond(gcmd, state, val)
+            elif state.startswith('drv_'):
+                self._drv_respond(gcmd, state, val)
+            elif state.startswith('enc_'):
+                self._enc_respond(gcmd, state, val)
+            elif state.startswith('bow_'):
+                self._bow_respond(gcmd, state, val)
+            else:
                 gcmd.respond_info(
-                    "SA CAL: Error > 1mm. Running another pass. "
-                    "Note: the stepper still uses the old value at runtime; "
-                    "the measured correction is carried forward mathematically.")
+                    "SA CAL: Unknown calibration state '%s' — clearing." % state)
+                self._clear()
+        except Exception as e:
+            logging.exception("SACalibration: error in respond()")
+            self._clear()
+            raise gcmd.error("SA CAL: %s" % str(e))
 
-        motion.servo_disengage()
+    # ── Internal helpers ──────────────────────────────────────────────────────
 
-        # Queue for SAVE_CONFIG
-        self._save_config_value('manual_stepper sa_drive', 'rotation_distance',
-                                '%.4f' % best_rd)
-        gcmd.respond_info(
-            "SA CAL: Final rotation_distance=%.4f queued for SAVE_CONFIG." % best_rd)
+    def _abort(self, gcmd):
+        gcmd.respond_info("SA CAL: Calibration aborted.")
+        self.owner.motion.servo_disengage()
+        self._clear()
 
-        if self._prompt_yes_no(gcmd, "Save drive calibration and restart printer now?"):
-            self._trigger_save_config(gcmd)
-        else:
-            gcmd.respond_info("SA CAL: Value queued. Run SAVE_CONFIG when ready.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Per-path encoder calibration
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def calibrate_encoder(self, gcmd):
-        """SA_CALIBRATE_ENCODER TOOL=N — interactive mm_per_pulse calibration.
-
-        Runs 5 × feed/retract cycles of 400mm and averages the results.
-        Requires filament loaded past the drive gear and encoder for path N.
-        """
-        owner  = self.owner
-        motion = owner.motion
-        path   = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
-        enc    = owner._encoder(path)
-
-        gcmd.respond_info(
-            "SA ENCODER CALIBRATION — Path %d\n"
-            "==================================\n"
-            "Runs 5 feed/retract cycles of 400mm and averages pulse counts.\n"
-            "\n"
-            "Requirements:\n"
-            "  - Filament loaded past the drive gear AND through the encoder.\n"
-            "  - Enough free filament to allow 400mm × 5 = 2000mm total travel." % path)
-
-        gcmd.respond_info("SA CAL: Selecting path %d and engaging drive gear..." % path)
-        motion.servo_disengage()
-        motion.selector_move_to(owner._selector_positions[path])
-        owner.current_path = path
-        motion.servo_engage()
-
-        # ── Baseline check: confirm encoder responds ──────────────────────────
-        self._wait_for_value(
-            gcmd,
-            "Position filament flush with encoder exit as a zero reference. Ready?",
-            "yes")
-
-        enc.set_direction(forward=True)
-        enc.reset_distance()
-        motion.drive_move(200.0, speed=owner.feed_speed * 0.5)
-
-        if enc.get_distance() < 1.0:
+    def _safe_selector_move(self, motion, position_mm):
+        """Disengage servo if engaged, move selector, restore servo state."""
+        was_engaged = self.owner._servo_is_engaged
+        if was_engaged:
             motion.servo_disengage()
-            raise gcmd.error(
-                "SA CAL: Encoder %d returned < 1mm. "
-                "Check encoder wiring and filament grip." % path)
+        motion.selector_move_to(position_mm)
+        if was_engaged:
+            motion.servo_engage()
 
-        gcmd.respond_info(
-            "SA CAL: Encoder responding — %.2f raw units over 200mm stepper travel. Good."
-            % enc.get_distance())
-        self._prompt_yes_no(
-            gcmd,
-            "Has the filament moved approximately 200mm from the zero mark?")
+    def _clear(self):
+        self.owner._cal_state = None
+        self.owner._cal_data  = {}
 
-        # ── 5 × feed/retract cycles ───────────────────────────────────────────
-        gcmd.respond_info(
-            "SA CAL: Running 5 × 400mm feed/retract cycles. Do not touch the filament.")
+    def _yes(self, value):
+        return value.lower() in ('yes', 'y', '1', 'true', 'ok')
 
-        feed_counts    = []
-        retract_counts = []
+    def _prompt(self, gcmd, message, *commands):
+        """Print a message with copy-paste commands clearly separated."""
+        lines = [
+            "",
+            "SA CAL: " + message,
+            "",
+        ]
+        for cmd in commands:
+            lines.append("  " + cmd)
+        lines.append("")
+        gcmd.respond_info("\n".join(lines))
 
-        for i in range(5):
-            # Feed 400mm
-            enc.set_direction(forward=True)
-            enc.reset_distance()
-            motion.drive_move(400.0, speed=owner.feed_speed * 0.5)
-            feed_dist = enc.get_distance()
-            feed_counts.append(feed_dist)
+    def _save_variable(self, key, value):
+        """Write a calibration value to save_variables immediately — no restart needed."""
+        self.owner.gcode.run_script_from_command(
+            "SAVE_VARIABLE VARIABLE=%s VALUE=%s" % (key, str(value)))
 
-            owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+    def _patch_hardware_cfg(self, section, option, value):
+        """Edit a key in hardware.cfg directly — no SAVE_CONFIG needed.
 
-            # Retract 400mm
-            enc.set_direction(forward=False)
-            enc.reset_distance()
-            motion.drive_move(-400.0, speed=owner.feed_speed * 0.5)
-            ret_dist = enc.get_distance()
-            retract_counts.append(ret_dist)
-
-            gcmd.respond_info(
-                "SA CAL: Cycle %d/5 — feed=%.2f  ret=%.2f  (raw encoder units)"
-                % (i + 1, feed_dist, ret_dist))
-            owner.reactor.pause(owner.reactor.monotonic() + 0.2)
-
-        # ── Calculate new mm_per_pulse ────────────────────────────────────────
-        # enc.get_distance() returns (pulses × mm_per_pulse).
-        # avg_count = average distance reported over the 10 passes (400mm each).
-        # avg_pulses = avg_count / current_mpp  →  approximate pulse count per pass.
-        # new_mpp = 400.0 / avg_pulses.
-        all_counts = feed_counts + retract_counts
-        avg_count  = sum(all_counts) / len(all_counts)
-        current_mpp = enc.mm_per_pulse
-
-        if current_mpp <= 0.0:
-            raise gcmd.error("SA CAL: Encoder mm_per_pulse is zero or negative — check config.")
-
-        avg_pulses = avg_count / current_mpp
-        if avg_pulses <= 0.0:
-            raise gcmd.error("SA CAL: Calculated pulse count is zero — encoder may not be working.")
-
-        new_mpp = 400.0 / avg_pulses
-
-        spread = max(all_counts) - min(all_counts)
-        gcmd.respond_info(
-            "SA CAL: Path %d encoder calibration results:\n"
-            "  10-pass average (raw units): %.3f\n"
-            "  Spread (max-min):            %.3f\n"
-            "  Current  mm_per_pulse:       %.5f\n"
-            "  Suggested mm_per_pulse:      %.5f"
-            % (path, avg_count, spread, current_mpp, new_mpp))
-
-        if spread / avg_count > 0.05:
-            gcmd.respond_info(
-                "SA CAL: WARNING — spread/avg = %.1f%%. "
-                "High variation may indicate filament slip or loose encoder. "
-                "Consider re-seating filament and re-running." % (spread / avg_count * 100))
-
-        # ── Exit position verification ────────────────────────────────────────
-        # After 5×(+400, -400) starting from +200, we should be back at +200mm.
-        measured_str = self._wait_for_value(
-            gcmd,
-            "Measure filament from zero reference mark. Should be ~200mm. Actual?",
-            "200.5  or  ok  if correct")
-
-        if measured_str.lower() not in ('ok', 'yes', 'good'):
-            try:
-                actual = float(measured_str)
-                if abs(actual - 200.0) > 5.0:
-                    gcmd.respond_info(
-                        "SA CAL: NOTE — exit position error %.1fmm. "
-                        "Consider running SA_CALIBRATE_DRIVE first."
-                        % abs(actual - 200.0))
-            except ValueError:
-                pass  # User typed something non-numeric — ignore
-
-        motion.servo_disengage()
-
-        # Queue for SAVE_CONFIG
-        section = 'sa_encoder %d' % path
-        self._save_config_value(section, 'mm_per_pulse', '%.5f' % new_mpp)
-        gcmd.respond_info(
-            "SA CAL: Encoder %d mm_per_pulse=%.5f queued for SAVE_CONFIG." % (path, new_mpp))
-
-        if self._prompt_yes_no(gcmd, "Save encoder %d calibration and restart printer now?" % path):
-            self._trigger_save_config(gcmd)
-        else:
-            gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Sensorless selector calibration  (SA_CALIBRATE_SELECTOR)
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def calibrate_selector_auto(self, gcmd):
-        """SA_CALIBRATE_SELECTOR — one-time sensorless far-end detection.
-
-        Uses the TMC5160 stallguard (M1 DIAG pin = PB9) to find the mechanical
-        far-end of the selector travel.  Run this ONCE after initial assembly or
-        any mechanical change.  SA_HOME uses only the physical endstop switch and
-        never runs this logic.
-
-        Flow
-        ----
-        1. Home to physical endstop (double-touch).
-        2. Lower run_current to selector_stall_current so the motor stalls on
-           contact with the hard stop without grinding.
-        3. Enable stallguard output on DIAG1 via SET_TMC_FIELD.
-        4. Sweep in selector_stall_speed mm/s increments.  After each step,
-           check the [gcode_button selector_stall] state.  Stop on first PRESSED.
-        5. Record far-end position, calculate even path spacing.
-        6. Restore normal run_current and disable DIAG1 stall routing.
-        7. Confirm with user, save positions via SAVE_CONFIG.
-
-        Tuning
-        ------
-        If false stall triggers mid-travel:  raise selector_stall_threshold (less sensitive).
-        If it runs past the hard stop:       lower selector_stall_threshold (more sensitive)
-                                             OR lower selector_stall_current.
+        Returns (True, path) on success, (False, error_msg) on failure.
+        Looks for hardware.cfg alongside the primary Klipper config file.
         """
-        owner  = self.owner
-        motion = owner.motion
-        sn     = owner._sel_name()
+        try:
+            config_file = self.owner.printer.get_start_args().get('config_file', '')
+            config_dir  = _os.path.dirname(config_file)
+            hw_cfg      = _os.path.join(
+                config_dir, 'stealth-autoloader', 'hardware.cfg')
+            if not _os.path.exists(hw_cfg):
+                return False, "hardware.cfg not found at %s" % hw_cfg
 
-        gcmd.respond_info(
-            "SA SELECTOR SENSORLESS CALIBRATION\n"
-            "====================================\n"
-            "ONE-TIME setup — only repeat after mechanical changes.\n"
-            "\n"
-            "The selector will sweep to the far mechanical stop using the TMC5160\n"
-            "stallguard (DIAG1 pin).  When the motor stalls, path positions are\n"
-            "calculated automatically.\n"
-            "\n"
-            "Requirements:\n"
-            "  - SA_HOME must work correctly first (test it before running this).\n"
-            "  - No filament loaded — servo must be free.\n"
-            "  - [gcode_button selector_stall] in hardware.cfg (pin ^!autoloader:SA_SELECTOR_DIAG).\n"
-            "\n"
-            "Tuning if behaviour is wrong:\n"
-            "  Stalls before far end → raise selector_stall_threshold or selector_stall_current\n"
-            "  Overshoots far end    → lower selector_stall_threshold or selector_stall_current\n")
+            with open(hw_cfg, 'r') as f:
+                lines = f.readlines()
 
-        # ── Find and validate the stall button ────────────────────────────────
-        stall_btn = owner.printer.lookup_object('gcode_button selector_stall', None)
-        if stall_btn is None:
-            raise gcmd.error(
-                "SA CAL: [gcode_button selector_stall] not found in config.\n"
-                "Add to hardware.cfg:\n"
-                "  [gcode_button selector_stall]\n"
-                "  pin: ^!autoloader:SA_SELECTOR_DIAG\n"
-                "  press_gcode:\n"
-                "  release_gcode:")
+            in_section = False
+            patched    = False
+            new_lines  = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('['):
+                    in_section = (stripped == '[%s]' % section)
+                if in_section and re.match(
+                        r'^' + re.escape(option) + r'\s*[=:]', stripped):
+                    line    = re.sub(r'(\s*[=:]\s*)\S+', r'\g<1>' + value, line)
+                    patched = True
+                new_lines.append(line)
 
-        if not self._prompt_yes_no(gcmd, "Ready to proceed?"):
-            gcmd.respond_info("SA CAL: Calibration aborted.")
-            return
+            if not patched:
+                return False, ("'%s' not found in [%s]" % (option, section))
 
-        # ── Step 1: home to physical endstop ─────────────────────────────────
-        gcmd.respond_info("SA CAL: Homing to physical endstop (double-touch)...")
-        motion.selector_home()
-        gcmd.respond_info("SA CAL: Homed at 0.0mm.")
-
-        # ── Step 2: configure stallguard ──────────────────────────────────────
-        threshold = owner.selector_stall_threshold
-        stall_current = owner.selector_stall_current
-        stall_speed   = owner.selector_stall_speed
-
-        gcmd.respond_info(
-            "SA CAL: Configuring stallguard — SGT=%d, current=%.2fA, speed=%.0fmm/s"
-            % (threshold, stall_current, stall_speed))
-
-        # Set stallguard threshold
-        owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=sgt VALUE=%d" % (sn, threshold))
-        # Route stall result to DIAG1 output
-        owner.gcode.run_script_from_command(
-            "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=1" % sn)
-        # Lower current so the motor stalls on contact, not on inertia
-        owner.gcode.run_script_from_command(
-            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, stall_current))
-
-        # Brief settle — let driver stabilise at new current before sweeping
-        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
-
-        # Verify DIAG pin starts RELEASED (no false stall at rest)
-        status = stall_btn.get_status(owner.reactor.monotonic())
-        if status.get('state') == 'PRESSED':
-            # Restore and abort
-            self._restore_selector_current(gcmd, sn)
-            raise gcmd.error(
-                "SA CAL: selector_stall button is PRESSED before sweep started.\n"
-                "Check DIAG1 wiring or raise selector_stall_threshold.")
-
-        # ── Step 3: sweep toward far end in small steps ───────────────────────
-        gcmd.respond_info(
-            "SA CAL: Sweeping to far end at %.0fmm/s.  Watch the carriage..."
-            % stall_speed)
-
-        step         = 3.0   # mm per increment
-        total_travel = 0.0
-        stall_found  = False
-        max_steps    = int((owner.selector_max_travel + 30.0) / step) + 1
-
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
-        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
-
-        for _ in range(max_steps):
-            total_travel += step
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f"
-                % (sn, total_travel, stall_speed))
-            owner.gcode.run_script_from_command("M400")
-
-            # Brief settle so the driver updates SG_RESULT and DIAG pin
-            owner.reactor.pause(owner.reactor.monotonic() + 0.05)
-
-            status = stall_btn.get_status(owner.reactor.monotonic())
-            if status.get('state') == 'PRESSED':
-                stall_found = True
-                # Step back one increment to get a conservative far-end position
-                far_end = total_travel - step
-                gcmd.respond_info(
-                    "SA CAL: Stall detected at %.1fmm.  Far-end set to %.1fmm."
-                    % (total_travel, far_end))
-                break
-
-        # ── Restore normal driver settings immediately ────────────────────────
-        self._restore_selector_current(gcmd, sn)
-
-        if not stall_found:
-            raise gcmd.error(
-                "SA CAL: No stall detected within %.0fmm.\n"
-                "Check wiring of SA_SELECTOR_DIAG (PB9), or lower\n"
-                "selector_stall_threshold / selector_stall_current."
-                % owner.selector_max_travel)
-
-        # ── Step 4: calculate path positions ─────────────────────────────────
-        # Happy Hare approach: path 0 is exactly at home (0mm), path n-1 is at
-        # far_end.  Positions are distributed evenly across the full usable travel.
-        n = owner.num_paths
-        if n == 1:
-            positions = [0.0]
-            spacing   = 0.0
-        else:
-            if far_end < (n - 1) * 5.0:
-                raise gcmd.error(
-                    "SA CAL: Usable travel (%.1fmm) too short for %d paths."
-                    % (far_end, n))
-            spacing   = far_end / float(n - 1)
-            positions = [round(i * spacing, 2) for i in range(n)]
-
-        pos_lines = "\n".join(
-            "  Path %d: %.2fmm" % (i, p) for i, p in enumerate(positions))
-        gcmd.respond_info(
-            "SA CAL: Far end %.1fmm → %d paths, spacing %.2fmm:\n%s"
-            % (far_end, n, spacing, pos_lines))
-
-        if not self._prompt_yes_no(gcmd, "Accept these positions and save?"):
-            gcmd.respond_info("SA CAL: Positions NOT saved.  Adjust stall settings and retry.")
-            motion.selector_home()
-            return
-
-        # ── Step 5: save ──────────────────────────────────────────────────────
-        for i, pos in enumerate(positions):
-            owner._selector_positions[i] = pos
-            self._save_config_value(
-                'stealth_autoloader', 'selector_position_%d' % i, '%.2f' % pos)
-
-        gcmd.respond_info("SA CAL: All %d positions queued." % n)
-        motion.selector_home()
-
-        if self._prompt_yes_no(gcmd, "Save and restart printer now?"):
-            self._trigger_save_config(gcmd)
-        else:
-            gcmd.respond_info("SA CAL: Queued.  Run SAVE_CONFIG when ready.")
+            with open(hw_cfg, 'w') as f:
+                f.writelines(new_lines)
+            logging.info("SACalibration: patched %s [%s] %s = %s",
+                         hw_cfg, section, option, value)
+            return True, hw_cfg
+        except Exception as e:
+            return False, str(e)
 
     def _restore_selector_current(self, gcmd, sn):
-        """Restore normal selector current and disable DIAG1 stall routing."""
         owner = self.owner
         try:
-            owner.gcode.run_script_from_command(
-                "SET_TMC_FIELD STEPPER=%s FIELD=diag1_stall VALUE=0" % sn)
             owner.gcode.run_script_from_command(
                 "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
         except Exception as e:
             logging.warning("SACalibration: failed to restore selector current: %s", e)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Bowden tube length calibration
+    # SA_CALIBRATE_SELECTOR
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def calibrate_selector_auto(self, gcmd):
+        """Phase 0 — automated sweep + measurement, then prompt to accept."""
+        owner  = self.owner
+        motion = owner.motion
+        sn     = owner._sel_name()
+
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration already in progress (state=%s).\n"
+                "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        gcmd.respond_info(
+            "SA SELECTOR CALIBRATION\n"
+            "========================\n"
+            "Homing → sweep to far stop → home back → calculate positions.\n"
+            "No filament loaded. Servo must be free.")
+
+        # ── Step 1: Home ──────────────────────────────────────────────────────
+        gcmd.respond_info("SA CAL: Homing...")
+        motion.selector_home()
+
+        # ── Step 2: Stepper object for MCU position measurement ───────────────
+        sel_obj   = owner.printer.lookup_object('manual_stepper sa_selector')
+        stepper   = sel_obj.get_steppers()[0]
+        step_dist = stepper.get_step_dist()
+
+        # ── Steps 3+4: Sweep to far wall ─────────────────────────────────────
+        # Overshoot move at reduced current — brief grind at far wall is
+        # acceptable for one-time calibration. Current is restored immediately
+        # after the sweep. Measurement accuracy comes from homing back, not
+        # from detecting the far-wall stop.
+        far_target = owner.selector_max_travel + 30.0
+
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % sn)
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        cal_current = owner.selector_cal_current
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=%.3f" % (sn, cal_current))
+        gcmd.respond_info("SA CAL: Sweeping to far wall (%.0fmm) at %.2fA..." % (far_target, cal_current))
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.2f SPEED=%.1f SYNC=1"
+            % (sn, far_target, owner.selector_homing_speed))
+        owner.gcode.run_script_from_command("M400")
+        owner.gcode.run_script_from_command(
+            "SET_TMC_CURRENT STEPPER=%s CURRENT=0.600" % sn)
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+        gcmd.respond_info("SA CAL: Sweep complete.")
+
+        # ── Zero at far wall, home back to measure total travel ───────────────
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+        mcu_far = stepper.get_mcu_position()
+        home_target = -(owner.selector_max_travel + 50.0)
+
+        gcmd.respond_info("SA CAL: Homing back to measure total travel...")
+        owner.gcode.run_script_from_command(
+            "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f STOP_ON_ENDSTOP=1"
+            % (sn, home_target, owner.selector_homing_speed))
+        owner.gcode.run_script_from_command("M400")
+
+        mcu_home     = stepper.get_mcu_position()
+        total_travel = abs(mcu_far - mcu_home) * step_dist
+        owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % sn)
+
+        gcmd.respond_info(
+            "SA CAL: MCU steps far=%d  home=%d  delta=%d  step_dist=%.5fmm\n"
+            "SA CAL: Total travel: %.2fmm"
+            % (mcu_far, mcu_home, abs(mcu_far - mcu_home), step_dist, total_travel))
+
+        # ── Step 8: Restore current and internal state ────────────────────────
+        self._restore_selector_current(gcmd, sn)
+        owner.motion._selector_position = 0.0
+        owner.current_path = -1
+
+        # ── Step 9: Calculate positions ───────────────────────────────────────
+        n          = owner.num_paths
+        end_offset = owner.selector_end_offset
+        path_width = owner.path_width
+        usable     = total_travel - end_offset
+
+        if n == 1:
+            positions = [0.0]
+            spacing   = 0.0
+        else:
+            if usable < (n - 1) * 5.0:
+                raise gcmd.error(
+                    "SA CAL: Usable travel %.1fmm (total %.1fmm - offset %.1fmm) "
+                    "too short for %d paths. "
+                    "Check assembly or reduce selector_end_offset."
+                    % (usable, total_travel, end_offset, n))
+            spacing   = usable / float(n - 1)
+            positions = [round(i * spacing, 2) for i in range(n)]
+
+        offset_note = ""
+        if end_offset != 0.0:
+            offset_note = ("  end_offset %.2fmm  usable %.2fmm\n"
+                           % (end_offset, usable))
+        width_note  = ""
+        if path_width > 0.0:
+            width_note = (
+                "  path_width configured %.1fmm  calculated %.2fmm  "
+                "delta %.2fmm\n" % (path_width, spacing, abs(spacing - path_width)))
+
+        pos_lines = "\n".join(
+            "  Path %d: %.2fmm" % (i, p) for i, p in enumerate(positions))
+        gcmd.respond_info(
+            "SA CAL: Total travel %.2fmm → %d paths  spacing %.2fmm\n%s%s%s"
+            % (total_travel, n, spacing, offset_note, width_note, pos_lines))
+
+        owner._cal_data  = {'positions': positions, 'total_travel': total_travel}
+        owner._cal_state = 'sel_confirm'
+
+        self._prompt(gcmd,
+            "Accept these positions?",
+            "SA_RESPOND VALUE=yes",
+            "SA_RESPOND VALUE=no")
+
+    def _sel_respond(self, gcmd, state, value):
+        owner = self.owner
+
+        if state == 'sel_confirm':
+            if self._yes(value):
+                positions = owner._cal_data['positions']
+                for i, pos in enumerate(positions):
+                    owner._selector_positions[i] = pos
+                    self._save_variable('selector_position_%d' % i, '%.2f' % pos)
+                self._clear()
+                gcmd.respond_info(
+                    "SA CAL: Selector positions saved immediately — "
+                    "effective now, no restart needed.\n"
+                    "Run SA_HOME then SA_SELECT TOOL=N to verify each position.")
+                owner.motion.selector_home()
+            else:
+                self._clear()
+                owner.motion.selector_home()
+                gcmd.respond_info(
+                    "SA CAL: Positions NOT saved.\n"
+                    "Adjust assembly or selector_end_offset and retry.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SA_CALIBRATE_DRIVE
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def calibrate_drive(self, gcmd):
+        """Phase 0 — intro, ask which path has filament."""
+        owner = self.owner
+
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration already in progress (state=%s).\n"
+                "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
+
+        gcmd.respond_info(
+            "SA DRIVE CALIBRATION\n"
+            "====================\n"
+            "Calibrates drive motor rotation_distance — one motor, one-time setup.\n"
+            "\n"
+            "Requirements: filament loaded past drive gear on one path. Calipers or ruler.")
+
+        owner._cal_data  = {'attempt': 0, 'best_rd': None, 'path': None,
+                            'original_rd': None, 'original_sd': None}
+        owner._cal_state = 'drv_path'
+
+        self._prompt(gcmd,
+            "Which path has filament loaded past the drive gear? (0-%d)"
+            % (owner.num_paths - 1),
+            "SA_RESPOND VALUE=0",
+            "SA_RESPOND VALUE=1  (etc.)")
+
+    def _drv_respond(self, gcmd, state, value):
+        owner  = self.owner
+        motion = owner.motion
+        data   = owner._cal_data
+
+        if state == 'drv_path':
+            try:
+                path = int(value)
+            except ValueError:
+                gcmd.respond_info(
+                    "SA CAL: Enter a path number (0-%d)." % (owner.num_paths - 1))
+                return
+            if not (0 <= path < owner.num_paths):
+                gcmd.respond_info("SA CAL: Path %d out of range." % path)
+                return
+
+            gcmd.respond_info("SA CAL: Selecting path %d..." % path)
+            self._safe_selector_move(motion, owner._selector_positions[path])
+            owner.current_path = path
+            motion.servo_engage()
+
+            drive_obj = owner.printer.lookup_object(owner.drive_stepper_name)
+            steppers  = drive_obj.get_steppers()
+            best_rd   = steppers[0].get_rotation_distance()[0] if steppers else 22.0
+            orig_sd   = steppers[0].get_step_dist() if steppers else None
+
+            data.update({'path': path, 'best_rd': best_rd, 'attempt': 0,
+                         'original_rd': best_rd, 'original_sd': orig_sd,
+                         'steppers': steppers, 'cmd_mm': 100.0})
+            owner._cal_state = 'drv_mark'
+
+            self._prompt(gcmd,
+                "Mark the filament at the encoder exit (tape or pen). Then confirm ready.",
+                "SA_RESPOND VALUE=yes")
+
+        elif state == 'drv_mark':
+            attempt        = data['attempt'] + 1
+            data['attempt'] = attempt
+            path   = data['path']
+            cmd_mm = data.get('cmd_mm', 100.0)
+
+            gcmd.respond_info(
+                "SA CAL: Attempt %d/3 — commanding %.1fmm..." % (attempt, cmd_mm))
+            enc = owner._encoder(path)
+            enc.set_direction(forward=True)
+            enc.reset_distance()
+            motion.drive_move(cmd_mm, speed=owner.feed_speed * 0.5)
+            motion.drive_disable()
+            data['last_cmd_mm'] = cmd_mm
+
+            owner._cal_state = 'drv_meas'
+            self._prompt(gcmd,
+                "Measure from your mark to the new filament end (target: 100mm).",
+                "SA_RESPOND VALUE=100.0  (replace with actual mm)")
+
+        elif state == 'drv_meas':
+            try:
+                measured = float(value)
+            except ValueError:
+                gcmd.respond_info("SA CAL: Enter a number (e.g. 103.5).")
+                return
+            if measured <= 0.0:
+                gcmd.respond_info("SA CAL: Must be > 0.")
+                return
+
+            cmd_mm   = data.get('last_cmd_mm', 100.0)
+            orig_rd  = data['original_rd']
+            attempt  = data['attempt']
+            target   = 100.0
+            error    = abs(measured - target)
+            pct      = error / target * 100.0
+
+            # True rotation_distance based on original rd and actual ratio this pass
+            new_rd   = orig_rd * (measured / cmd_mm)
+            # Command this distance next pass so stepper outputs 100mm
+            next_cmd = cmd_mm * (target / measured)
+
+            data['best_rd'] = new_rd
+            data['cmd_mm']  = next_cmd
+
+            done = (attempt >= 3)
+            gcmd.respond_info(
+                "SA CAL: Pass %d/3 — commanded %.1fmm  measured %.2fmm  "
+                "error %.2fmm (%.1f%%)\n"
+                "  rotation_distance: %.4f → %.4f  next_cmd: %.1fmm%s"
+                % (attempt, cmd_mm, measured, error, pct, orig_rd, new_rd, next_cmd,
+                   "  ✓ done" if done else ""))
+
+            if done:
+                motion.servo_disengage()
+                owner._cal_state = 'drv_save'
+                self._prompt(gcmd,
+                    "Save rotation_distance=%.4f?" % new_rd,
+                    "SA_RESPOND VALUE=yes",
+                    "SA_RESPOND VALUE=no")
+            else:
+                owner._cal_state = 'drv_mark'
+                self._prompt(gcmd,
+                    "Re-mark the filament at its new position, then confirm ready.",
+                    "SA_RESPOND VALUE=yes")
+
+        elif state == 'drv_save':
+            new_rd   = data['best_rd']
+            orig_rd  = data.get('original_rd') or new_rd
+            self._clear()
+
+            if self._yes(value):
+                self._save_variable('drive_rotation_distance', '%.4f' % new_rd)
+                ok, result = self._patch_hardware_cfg(
+                    'manual_stepper sa_drive', 'rotation_distance', '%.4f' % new_rd)
+                if ok:
+                    gcmd.respond_info(
+                        "SA CAL: rotation_distance=%.4f written to hardware.cfg.\n"
+                        "Restart Klipper — 100mm will equal 100mm." % new_rd)
+                else:
+                    gcmd.respond_info(
+                        "SA CAL: rotation_distance=%.4f saved to variables.cfg.\n"
+                        "Could not auto-update hardware.cfg (%s).\n"
+                        "Manually set rotation_distance: %.4f in "
+                        "[manual_stepper sa_drive] then restart Klipper."
+                        % (new_rd, result, new_rd))
+            else:
+                gcmd.respond_info(
+                    "SA CAL: Not saved. rotation_distance remains %.4f." % orig_rd)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SA_CALIBRATE_ENCODER
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def calibrate_encoder(self, gcmd):
+        """Phase 0 — select path, engage, prompt to mark filament."""
+        owner = self.owner
+        path  = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
+
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration already in progress (state=%s).\n"
+                "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
+
+        gcmd.respond_info(
+            "SA ENCODER CALIBRATION — Path %d\n"
+            "==================================\n"
+            "Feeds until encoder reads 100mm, you measure actual — 3 passes.\n"
+            "\n"
+            "Requirements: filament through drive gear AND encoder for path %d.\n"
+            "~400mm of free filament needed." % (path, path))
+
+        gcmd.respond_info("SA CAL: Selecting path %d..." % path)
+        self._safe_selector_move(owner.motion, owner._selector_positions[path])
+        owner.current_path = path
+        owner.motion.servo_engage()
+
+        enc = owner._encoder(path)
+        owner._cal_data  = {
+            'path':         path,
+            'attempt':      0,
+            'best_mpp':     enc.mm_per_pulse,
+            'original_mpp': enc.mm_per_pulse,
+        }
+        owner._cal_state = 'enc_mark_%d' % path
+
+        self._prompt(gcmd,
+            "Mark the filament at the encoder exit, then confirm ready.",
+            "SA_RESPOND VALUE=yes")
+
+    def _enc_respond(self, gcmd, state, value):
+        owner  = self.owner
+        motion = owner.motion
+        data   = owner._cal_data
+        path   = int(state.rsplit('_', 1)[-1])
+        enc    = owner._encoder(path)
+
+        if state.startswith('enc_mark_'):
+            attempt        = data['attempt'] + 1
+            data['attempt'] = attempt
+            target         = 100.0
+            max_travel     = 600.0
+            poll_interval  = 0.05   # seconds between encoder checks
+            cal_speed      = owner.feed_speed * 0.5
+
+            # Apply current best mm_per_pulse so encoder counts correctly
+            enc.mm_per_pulse = data['best_mpp']
+            enc.set_direction(forward=True)
+            enc.reset_distance()
+
+            dn = owner._drv_name()
+            motion.servo_engage()
+            motion._cancel_timeout(dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % dn)
+
+            gcmd.respond_info(
+                "SA CAL: Attempt %d/3 — continuous feed until encoder reads "
+                "%.0fmm (mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
+
+            # Queue long move — returns immediately (SYNC=0)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f SYNC=0"
+                % (dn, max_travel, cal_speed))
+
+            # Poll encoder every 50ms — reactor processes pulse callbacks each pause
+            deadline = owner.reactor.monotonic() + (max_travel / cal_speed) + 2.0
+            while enc.get_distance() < target:
+                owner.reactor.pause(owner.reactor.monotonic() + poll_interval)
+                if owner.reactor.monotonic() > deadline:
+                    break
+
+            # Abrupt stop — at cal speed (~25mm/s) overshoot is <2mm
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=0" % dn)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+
+            enc_reading = enc.get_distance()
+
+            if enc_reading < 3.0:
+                motion.servo_disengage()
+                motion.drive_disable()
+                self._clear()
+                raise gcmd.error(
+                    "SA CAL: Encoder %d not responding — %.2fmm counted after "
+                    "%.0fmm travel. Check wiring and filament grip."
+                    % (path, enc_reading, max_travel))
+
+            gcmd.respond_info(
+                "SA CAL: Motor stopped — encoder reads %.2fmm." % enc_reading)
+
+            # Hold servo + motor torque while user measures
+            dn = owner._drv_name()
+            motion._cancel_timeout(dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+            data['enc_reading'] = enc_reading
+            owner._cal_state = 'enc_meas_%d' % path
+
+            self._prompt(gcmd,
+                "Servo engaged, drive holding. Measure from your mark to "
+                "filament end (target 100mm).",
+                "SA_RESPOND VALUE=100.0  (replace with actual mm)")
+
+        elif state.startswith('enc_meas_'):
+            # Release motor torque but keep servo engaged —
+            # user needs grip to reposition filament with the drive knob
+            motion.drive_disable()
+
+            try:
+                actual = float(value)
+            except ValueError:
+                gcmd.respond_info("SA CAL: Enter a number (e.g. 199.5).")
+                return
+            if actual <= 0.0:
+                gcmd.respond_info("SA CAL: Must be > 0.")
+                return
+
+            current_mpp = data['best_mpp']
+            attempt     = data['attempt']
+            enc_reading = data['enc_reading']
+            # Use actual enc_reading (not assumed target) so formula is valid
+            # whether motor stopped at target or was halted by max_travel limit
+            new_mpp     = current_mpp * (actual / enc_reading)
+            correction  = abs(new_mpp - current_mpp) / current_mpp * 100.0
+
+            data['best_mpp'] = new_mpp
+            # Apply immediately so next pass uses corrected mpp
+            enc.mm_per_pulse = new_mpp
+
+            done = (attempt >= 3)
+            gcmd.respond_info(
+                "SA CAL: Pass %d/3 — encoder %.2fmm  actual %.2fmm  "
+                "mpp correction %.2f%%\n"
+                "  mm_per_pulse: %.5f → %.5f%s"
+                % (attempt, enc_reading, actual, correction,
+                   current_mpp, new_mpp, "  ✓ done" if done else ""))
+
+            if done:
+                motion.servo_disengage()
+                owner._cal_state = 'enc_save_%d' % path
+                self._prompt(gcmd,
+                    "Save mm_per_pulse=%.5f?" % new_mpp,
+                    "SA_RESPOND VALUE=yes",
+                    "SA_RESPOND VALUE=no")
+            else:
+                # Servo still engaged — use knob to re-mark filament position
+                owner._cal_state = 'enc_mark_%d' % path
+                self._prompt(gcmd,
+                    "Servo engaged — use knob to reposition filament to new mark, "
+                    "then confirm ready.",
+                    "SA_RESPOND VALUE=yes")
+
+        elif state.startswith('enc_save_'):
+            new_mpp  = data['best_mpp']
+            orig_mpp = data.get('original_mpp') or new_mpp
+            self._clear()
+
+            if self._yes(value):
+                enc.mm_per_pulse = new_mpp
+                self._save_variable('encoder_mpp_%d' % path, '%.5f' % new_mpp)
+                ok, result = self._patch_hardware_cfg(
+                    'sa_encoder %d' % path, 'mm_per_pulse', '%.5f' % new_mpp)
+                if ok:
+                    gcmd.respond_info(
+                        "SA CAL: Encoder %d mm_per_pulse=%.5f written to "
+                        "hardware.cfg — restart Klipper to apply." % (path, new_mpp))
+                else:
+                    gcmd.respond_info(
+                        "SA CAL: Encoder %d mm_per_pulse=%.5f saved to "
+                        "variables.cfg. Could not auto-update hardware.cfg (%s)."
+                        % (path, new_mpp, result))
+            else:
+                enc.mm_per_pulse = orig_mpp
+                gcmd.respond_info(
+                    "SA CAL: Not saved. mm_per_pulse remains %.5f." % orig_mpp)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SA_CALIBRATE_BOWDEN
     # ══════════════════════════════════════════════════════════════════════════
 
     def calibrate_bowden(self, gcmd):
-        """SA_CALIBRATE_BOWDEN TOOL=N — guided Bowden length calibration.
+        """Phase 0 — validate sensors, prompt for estimated tube length."""
+        owner = self.owner
+        path  = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
 
-        Requires extruder_sensor_N configured for this path.
-        Runs 3 feed-to-sensor trials and averages the encoder distance at
-        trigger, saving the result as bowden_length_N.
-        """
-        owner  = self.owner
-        motion = owner.motion
-        path   = gcmd.get_int('TOOL', minval=0, maxval=owner.num_paths - 1)
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration already in progress (state=%s).\n"
+                "  SA_RESPOND VALUE=abort" % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Selector not homed — homing now...")
+            owner.motion.selector_home()
 
         gcmd.respond_info(
             "SA BOWDEN CALIBRATION — Path %d\n"
             "================================" % path)
 
-        has_extruder_sensor = bool(owner._extruder_sensor_names[path])
-        if not has_extruder_sensor:
+        if not owner._extruder_sensor_names[path]:
             raise gcmd.error(
-                "SA CAL: No extruder_sensor_%d configured. "
-                "Add extruder_sensor_%d = filament_switch_sensor extruder_sensor_%d "
-                "to [stealth_autoloader] in hardware.cfg."
+                "SA CAL: No extruder_sensor_%d configured.\n"
+                "Add to [stealth_autoloader] in hardware.cfg:\n"
+                "  extruder_sensor_%d : filament_switch_sensor extruder_sensor_%d"
                 % (path, path, path))
 
         if not owner._entry_sensor_active(path):
             raise gcmd.error(
                 "SA CAL: No filament at entry of path %d. Load a spool first." % path)
 
-        # ── Ask for initial length estimate ───────────────────────────────────
-        estimated_str = self._wait_for_value(
-            gcmd,
+        owner._cal_data  = {'path': path, 'trials': []}
+        owner._cal_state = 'bow_est_%d' % path
+
+        self._prompt(gcmd,
             "Enter estimated Bowden tube length for path %d (mm). "
-            "We approach at 90%% of this value first." % path,
-            "800")
-        try:
-            estimated = float(estimated_str)
-        except ValueError:
-            raise gcmd.error("SA CAL: Invalid length '%s'" % estimated_str)
-        if estimated <= 0.0:
-            raise gcmd.error("SA CAL: Estimated length must be > 0")
+            "Over-estimate is safer — approach uses 90%% first." % path,
+            "SA_RESPOND VALUE=800  (replace with your estimate)")
 
-        approach_length = estimated * 0.9
-        gcmd.respond_info(
-            "SA CAL: Initial fast approach: %.0fmm (90%% of %.0fmm estimate). "
-            "Then inching until sensor triggers." % (approach_length, estimated))
+    def _bow_respond(self, gcmd, state, value):
+        owner  = self.owner
+        motion = owner.motion
+        data   = owner._cal_data
+        path   = int(state.rsplit('_', 1)[-1])
 
-        measured_lengths = []
+        if state.startswith('bow_est_'):
+            try:
+                estimated = float(value)
+            except ValueError:
+                gcmd.respond_info("SA CAL: Enter a number (e.g. 800).")
+                return
+            if estimated <= 0.0:
+                gcmd.respond_info("SA CAL: Must be > 0.")
+                return
 
-        # ── 3 measurement trials ──────────────────────────────────────────────
-        for trial in range(3):
-            gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
-
-            # Select path and engage drive gear
-            motion.servo_disengage()
-            motion.selector_move_to(owner._selector_positions[path])
-            owner.current_path = path
-            motion.servo_engage()
-
-            enc = owner._encoder(path)
-            enc.set_direction(forward=True)
-            enc.reset_distance()
-
-            # Fast approach to 90% of estimate
+            approach_length = estimated * 0.9
             gcmd.respond_info(
-                "SA CAL: Fast approach to %.0fmm..." % approach_length)
-            current_pos = 0.0
-            while current_pos < approach_length:
-                step = min(owner.feed_step_size * 5.0, approach_length - current_pos)
-                motion.drive_move(step)
-                current_pos += step
-                owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
-                if owner._extruder_sensor_active(path):
-                    break
+                "SA CAL: Running 3 trials "
+                "(fast approach %.0fmm, inch to sensor)..." % approach_length)
 
-            if owner._extruder_sensor_active(path):
-                # Sensor triggered during fast approach (tube is shorter than estimated)
-                length = enc.get_distance()
-                gcmd.respond_info(
-                    "SA CAL: Extruder sensor triggered during fast approach at %.2fmm. "
-                    "Tube is shorter than estimated." % length)
-            else:
-                # Inch forward until sensor triggers
-                gcmd.respond_info(
-                    "SA CAL: Inching forward until extruder sensor triggers...")
-                inch_max = estimated * 0.3  # allow up to 30% overshoot
-                inched   = 0.0
-                while not owner._extruder_sensor_active(path) and inched < inch_max:
-                    motion.drive_move(owner.feed_step_size)
-                    inched += owner.feed_step_size
+            for trial in range(3):
+                gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
+
+                motion.servo_disengage()
+                motion.selector_move_to(owner._selector_positions[path])
+                owner.current_path = path
+                motion.servo_engage()
+
+                enc = owner._encoder(path)
+                enc.set_direction(forward=True)
+                enc.reset_distance()
+
+                current_pos = 0.0
+                while current_pos < approach_length:
+                    step = min(owner.feed_step_size * 5.0, approach_length - current_pos)
+                    motion.drive_move(step)
+                    current_pos += step
+                    owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+                    if owner._extruder_sensor_active(path):
+                        break
+
+                if owner._extruder_sensor_active(path):
+                    length = enc.get_distance()
+                    gcmd.respond_info(
+                        "SA CAL: Sensor triggered during approach at %.2fmm." % length)
+                else:
+                    inch_max = estimated * 0.3
+                    inched   = 0.0
+                    while not owner._extruder_sensor_active(path) and inched < inch_max:
+                        motion.drive_move(owner.feed_step_size)
+                        inched += owner.feed_step_size
+                        owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+
+                    if not owner._extruder_sensor_active(path):
+                        motion.servo_disengage()
+                        self._clear()
+                        raise gcmd.error(
+                            "SA CAL: Extruder sensor path %d not triggered after %.0fmm. "
+                            "Check sensor or increase estimate." % (path, estimated))
+
+                    length = enc.get_distance()
+                    gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
+
+                data['trials'].append(length)
+
+                retract_target = length + 20.0
+                enc.set_direction(forward=False)
+                enc.reset_distance()
+                retracted = 0.0
+                while retracted < retract_target:
+                    motion.drive_move(-owner.feed_step_size)
+                    retracted += owner.feed_step_size
                     owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
 
-                if not owner._extruder_sensor_active(path):
-                    motion.servo_disengage()
-                    raise gcmd.error(
-                        "SA CAL: Extruder sensor for path %d not triggered after %.0fmm. "
-                        "Check sensor wiring or increase estimated length." % (path, estimated))
+                motion.servo_disengage()
+                owner.reactor.pause(owner.reactor.monotonic() + 0.5)
 
-                length = enc.get_distance()
-                gcmd.respond_info(
-                    "SA CAL: Extruder sensor triggered at encoder=%.2fmm." % length)
+            trials     = data['trials']
+            avg_length = sum(trials) / len(trials)
+            spread     = max(trials) - min(trials)
 
-            measured_lengths.append(length)
+            gcmd.respond_info(
+                "SA CAL: Bowden path %d — trials %s\n"
+                "  Average: %.2fmm  Spread: %.2fmm%s"
+                % (path, [round(x, 2) for x in trials], avg_length, spread,
+                   "  <- high, check sensor bounce" if spread > 3.0 else ""))
 
-            # Retract back past encoder so filament clears for next trial
-            gcmd.respond_info("SA CAL: Retracting filament for next trial...")
-            enc.set_direction(forward=False)
-            enc.reset_distance()
-            retract_target = length + 20.0  # clear the encoder by 20mm margin
-
-            retracted = 0.0
-            while retracted < retract_target:
-                motion.drive_move(-owner.feed_step_size)
-                retracted += owner.feed_step_size
-                owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
-
-            motion.servo_disengage()
-            owner.reactor.pause(owner.reactor.monotonic() + 0.5)
-
-        # ── Average results ───────────────────────────────────────────────────
-        avg_length = sum(measured_lengths) / len(measured_lengths)
-        spread     = max(measured_lengths) - min(measured_lengths)
-
-        gcmd.respond_info(
-            "SA CAL: Bowden length trials: %s\n"
-            "  Average: %.2fmm\n"
-            "  Spread:  %.2fmm%s"
-            % ([round(x, 2) for x in measured_lengths],
-               avg_length,
-               spread,
-               "  ← high — check for sensor bounce or filament inconsistency"
-               if spread > 3.0 else ""))
-
-        # ── Save ──────────────────────────────────────────────────────────────
-        self._save_config_value(
-            'stealth_autoloader', 'bowden_length_%d' % path, '%.2f' % avg_length)
-        owner._bowden_lengths[path] = avg_length
-        gcmd.respond_info(
-            "SA CAL: bowden_length_%d = %.2fmm queued for SAVE_CONFIG." % (path, avg_length))
-
-        if self._prompt_yes_no(
-                gcmd, "Save Bowden calibration for path %d and restart printer now?" % path):
-            self._trigger_save_config(gcmd)
-        else:
-            gcmd.respond_info("SA CAL: Queued. Run SAVE_CONFIG when ready.")
+            # Update live state and persist immediately
+            owner._bowden_lengths[path] = avg_length
+            self._save_variable('bowden_length_%d' % path, '%.2f' % avg_length)
+            self._clear()
+            gcmd.respond_info(
+                "SA CAL: bowden_length_%d=%.2fmm saved — "
+                "effective immediately, no restart needed." % (path, avg_length))

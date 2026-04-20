@@ -27,6 +27,17 @@ selector that moves to filament. No color changes mid-print on a single toolhead
 - Branch: main
 - Commit and push after any change that works on the printer
 
+## Operational Permissions (set by user)
+Claude has full autonomous control of this printer and repository. No need to ask
+before deploying or pushing — just do it and report the result.
+
+- **Deploy after every code change** — SCP files, restart Klipper, verify it loads.
+- **Commit and push to main** after every successful deploy.
+- **This is a spare/test printer** — mechanical risk is acceptable for calibration and testing.
+- **Update README.md** whenever commands, config parameters, or calibration procedures change.
+- **Update CLAUDE.md** whenever the user adds new rules, preferences, or project context.
+- **No confirmation prompts needed** for SCP, SSH restart, git commit, or git push.
+
 ---
 
 ## Project File Structure
@@ -107,7 +118,7 @@ ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 | SA_DRIVE_CS | PB3 | Drive motor TMC5160 SPI chip-select |
 | SA_SELECTOR_STEP/DIR/EN | M1: PD4/PD3/PD5 | Selector motor step/dir/enable |
 | SA_SELECTOR_CS | PB5 | Selector motor TMC5160 SPI chip-select |
-| SA_SELECTOR_STOP | PA15 (STOP1) | Selector endstop for homing |
+| SA_SELECTOR_STOP | PA15 (STOP1) | Selector physical endstop (switch) |
 | SA_SERVO | PA1 | Engage servo PWM signal |
 | SA_ENCODER_0..5 | PC7,PA9,PB12,PB10,PB1,PC5 | Per-path encoders (2x7 high pins) |
 | SA_ENTRY_0..5 | PC6,PA8,PB11,PB2,PB0,PC4 | Entry sensors (2x7 low pins) |
@@ -165,7 +176,7 @@ Single `[stealth_autoloader]` config section, single class instance, controls ev
 
 | Command | Description |
 |---|---|
-| `SA_HOME` | Home selector motor to endstop, zero position |
+| `SA_HOME` | Home selector to physical endstop (double-touch), zero position |
 | `SA_SELECT TOOL=N` | Move selector to path N (servo stays neutral) |
 | `SA_ENGAGE` | Engage drive servo (grip filament) |
 | `SA_DISENGAGE` | Disengage drive servo (neutral) |
@@ -174,9 +185,13 @@ Single `[stealth_autoloader]` config section, single class instance, controls ev
 | `SA_STATUS` | Print state for all paths |
 | `SA_BUZZ_DRIVE` | Test drive motor |
 | `SA_BUZZ_SELECTOR` | Test selector motor |
-| `SA_CALIBRATE_ENCODER [DISTANCE=100]` | Measure mm_per_pulse |
-| `SA_CALIBRATE_SELECTOR TOOL=N` | Instructions for recording selector position |
-| `SA_SET_SELECTOR_HOME` | Zero selector position at current location |
+| `SA_CALIBRATE_SELECTOR` | Auto sweep + measure total travel → calculate path positions |
+| `SA_CALIBRATE_DRIVE` | Interactive drive motor rotation_distance calibration |
+| `SA_CALIBRATE_ENCODER TOOL=N` | Measure mm_per_pulse for encoder N |
+| `SA_CALIBRATE_BOWDEN TOOL=N` | Measure Bowden tube length for path N |
+| `SA_ENCODER_QUERY [TOOL RESET]` | Snapshot encoder distances |
+| `SA_ENCODER_WATCH [TOOL DURATION INTERVAL]` | Live encoder delta stream |
+| `SA_RESPOND VALUE=x` | Advance active calibration to next phase |
 | `SA_SET_STATE TOOL=N STATE=<state>` | Override path state (loaded/empty/partial/unknown) |
 
 ### Load Sequence
@@ -281,3 +296,24 @@ If code resembles Happy Hare too closely, simplify it for single-path-per-tool a
 - Do not add trailing comma to last alias in `[board_pins]`
 - Do not SCP `References/` folder to printer
 - Do not create separate `[filament_feed toolN]` sections — replaced by `[stealth_autoloader]`
+- Do not use blocking `reactor.pause()` poll loops to wait for SA_RESPOND — the GCode mutex blocks it. Use the state machine in SACalibration instead.
+- Do not add "are you ready?" confirmation prompts — user initiated the command, that is confirmation enough.
+- Do not add sensorless/stallguard homing — homing is physical endstop only (SA_SELECTOR_STOP / PA15). The endstop pin is always `^!autoloader:SA_SELECTOR_STOP`.
+
+## Console Output Rules
+
+- **Every command must be in its own individual code block** — never combine multiple commands in one block.
+- This applies to all responses: GCode commands, bash commands, test steps, calibration sequences, deploy instructions.
+- All SA_RESPOND prompts must be on their own clearly separated lines so the user can copy-paste without typos.
+- Use `_prompt(gcmd, message, *commands)` helper in SACalibration — it formats commands with leading spaces on their own lines.
+- Print calibration phase progress as plain text (no extra decoration needed).
+
+## Calibration Architecture
+
+Calibration uses a non-blocking phase state machine:
+- `owner._cal_state` (str | None): current phase key, e.g. `'sel_confirm'`, cleared on Klipper restart
+- `owner._cal_data` (dict): data bag passed between phases (positions, measurements, attempt counts, etc.)
+- `SA_RESPOND VALUE=x` calls `calibration.respond(gcmd, value)` which dispatches to the correct `_*_respond()` handler
+- Each phase runs to completion (no blocking waits) and either finishes or sets the next state + prompts
+- `SA_RESPOND VALUE=abort` always cancels and clears state
+- State is automatically cleared on Klipper restart — no risk of waking up mid-calibration after a power cycle
