@@ -2,33 +2,37 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 import logging
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sa_button_style as _sbs
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_macros')
 
 _BTNS = [
-    # (label, gcode, requires_homed, color)
-    ("HOME SELECTOR",   "SA_HOME",              False, "color1"),
-    ("ENGAGE DRIVE",    "SA_ENGAGE",            True,  "color2"),
-    ("DISENGAGE DRIVE", "SA_DISENGAGE",         True,  "color2"),
-    ("STATUS REPORT",   "SA_STATUS",            False, "color3"),
-    ("BUZZ DRIVE",      "SA_BUZZ_DRIVE",        False, "color4"),
-    ("BUZZ SELECTOR",   "SA_BUZZ_SELECTOR",     False, "color4"),
-    ("CAL SELECTOR",    "SA_CALIBRATE_SELECTOR",False, "color4"),
-    ("CAL ENCODER T0",  "SA_CALIBRATE_ENCODER TOOL=0", False, "color4"),
+    # (label, gcode, requires_homed)
+    ("HOME SELECTOR",   "SA_HOME",                       False),
+    ("ENGAGE DRIVE",    "SA_ENGAGE",                     True),
+    ("DISENGAGE DRIVE", "SA_DISENGAGE",                  True),
+    ("STATUS REPORT",   "SA_STATUS",                     False),
+    ("BUZZ DRIVE",      "SA_BUZZ_DRIVE",                 False),
+    ("BUZZ SELECTOR",   "SA_BUZZ_SELECTOR",              False),
+    ("CAL SELECTOR",    "SA_CALIBRATE_SELECTOR",         False),
+    ("CAL ENCODER T0",  "SA_CALIBRATE_ENCODER TOOL=0",   False),
 ]
 
 
 class Panel(ScreenPanel):
     def __init__(self, screen, title):
         super().__init__(screen, title or "SA Macros")
+        _sbs.apply()
         self._homed_btns = []
 
         grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
-                        row_spacing=5, column_spacing=5, margin=10)
+                        row_spacing=6, column_spacing=6, margin=8)
 
-        for i, (label, gcode, req_homed, style) in enumerate(_BTNS):
-            btn = self._gtk.Button(label=label, style=style, scale=self.bts)
+        for i, (label, gcode, req_homed) in enumerate(_BTNS):
+            btn = _sbs.make(label)
             btn.connect("clicked", self._send, gcode)
             if req_homed:
                 self._homed_btns.append(btn)

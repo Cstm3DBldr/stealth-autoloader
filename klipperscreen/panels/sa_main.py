@@ -2,6 +2,9 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 import logging
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sa_button_style as _sbs
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_main')
@@ -54,23 +57,7 @@ class Panel(ScreenPanel):
         self._num_paths = 0
         self._entry_prev = []
 
-        _css = Gtk.CssProvider()
-        _css.load_from_data(b"""
-.sa-bar-btn {
-    padding: 4px 8px;
-    min-height: 62px;
-    min-width: 0px;
-    border-radius: 4px;
-    background: #1565C0;
-    color: white;
-}
-.sa-bar-btn:hover  { background: #1976D2; }
-.sa-bar-btn:active { background: #0D47A1; }
-.sa-bar-btn label  { color: white; }
-""")
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), _css,
-            Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        _sbs.apply()
 
         scroll = self._gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -89,8 +76,7 @@ class Panel(ScreenPanel):
         bar = Gtk.Box(spacing=4, margin=4)
         for label, cmd in [("HOME", "SA_HOME"), ("ENGAGE", "SA_ENGAGE"),
                            ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None)]:
-            btn = Gtk.Button(label=label)
-            btn.get_style_context().add_class("sa-bar-btn")
+            btn = _sbs.make(label)
             if cmd:
                 btn.connect("clicked", self._send, cmd)
             else:

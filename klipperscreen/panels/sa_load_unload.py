@@ -4,6 +4,14 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 import logging
+
+_panels_dir = os.path.dirname(os.path.abspath(__file__))
+_ks_root    = os.path.dirname(_panels_dir)
+for _p in (_ks_root, _panels_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import sa_button_style as _sbs
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_load_unload')
@@ -25,25 +33,7 @@ EMPTY_SWATCH = '⊘'   # crossed circle → empty/no filament
 UNKNOWN_SWATCH = '◌'  # dotted outline → unknown
 PARTIAL_SWATCH = '◑'  # half-filled → partial
 
-_LIME = '#8BC34A'   # selection highlight colour
-
-# Inject CSS once at module level
-_css_loaded = False
-
-def _ensure_css():
-    global _css_loaded
-    if _css_loaded:
-        return
-    css = Gtk.CssProvider()
-    css.load_from_data(b"""
-.path-selected {
-    border: 3px solid #8BC34A;
-}
-""")
-    Gtk.StyleContext.add_provider_for_screen(
-        Gdk.Screen.get_default(), css,
-        Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    _css_loaded = True
+_LIME = '#8BC34A'
 
 
 def _rgba_from_hex(hex_c):
@@ -60,7 +50,7 @@ class Panel(ScreenPanel):
 
     def __init__(self, screen, title):
         super().__init__(screen, title or "Load / Unload")
-        _ensure_css()
+        _sbs.apply()
 
         self._op          = 'load'
         self._wz          = {}
@@ -92,13 +82,13 @@ class Panel(ScreenPanel):
         # ── Nav bar ─────────────────────────────────────────────────────────
         nav = Gtk.Box(spacing=6, margin=6)
 
-        self._back_btn = self._gtk.Button(label="← Back",    style="color2", scale=self.bts)
+        self._back_btn = _sbs.make("← Back",    "sa-btn-alt")
         self._back_btn.connect("clicked", self._go_back)
 
-        self._save_btn = self._gtk.Button(label="SAVE ONLY",  style="color3", scale=self.bts)
+        self._save_btn = _sbs.make("SAVE ONLY", "sa-btn-warn")
         self._save_btn.connect("clicked", self._save_only)
 
-        self._conf_btn = self._gtk.Button(label="Next →",    style="color1", scale=self.bts)
+        self._conf_btn = _sbs.make("Next →",    "sa-btn")
         self._conf_btn.connect("clicked", self._confirm)
 
         nav.pack_start(self._back_btn, True, True, 0)
@@ -123,8 +113,8 @@ class Panel(ScreenPanel):
 
         # Op toggle row
         op_box = Gtk.Box(spacing=8)
-        self._load_btn   = self._gtk.Button(label="▶  LOAD",   style="color1", scale=self.bts)
-        self._unload_btn = self._gtk.Button(label="◀  UNLOAD", style="color2", scale=self.bts)
+        self._load_btn   = _sbs.make("▶  LOAD",   "sa-btn")
+        self._unload_btn = _sbs.make("◀  UNLOAD", "sa-btn-alt")
         self._load_btn.connect("clicked",   self._set_op, 'load')
         self._unload_btn.connect("clicked", self._set_op, 'unload')
         op_box.pack_start(self._load_btn,   True, True, 0)
@@ -240,7 +230,7 @@ class Panel(ScreenPanel):
 
     def _make_path_btn(self, i, state, hex_c, mat):
         btn = Gtk.Button()
-        btn.get_style_context().add_class("color3")
+        btn.get_style_context().add_class("sa-btn")
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         box.set_valign(Gtk.Align.CENTER)
@@ -406,7 +396,7 @@ class Panel(ScreenPanel):
         hex_c = c.get('hex', '')
         name  = c.get('name', '?')
         btn = Gtk.Button()
-        btn.get_style_context().add_class("color3")
+        btn.get_style_context().add_class("sa-btn")
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
         vbox.set_valign(Gtk.Align.CENTER)
@@ -452,7 +442,7 @@ class Panel(ScreenPanel):
         for child in vbox.get_children():
             vbox.remove(child)
         for label, callback, arg in items:
-            btn = self._gtk.Button(label=label, style="color3", scale=self.bts)
+            btn = _sbs.make(label)
             btn.set_size_request(-1, self._list_btn_h())
             btn.connect("clicked", callback, arg)
             vbox.pack_start(btn, False, False, 0)
@@ -462,8 +452,7 @@ class Panel(ScreenPanel):
         for child in flowbox.get_children():
             flowbox.remove(child)
         for label, callback, arg in items:
-            btn = self._gtk.Button(label=label, style="color3", scale=self.bts)
-            btn.connect("clicked", callback, arg)
+            btn = _sbs.make(label)
             btn.set_hexpand(True)
             flowbox.add(btn)
         flowbox.show_all()
