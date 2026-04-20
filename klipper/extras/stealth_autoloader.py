@@ -192,7 +192,7 @@ class StealthAutoloader:
         sv = self.printer.lookup_object('save_variables', None)
         if not sv:
             return
-        svars = sv.allVariables()
+        svars = sv.allVariables
         for i in range(self.num_paths):
             self.path_materials[i]     = svars.get('sa_material_%d'      % i, '')
             self.path_brands[i]        = svars.get('sa_brand_%d'         % i, '')
