@@ -56,6 +56,7 @@ class Panel(ScreenPanel):
         self.labels = {}
         self._num_paths = 0
         self._entry_prev = []
+        self._last_sa = {}
 
         _sbs.apply()
 
@@ -171,8 +172,9 @@ class Panel(ScreenPanel):
             {"objects": {"stealth_autoloader": None}})
         sa = self._query_sa()
         if sa:
+            self._last_sa = dict(sa)
             self._entry_prev = list(sa.get("entry_filament", []))
-            self._apply_sa(sa)
+            self._apply_sa(self._last_sa)
         else:
             self._refresh()
 
@@ -182,14 +184,15 @@ class Panel(ScreenPanel):
         sa = data.get("stealth_autoloader")
         if sa is None:
             return
-        new_entry = sa.get("entry_filament", [])
+        self._last_sa.update(sa)
+        new_entry = self._last_sa.get("entry_filament", [])
         for i, active in enumerate(new_entry):
             was_active = self._entry_prev[i] if i < len(self._entry_prev) else False
             if not was_active and active:
                 GLib.idle_add(
                     self._screen.show_panel, 'sa_load_unload', 'Load / Unload')
         self._entry_prev = list(new_entry)
-        GLib.idle_add(self._apply_sa, sa)
+        GLib.idle_add(self._apply_sa, self._last_sa)
 
     def _apply_sa(self, sa):
         num = sa.get("num_paths", 0)
