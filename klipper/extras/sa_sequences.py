@@ -116,12 +116,11 @@ class SASequences:
             self.owner.gcode.run_script_from_command("M400")
 
     def _ensure_selector(self, gcmd, path):
-        """Home selector if needed, then move to *path* with servo disengaged."""
+        """Always home selector before moving to *path* — guarantees accurate position."""
         owner = self.owner
         motion = owner.motion
-        if not owner._selector_homed:
-            gcmd.respond_info("SA: Homing selector...")
-            motion.selector_home()
+        gcmd.respond_info("SA: Homing selector...")
+        motion.selector_home()
         motion.servo_disengage()
         motion.selector_move_to(owner._selector_positions[path])
         owner.current_path = path
@@ -802,6 +801,9 @@ class SASequences:
         # Handles dead zone (extruder sensor → extruder gears, ~20mm) and beyond.
         # Disengages servo on return.
         self._sync_feed_to_toolhead_sensor(gcmd, path)
+
+        # Ensure servo is disengaged before extruder-only fill+purge
+        motion.servo_disengage()
 
         # Fill nozzle (extruder gears → nozzle tip) then initial purge
         self._fill_and_purge(gcmd, path)
