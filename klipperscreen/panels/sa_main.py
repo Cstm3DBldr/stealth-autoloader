@@ -57,7 +57,7 @@ class Panel(ScreenPanel):
         _css = Gtk.CssProvider()
         _css.load_from_data(b"""
 .sa-bar-btn {
-    padding: 2px 6px;
+    padding: 10px 8px;
     min-height: 0px;
     min-width: 0px;
     border-radius: 4px;
@@ -66,7 +66,7 @@ class Panel(ScreenPanel):
 }
 .sa-bar-btn:hover  { background: #1976D2; }
 .sa-bar-btn:active { background: #0D47A1; }
-.sa-bar-btn label  { padding: 0; min-height: 0; color: white; }
+.sa-bar-btn label  { padding: 0; min-height: 0; color: white; font-size: 13px; }
 """)
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), _css,
