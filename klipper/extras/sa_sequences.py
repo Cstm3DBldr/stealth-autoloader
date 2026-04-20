@@ -674,6 +674,14 @@ class SASequences:
             "Y" if has_extruder else "N",
             "Y" if has_toolhead else "N"))
 
+        # Stale partial state: filament was parked but user pulled the roll
+        if owner.path_states[path] == 'partial' and not has_entry:
+            gcmd.respond_info(
+                "SA: Parked filament on path %d was removed (entry sensor inactive). "
+                "Setting path to empty." % path)
+            owner.path_states[path] = 'empty'
+            return
+
         if not has_entry and not has_extruder and not has_toolhead:
             gcmd.respond_info(
                 "SA: No filament on path %d. Insert roll and retry." % path)
@@ -741,10 +749,25 @@ class SASequences:
             enc.reset_distance()
             limit     = 200.0
             retracted = 0.0
+            no_motion = 0
             while owner._extruder_sensor_active(path) and retracted < limit:
+                prev = abs(enc.get_distance())
                 motion.drive_move(-owner.feed_step_size, speed=owner.feed_speed)
-                retracted += owner.feed_step_size
                 owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+                moved = abs(enc.get_distance()) - prev
+                retracted += owner.feed_step_size
+                if moved < owner.feed_step_size * 0.2:
+                    no_motion += 1
+                    if no_motion >= 3:
+                        gcmd.respond_info(
+                            "SA: ERROR — encoder not moving for 3 steps on path %d "
+                            "(%.0fmm driven, %.1fmm encoder). "
+                            "Drive gear lost grip or filament jammed."
+                            % (path, retracted, abs(enc.get_distance())))
+                        motion.servo_disengage()
+                        return
+                else:
+                    no_motion = 0
 
             if owner._extruder_sensor_active(path):
                 gcmd.respond_info(
@@ -763,16 +786,23 @@ class SASequences:
             # Fall through to heat + fill + purge
 
         # ══════════════════════════════════════════════════════════════════════
-        # Branch C: ENTRY ONLY — filament in bowden (or fresh insert)
-        # Park at encoder, full blast + approach, then heat+fill+purge
+        # Branch C: ENTRY ONLY — filament in bowden (or fresh insert or parked)
         # ══════════════════════════════════════════════════════════════════════
         elif has_entry and not has_extruder and not has_toolhead:
-            gcmd.respond_info(
-                "SA: Entry sensor only — parking filament for consistent start...")
-            motion.servo_engage()
-
-            self._park_filament_at_encoder(gcmd, path)
-            self._retract_to_clear(gcmd, path)
+            if owner.path_states[path] == 'partial':
+                # Filament parked at drive gears from previous unload.
+                # Skip park+clear: engage and verify grip, then blast through bowden.
+                gcmd.respond_info(
+                    "SA: Parked filament on path %d — engaging and verifying grip..."
+                    % path)
+                motion.servo_engage()
+            else:
+                # Fresh filament inserted: park at encoder for consistent start.
+                gcmd.respond_info(
+                    "SA: Entry sensor only — parking filament for consistent start...")
+                motion.servo_engage()
+                self._park_filament_at_encoder(gcmd, path)
+                self._retract_to_clear(gcmd, path)
 
             if not self._engage_check(gcmd, path):
                 return
@@ -1057,14 +1087,16 @@ class SASequences:
             enc.reset_distance()
             motion.drive_move(-blast_dist, speed=blast_spd)
 
+            # Park precisely at drive gear encoder (servo still engaged)
+            gcmd.respond_info("SA: Positioning filament precisely at drive gear...")
+            self._park_filament_at_encoder(gcmd, path)
+
             motion.servo_disengage()
             owner.path_states[path] = 'partial'
             motion.save_position()
             gcmd.respond_info(
-                "SA: Filament parked near drive gears — path %d "
-                "(encoder: %.1fmm retracted). "
-                "Pull from roll end to remove."
-                % (path, abs(enc.get_distance())))
+                "SA: Filament parked at drive gear — path %d. "
+                "Pull from roll end to remove." % path)
 
             if is_printing:
                 gcmd.respond_info("SA: Resuming print...")
@@ -1105,10 +1137,34 @@ class SASequences:
         enc = owner._encoder(path)
         enc.set_direction(forward=False)
         enc.reset_distance()
+        retracted = 0.0
+        limit     = owner._bowden_lengths[path] + 100.0
+        no_motion = 0
 
-        while owner._entry_sensor_active(path):
+        while owner._entry_sensor_active(path) and retracted < limit:
+            prev = abs(enc.get_distance())
             motion.drive_move(-owner.feed_step_size)
             owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+            moved = abs(enc.get_distance()) - prev
+            retracted += owner.feed_step_size
+            if moved < owner.feed_step_size * 0.2:
+                no_motion += 1
+                if no_motion >= 3:
+                    gcmd.respond_info(
+                        "SA: ERROR — encoder not moving for 3 steps on path %d "
+                        "(%.0fmm driven, %.1fmm encoder). "
+                        "Drive gear lost grip or filament jammed."
+                        % (path, retracted, abs(enc.get_distance())))
+                    motion.servo_disengage()
+                    owner.path_states[path] = 'unknown'
+                    return
+            else:
+                no_motion = 0
+
+        if owner._entry_sensor_active(path):
+            gcmd.respond_info(
+                "SA: WARNING — entry sensor still active after %.0fmm on path %d. "
+                "Check for jam." % (retracted, path))
 
         motion.servo_disengage()
         owner.path_states[path] = 'empty'
