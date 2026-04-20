@@ -595,7 +595,6 @@ class Panel(ScreenPanel):
         self._populate_path_page()
         self._update_path_status()
         self._show_page('path')
-        self._gcode(f"SA_PARK TOOL={path}")
         return False
 
     def _clear_material(self, path):
