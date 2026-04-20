@@ -483,12 +483,12 @@ class SASequences:
             owner.gcode.run_script_from_command("M83")
             self._extrude_mm(owner.fill_nozzle_length, self._extrude_speed_mmm())
             motion.servo_disengage()
-            return
+            return True
 
         if owner._toolhead_sensor_active(path):
             gcmd.respond_info("SA: Toolhead sensor already active on path %d." % path)
             motion.servo_disengage()
-            return
+            return True
 
         gcmd.respond_info(
             "SA: Sync feed — drive + extruder at %.0fmm/s until toolhead sensor (path %d)..."
@@ -520,13 +520,17 @@ class SASequences:
                 triggered = True
                 break
 
-        if not triggered:
-            gcmd.respond_info(
-                "SA: WARNING — toolhead sensor path %d not triggered after %.0fmm. "
-                "Check sensor wiring." % (path, max_dist))
-
         motion._arm_timeout(dn)
         motion.servo_disengage()
+
+        if not triggered:
+            gcmd.respond_info(
+                "SA: ERROR — toolhead sensor path %d not triggered after %.0fmm. "
+                "Check sensor wiring or re-run SA_CALIBRATE_BOWDEN TOOL=%d. "
+                "Aborting load." % (path, max_dist, path))
+            return False
+
+        return True
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Post-load purge prompt (state machine phase)
@@ -542,7 +546,8 @@ class SASequences:
             "  SA_RESPOND VALUE=more      — purge %.0fmm again\n"
             "  SA_RESPOND VALUE=park      — clean nozzle and park on cooling pad\n"
             "  SA_RESPOND VALUE=load:N    — switch to path N and load (0-%d)\n"
-            "  SA_RESPOND VALUE=unload:N  — switch to path N and unload (0-%d)"
+            "  SA_RESPOND VALUE=unload:N  — switch to path N and unload (0-%d)\n"
+            "  SA_RESPOND VALUE=exit      — disengage servo, heater off, leave toolhead in place"
             % (path, owner.purge_length, n, n))
 
     def _load_purge_respond(self, gcmd, value):
@@ -566,7 +571,18 @@ class SASequences:
                 gcmd.respond_info("SA: Unknown path '%s'." % s)
             return None
 
-        if v == 'more':
+        if v == 'exit':
+            owner._cal_state = None
+            owner._cal_data  = {}
+            owner.motion.servo_disengage()
+            owner.gcode.run_script_from_command(
+                "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
+                % owner._extruder_names[path])
+            gcmd.respond_info(
+                "SA: Exited — servo disengaged, heater off. "
+                "Toolhead left in current position.")
+            return
+        elif v == 'more':
             f = self._extrude_speed_mmm()
             gcmd.respond_info("SA: Purging %.1fmm more..." % owner.purge_length)
             owner.gcode.run_script_from_command("M83")
@@ -603,7 +619,8 @@ class SASequences:
             "  SA_RESPOND VALUE=park        — clean nozzle and park on cooling pad\n"
             "  SA_RESPOND VALUE=load        — load new filament on path %d (same path)\n"
             "  SA_RESPOND VALUE=load:N      — load filament on path N (0-%d)\n"
-            "  SA_RESPOND VALUE=unload:N    — unload filament on path N (0-%d)"
+            "  SA_RESPOND VALUE=unload:N    — unload filament on path N (0-%d)\n"
+            "  SA_RESPOND VALUE=exit        — disengage servo, heater off, leave toolhead in place"
             % (path, path, n, n))
 
     def _unload_done_respond(self, gcmd, value):
@@ -629,7 +646,16 @@ class SASequences:
                 gcmd.respond_info("SA: Unknown response '%s' — parking instead." % s)
             return None
 
-        if v == 'load':
+        if v == 'exit':
+            owner.motion.servo_disengage()
+            owner.gcode.run_script_from_command(
+                "SET_HEATER_TEMPERATURE HEATER=%s TARGET=0"
+                % owner._extruder_names[path])
+            gcmd.respond_info(
+                "SA: Exited — servo disengaged, heater off. "
+                "Toolhead left in current position.")
+            return
+        elif v == 'load':
             self.do_load(gcmd, path)
         elif v.startswith('load:'):
             target = _parse_target(v[5:])
@@ -830,7 +856,8 @@ class SASequences:
         # Sync drive + extruder together until toolhead sensor confirms grip.
         # Handles dead zone (extruder sensor → extruder gears, ~20mm) and beyond.
         # Disengages servo on return.
-        self._sync_feed_to_toolhead_sensor(gcmd, path)
+        if not self._sync_feed_to_toolhead_sensor(gcmd, path):
+            return
 
         # Ensure servo is disengaged before extruder-only fill+purge
         motion.servo_disengage()
