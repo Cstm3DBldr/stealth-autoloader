@@ -119,10 +119,12 @@ class Panel(ScreenPanel):
         self._unload_btn.connect("clicked", self._set_op, 'unload')
         op_box.pack_start(self._load_btn,   True, True, 0)
         op_box.pack_start(self._unload_btn, True, True, 0)
+        op_box.set_size_request(-1, 68)  # fixed height prevents layout shift
         outer.pack_start(op_box, False, False, 0)
 
         self._path_status = Gtk.Label(label="No tool selected")
         self._path_status.set_halign(Gtk.Align.CENTER)
+        self._path_status.set_size_request(-1, 36)  # fixed height prevents layout jitter
         outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
