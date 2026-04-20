@@ -181,7 +181,7 @@ class StealthAutoloader:
         sv = self.printer.lookup_object('save_variables', None)
         if sv:
             self.gcode.run_script_from_command(
-                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE='%s'"
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\""
                 % (path, self.path_states[path]))
 
     def _restore_material_profiles(self):
@@ -189,7 +189,7 @@ class StealthAutoloader:
         sv = self.printer.lookup_object('save_variables', None)
         if not sv:
             return
-        svars = sv.allVariables()
+        svars = sv.allVariables
         for i in range(self.num_paths):
             self.path_materials[i]     = svars.get('sa_material_%d'      % i, '')
             self.path_brands[i]        = svars.get('sa_brand_%d'         % i, '')
@@ -570,7 +570,7 @@ class StealthAutoloader:
         sv = self.printer.lookup_object('save_variables', None)
         if sv:
             self.gcode.run_script_from_command(
-                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE='%s'" % (path, state))
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\"" % (path, state))
         gcmd.respond_info("SA: Path %d state set to '%s'." % (path, state))
 
     def _cmd_set_material(self, gcmd):
@@ -601,7 +601,7 @@ class StealthAutoloader:
         if sv:
             def _save(var, val):
                 self.gcode.run_script_from_command(
-                    "SAVE_VARIABLE VARIABLE=%s VALUE='%s'" % (var, str(val)))
+                    "SAVE_VARIABLE VARIABLE=%s VALUE=\"'%s'\"" % (var, str(val)))
             _save('sa_material_%d'      % path, material)
             _save('sa_brand_%d'         % path, brand)
             _save('sa_product_line_%d'  % path, product_line)
