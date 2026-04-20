@@ -194,7 +194,9 @@ class Panel(ScreenPanel):
 
     def _select_material(self, widget, material):
         self._wz['material'] = material
-        lines = _db.get_product_lines(self._wz['brand_data'], material)
+        # get_product_lines returns [(line_id, line_dict), ...] — merge line_id in
+        raw = _db.get_product_lines(self._wz['brand_data'], material)
+        lines = [{**pl, 'line_id': lid} for lid, pl in raw]
         if len(lines) == 1:
             self._select_line(None, lines[0])
             return

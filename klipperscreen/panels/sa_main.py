@@ -9,12 +9,15 @@ logger = logging.getLogger('klipperscreen.sa_main')
 COLOR_SWATCH = '⬤'
 EMPTY_SWATCH = '◯'
 
+# Pango markup foreground must be #rrggbb hex — rgba() is not supported
 _STATE_MARKUP = {
-    'loaded':  ('<b>● LOADED</b>',   'rgba(56,142,60,1)'),
-    'empty':   ('○ EMPTY',           'rgba(97,97,97,1)'),
-    'partial': ('≈ PARTIAL',         'rgba(230,81,0,1)'),
-    'unknown': ('? UNKNOWN',         'rgba(249,168,37,1)'),
+    'loaded':  ('<b>● LOADED</b>', '#388E3C'),
+    'empty':   ('○ EMPTY',        '#616161'),
+    'partial': ('≈ PARTIAL',      '#E65100'),
+    'unknown': ('? UNKNOWN',      '#F9A825'),
 }
+_DOT_ON  = '#388E3C'
+_DOT_OFF = '#616161'
 
 
 def _rgba_from_hex(hex_c):
@@ -151,14 +154,14 @@ class Panel(ScreenPanel):
 
             state_lbl = self.labels.get(f'row_{i}_state')
             if state_lbl:
-                markup, color_str = _STATE_MARKUP.get(state, ('? UNKNOWN', 'rgba(97,97,97,1)'))
-                state_lbl.set_markup(f'<span foreground="{color_str}">{markup}</span>')
+                markup, color_hex = _STATE_MARKUP.get(state, ('? UNKNOWN', '#616161'))
+                state_lbl.set_markup(f'<span foreground="{color_hex}">{markup}</span>')
 
             for sensor_key, arr in [('entry', entry), ('toolhead', toolhead), ('extruder', extruder)]:
                 dot = self.labels.get(f'row_{i}_{sensor_key}')
                 if dot:
                     val = arr[i] if i < len(arr) else False
-                    c = 'rgba(56,142,60,1)' if val else 'rgba(97,97,97,1)'
+                    c = _DOT_ON if val else _DOT_OFF
                     dot.set_markup(f'<span foreground="{c}">{"●" if val else "○"}</span>')
 
             mat_lbl = self.labels.get(f'row_{i}_material')
