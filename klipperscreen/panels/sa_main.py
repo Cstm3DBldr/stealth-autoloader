@@ -54,6 +54,12 @@ class Panel(ScreenPanel):
         self._num_paths = 0
         self._entry_prev = []
 
+        _css = Gtk.CssProvider()
+        _css.load_from_data(b".sa-compact-btn { padding-top: 1px; padding-bottom: 1px; min-height: 0; }")
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), _css,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
         scroll = self._gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
@@ -68,11 +74,12 @@ class Panel(ScreenPanel):
         scroll.add(center_box)
         self.content.pack_start(scroll, True, True, 0)
 
-        bar = Gtk.Box(spacing=4, margin=2)
+        bar = Gtk.Box(spacing=2, margin=0)
         for label, cmd in [("HOME", "SA_HOME"), ("ENGAGE", "SA_ENGAGE"),
                            ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None)]:
             btn = self._gtk.Button(label=label, style="color1", scale=self.bts)
-            btn.set_size_request(-1, 36)
+            btn.set_size_request(-1, 26)
+            btn.get_style_context().add_class("sa-compact-btn")
             if cmd:
                 btn.connect("clicked", self._send, cmd)
             else:
