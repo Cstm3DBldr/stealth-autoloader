@@ -39,19 +39,22 @@ class Panel(ScreenPanel):
     def __init__(self, screen, title):
         super().__init__(screen, title or "Load / Unload")
 
-        self._op    = 'load'
-        self._wz    = {}
+        self._op          = 'load'
+        self._wz          = {}
         self._path_states = []
 
-        # ── Notebook (pages: path, brand, material, line, color) ───────────
+        # Button height for list pages: 2.5× a normal row (~40px base)
+        self._list_btn_h = max(80, int(self._screen.height / 480 * 100))
+
+        # ── Notebook ────────────────────────────────────────────────────────
         self._nb = Gtk.Notebook()
         self._nb.set_show_tabs(False)
 
         self._pages = {}
         self._pages['path']     = self._make_path_page()
-        self._pages['brand']    = self._make_scroll_page()
-        self._pages['material'] = self._make_scroll_page()
-        self._pages['line']     = self._make_scroll_page()
+        self._pages['brand']    = self._make_list_page()    # tall single-column list
+        self._pages['material'] = self._make_scroll_page()  # short grid (PLA / PETG / …)
+        self._pages['line']     = self._make_list_page()    # tall single-column list
         self._pages['color']    = self._make_scroll_page(color_mode=True)
 
         for name in ('path', 'brand', 'material', 'line', 'color'):
@@ -99,13 +102,33 @@ class Panel(ScreenPanel):
 
         return {'outer': outer}
 
-    def _make_scroll_page(self, color_mode=False):
+    def _make_list_page(self):
+        """Single-column scrollable list with always-visible sidebar."""
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
+
         hdr = Gtk.Label(label="")
         hdr.set_halign(Gtk.Align.START)
 
         scroll = Gtk.ScrolledWindow()
-        scroll.set_overlay_scrolling(False)  # always-visible non-overlay scrollbar
+        scroll.set_overlay_scrolling(False)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        scroll.add(vbox)
+
+        outer.pack_start(hdr,    False, False, 0)
+        outer.pack_start(scroll, True,  True,  0)
+        return {'outer': outer, 'hdr': hdr, 'vbox': vbox}
+
+    def _make_scroll_page(self, color_mode=False):
+        """FlowBox grid page (material chips and color swatches)."""
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
+
+        hdr = Gtk.Label(label="")
+        hdr.set_halign(Gtk.Align.START)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_overlay_scrolling(False)
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
 
         inner = Gtk.FlowBox()
@@ -118,6 +141,7 @@ class Panel(ScreenPanel):
         inner.set_selection_mode(Gtk.SelectionMode.NONE)
         inner.set_homogeneous(True)
         scroll.add(inner)
+
         outer.pack_start(hdr,    False, False, 0)
         outer.pack_start(scroll, True,  True,  0)
         return {'outer': outer, 'hdr': hdr, 'inner': inner}
@@ -178,7 +202,7 @@ class Panel(ScreenPanel):
         brands = _db.scan_brands(_BRANDS_DIR)
         page = self._pages['brand']
         page['hdr'].set_text(f"T{self._wz['path']} — Select Brand")
-        self._fill_flow(page['inner'], [
+        self._fill_list(page['vbox'], [
             (name, self._select_brand, (name, fpath))
             for name, fpath in brands
         ])
@@ -210,8 +234,9 @@ class Panel(ScreenPanel):
         page = self._pages['line']
         page['hdr'].set_text(
             f"T{self._wz['path']} — {self._wz['brand_name']} {material} — Select Product Line")
-        self._fill_flow(page['inner'], [
-            (f"{pl['display_name']}\n{pl['load_temp']}°C", self._select_line, pl)
+        self._fill_list(page['vbox'], [
+            (f"{pl['display_name']}  ·  {pl['load_temp']}°C  ·  Bed {pl.get('bed_temp', '—')}°C",
+             self._select_line, pl)
             for pl in lines
         ])
         self._show_page('line')
@@ -284,7 +309,19 @@ class Panel(ScreenPanel):
 
     # ── Utilities ─────────────────────────────────────────────────────────
 
+    def _fill_list(self, vbox, items):
+        """Populate a list-page vbox with tall full-width buttons."""
+        for child in vbox.get_children():
+            vbox.remove(child)
+        for label, callback, arg in items:
+            btn = self._gtk.Button(label=label, style="color3", scale=self.bts)
+            btn.set_size_request(-1, self._list_btn_h)
+            btn.connect("clicked", callback, arg)
+            vbox.pack_start(btn, False, False, 0)
+        vbox.show_all()
+
     def _fill_flow(self, flowbox, items):
+        """Populate a grid-page FlowBox with standard buttons."""
         for child in flowbox.get_children():
             flowbox.remove(child)
         for label, callback, arg in items:
