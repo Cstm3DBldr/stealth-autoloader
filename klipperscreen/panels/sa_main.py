@@ -31,20 +31,41 @@ def _rgba_from_hex(hex_c):
     return rgba
 
 
+def _effective_state(i, states, entry, toolhead, extruder):
+    """Derive display state from live sensors; fall back to saved state."""
+    e  = entry[i]    if i < len(entry)    else None
+    th = toolhead[i] if i < len(toolhead) else None
+    ex = extruder[i] if i < len(extruder) else None
+    if e is None:
+        return states[i] if i < len(states) else 'unknown'
+    if not e and not th and not ex:
+        return 'empty'
+    if e and th and ex:
+        return 'loaded'
+    if e or th or ex:
+        return 'partial'
+    return states[i] if i < len(states) else 'unknown'
+
+
 class Panel(ScreenPanel):
     def __init__(self, screen, title):
         super().__init__(screen, title or "SA Status")
         self.labels = {}
         self._num_paths = 0
-        self._entry_prev = []  # previous entry sensor state for transition detection
+        self._entry_prev = []
 
         scroll = self._gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 
-        self._grid = Gtk.Grid(row_spacing=2, column_spacing=8, margin=8,
+        # Outer box centers the grid horizontally
+        center_box = Gtk.Box(halign=Gtk.Align.CENTER, valign=Gtk.Align.START)
+
+        self._grid = Gtk.Grid(row_spacing=4, column_spacing=16, margin=8,
                               row_homogeneous=True)
+        self._grid.set_halign(Gtk.Align.CENTER)
         self._build_header()
-        scroll.add(self._grid)
+        center_box.pack_start(self._grid, False, False, 0)
+        scroll.add(center_box)
         self.content.pack_start(scroll, True, True, 0)
 
         bar = Gtk.Box(spacing=8, margin=6)
@@ -62,10 +83,10 @@ class Panel(ScreenPanel):
         for col, h in enumerate(["#", "STATE", "EN", "TH", "EX", "MATERIAL", "COLOR"]):
             lbl = Gtk.Label(label=h)
             lbl.get_style_context().add_class("color4")
+            lbl.set_halign(Gtk.Align.CENTER)
             self._grid.attach(lbl, col, 0, 1, 1)
 
     def _build_rows(self, num_paths):
-        # Remove old row widgets
         for key in [k for k in self.labels if k.startswith('row_')]:
             w = self.labels.pop(key)
             self._grid.remove(w)
@@ -91,14 +112,16 @@ class Panel(ScreenPanel):
             self._grid.attach(mat_lbl, 5, row, 1, 1)
             self.labels[f'row_{i}_material'] = mat_lbl
 
-            color_box = Gtk.Box(spacing=4, halign=Gtk.Align.START)
+            color_box = Gtk.Box(spacing=6, halign=Gtk.Align.START)
             swatch = Gtk.Label(label=EMPTY_SWATCH)
-            color_name = Gtk.Label(label="---", halign=Gtk.Align.START)
-            color_box.pack_start(swatch, False, False, 0)
+            color_name = Gtk.Label(label="---", halign=Gtk.Align.START,
+                                   xalign=0.0, max_width_chars=20,
+                                   ellipsize=3)   # PANGO_ELLIPSIZE_END = 3
+            color_box.pack_start(swatch,     False, False, 0)
             color_box.pack_start(color_name, False, False, 0)
             self._grid.attach(color_box, 6, row, 1, 1)
             self.labels[f'row_{i}_swatch'] = swatch
-            self.labels[f'row_{i}_color'] = color_name
+            self.labels[f'row_{i}_color']  = color_name
 
         self._grid.show_all()
 
@@ -106,7 +129,6 @@ class Panel(ScreenPanel):
         self._screen._ws.klippy.gcode_script(gcode)
 
     def _query_sa(self):
-        """Direct API query — bypasses printer.data which only has subscribed objects."""
         try:
             resp = self._screen.apiclient.send_request(
                 "printer/objects/query?stealth_autoloader")
@@ -141,7 +163,6 @@ class Panel(ScreenPanel):
         for i, active in enumerate(new_entry):
             was_active = self._entry_prev[i] if i < len(self._entry_prev) else False
             if not was_active and active:
-                # Filament inserted — hand off to load/unload panel
                 GLib.idle_add(
                     self._screen.show_panel, 'sa_load_unload', 'Load / Unload')
         self._entry_prev = list(new_entry)
@@ -164,7 +185,8 @@ class Panel(ScreenPanel):
         Gdk.RGBA.parse(grey_rgba, 'rgba(97,97,97,1)')
 
         for i in range(self._num_paths):
-            state = states[i] if i < len(states) else 'unknown'
+            # Derive state from live sensors first
+            state = _effective_state(i, states, entry, toolhead, extruder)
 
             state_lbl = self.labels.get(f'row_{i}_state')
             if state_lbl:
@@ -182,7 +204,7 @@ class Panel(ScreenPanel):
             if mat_lbl:
                 mat_lbl.set_text(materials[i] if i < len(materials) and materials[i] else "---")
 
-            swatch = self.labels.get(f'row_{i}_swatch')
+            swatch    = self.labels.get(f'row_{i}_swatch')
             color_lbl = self.labels.get(f'row_{i}_color')
             hex_c  = hexes[i]  if i < len(hexes)  else ''
             name_c = colors[i] if i < len(colors) and colors[i] else "---"
