@@ -75,9 +75,12 @@ class Panel(ScreenPanel):
 
         bar = Gtk.Box(spacing=4, margin=4)
         for label, cmd in [("HOME", "SA_HOME"), ("ENGAGE", "SA_ENGAGE"),
-                           ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None)]:
+                           ("DISENGAGE", "SA_DISENGAGE"), ("REFRESH", None),
+                           ("SETTINGS", "settings")]:
             btn = _sbs.make(label)
-            if cmd:
+            if cmd == "settings":
+                btn.connect("clicked", self._open_settings)
+            elif cmd:
                 btn.connect("clicked", self._send, cmd)
             else:
                 btn.connect("clicked", self._refresh)
@@ -155,6 +158,9 @@ class Panel(ScreenPanel):
         sa = self._query_sa()
         if sa:
             self._apply_sa(sa)
+
+    def _open_settings(self, widget=None):
+        self._screen.show_panel('sa_settings', 'SA Settings', 2)
 
     def activate(self):
         self._screen._ws.klippy.object_subscription(
