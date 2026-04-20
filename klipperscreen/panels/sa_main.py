@@ -60,7 +60,7 @@ class Panel(ScreenPanel):
         # Outer box centers the grid horizontally
         center_box = Gtk.Box(halign=Gtk.Align.CENTER, valign=Gtk.Align.START)
 
-        self._grid = Gtk.Grid(row_spacing=4, column_spacing=16, margin=8,
+        self._grid = Gtk.Grid(row_spacing=2, column_spacing=16, margin=8,
                               row_homogeneous=True)
         self._grid.set_halign(Gtk.Align.CENTER)
         self._build_header()
@@ -86,16 +86,23 @@ class Panel(ScreenPanel):
             lbl.set_halign(Gtk.Align.CENTER)
             self._grid.attach(lbl, col, 0, 1, 1)
 
+    def _row_h(self):
+        """Target row height — fits 6 paths on a 480p screen with room for header+bar."""
+        return max(44, (self._screen.height - 120) // max(self._num_paths, 1))
+
     def _build_rows(self, num_paths):
         for key in [k for k in self.labels if k.startswith('row_')]:
             w = self.labels.pop(key)
             self._grid.remove(w)
 
         self._num_paths = num_paths
+        rh = self._row_h()
         for i in range(num_paths):
             row = i + 1
 
-            num_lbl = Gtk.Label(label=f"T{i}", halign=Gtk.Align.CENTER)
+            num_lbl = Gtk.Label(halign=Gtk.Align.CENTER)
+            num_lbl.set_markup(f'<b>T{i}</b>')
+            num_lbl.set_size_request(-1, rh)
             self._grid.attach(num_lbl, 0, row, 1, 1)
             self.labels[f'row_{i}_num'] = num_lbl
 
@@ -112,11 +119,12 @@ class Panel(ScreenPanel):
             self._grid.attach(mat_lbl, 5, row, 1, 1)
             self.labels[f'row_{i}_material'] = mat_lbl
 
-            color_box = Gtk.Box(spacing=6, halign=Gtk.Align.START)
+            color_box = Gtk.Box(spacing=6, halign=Gtk.Align.START,
+                                valign=Gtk.Align.CENTER)
             swatch = Gtk.Label(label=EMPTY_SWATCH)
             color_name = Gtk.Label(label="---", halign=Gtk.Align.START,
                                    xalign=0.0, max_width_chars=20,
-                                   ellipsize=3)   # PANGO_ELLIPSIZE_END = 3
+                                   ellipsize=3)
             color_box.pack_start(swatch,     False, False, 0)
             color_box.pack_start(color_name, False, False, 0)
             self._grid.attach(color_box, 6, row, 1, 1)
@@ -191,18 +199,20 @@ class Panel(ScreenPanel):
             state_lbl = self.labels.get(f'row_{i}_state')
             if state_lbl:
                 markup, color_hex = _STATE_MARKUP.get(state, ('? UNKNOWN', '#616161'))
-                state_lbl.set_markup(f'<span foreground="{color_hex}">{markup}</span>')
+                state_lbl.set_markup(
+                    f'<span font_size="large" foreground="{color_hex}">{markup}</span>')
 
             for sensor_key, arr in [('entry', entry), ('toolhead', toolhead), ('extruder', extruder)]:
                 dot = self.labels.get(f'row_{i}_{sensor_key}')
                 if dot:
                     val = arr[i] if i < len(arr) else False
                     c = _DOT_ON if val else _DOT_OFF
-                    dot.set_markup(f'<span foreground="{c}">{"●" if val else "○"}</span>')
+                    dot.set_markup(f'<span font_size="large" foreground="{c}">{"●" if val else "○"}</span>')
 
             mat_lbl = self.labels.get(f'row_{i}_material')
             if mat_lbl:
-                mat_lbl.set_text(materials[i] if i < len(materials) and materials[i] else "---")
+                mat = materials[i] if i < len(materials) and materials[i] else "---"
+                mat_lbl.set_markup(f'<span font_size="large">{mat}</span>')
 
             swatch    = self.labels.get(f'row_{i}_swatch')
             color_lbl = self.labels.get(f'row_{i}_color')
@@ -213,11 +223,11 @@ class Panel(ScreenPanel):
                 if hex_c:
                     rgba = _rgba_from_hex(hex_c)
                     swatch.override_color(Gtk.StateType.NORMAL, rgba)
-                    swatch.set_text(COLOR_SWATCH)
+                    swatch.set_markup(f'<span font_size="large">{COLOR_SWATCH}</span>')
                 else:
                     swatch.override_color(Gtk.StateType.NORMAL, grey_rgba)
-                    swatch.set_text(EMPTY_SWATCH)
+                    swatch.set_markup(f'<span font_size="large">{EMPTY_SWATCH}</span>')
             if color_lbl:
-                color_lbl.set_text(name_c)
+                color_lbl.set_markup(f'<span font_size="large">{name_c}</span>')
 
         return False
