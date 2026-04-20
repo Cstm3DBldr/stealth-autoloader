@@ -491,7 +491,7 @@ class Panel(ScreenPanel):
             return
         self._gcode(self._set_material_gcode())
         self._screen.show_popup_message(
-            f"T{self._sel_path} profile saved (not loaded)", level=1)
+            f"T{self._sel_path} — material profile saved", level=1)
         self._reset()
 
     def _do_unload(self):
