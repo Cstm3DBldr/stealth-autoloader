@@ -100,20 +100,12 @@ class Panel(ScreenPanel):
         self.content.pack_start(outer, True, True, 0)
 
     def _make_action_btn(self, label, color, callback):
-        btn = _sbs.make(label)
-        if color:
-            css = Gtk.CssProvider()
-            css.load_from_data((
-                ".sa-btn-custom {{ background: %s; color: white; "
-                "min-height: 62px; border-radius: 6px; padding: 4px 8px; }}"
-                ".sa-btn-custom label {{ color: white; }}"
-                ".sa-btn-custom:hover {{ background: %s; }}"
-            % (color, color)).encode())
-            Gtk.StyleContext.add_provider_for_screen(
-                Gdk.Screen.get_default(), css,
-                Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
-            btn.get_style_context().remove_class("sa-btn")
-            btn.get_style_context().add_class("sa-btn-custom")
+        if color == _GREEN:
+            btn = _sbs.make(label, "sa-btn")
+        elif color == _RED:
+            btn = _sbs.make(label, "sa-btn-warn")
+        else:
+            btn = _sbs.make(label, "sa-btn-alt")
         btn.connect("clicked", callback)
         return btn
 
