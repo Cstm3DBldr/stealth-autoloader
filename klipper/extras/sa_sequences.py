@@ -721,9 +721,9 @@ class SASequences:
 
         # ── Pre-flight ────────────────────────────────────────────────────────
         if not self._is_homed():
-            gcmd.respond_info(
-                "SA: Printer not homed. Run G28 first, then retry SA_LOAD TOOL=%d." % path)
-            return
+            gcmd.respond_info("SA: Printer not homed — running G28...")
+            self.owner.gcode.run_script_from_command("G28")
+            self.owner.gcode.run_script_from_command("M400")
 
         is_printing = self._is_printing()
         gcmd.respond_info("SA: Print state: %s." % ("PRINTING" if is_printing else "idle"))
