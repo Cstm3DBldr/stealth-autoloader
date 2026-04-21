@@ -388,7 +388,7 @@ class StealthAutoloader:
 
     def _cmd_park(self, gcmd):
         path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        self.sequences.do_park(gcmd, path)
+        self.sequences.park_filament(gcmd, path)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Command handlers — status and diagnostics
