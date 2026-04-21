@@ -276,6 +276,13 @@ class SASequences:
 
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
+        # Feed forward first to pull filament into the drive gear and past the encoder.
+        # Without this, a retract on barely-inserted filament pushes it back out.
+        enc.set_direction(forward=True)
+        enc.reset_distance()
+        motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
+        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+
         # Retract until encoder goes quiet (filament tip cleared encoder)
         enc.set_direction(forward=False)
         for _ in range(60):                 # 300mm max
