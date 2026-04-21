@@ -243,7 +243,30 @@ class StealthAutoloader:
             if saved_state in (self.STATE_UNKNOWN, self.STATE_EMPTY,
                                self.STATE_PARTIAL, self.STATE_LOADED):
                 self.path_states[i] = saved_state
-        logging.info("StealthAutoloader: material profiles restored from save_variables")
+        # Sync drive rotation_distance — patch hardware.cfg if save_variables value
+        # differs from what was loaded at startup (e.g. after a config file reset).
+        saved_rd = svars.get('drive_rotation_distance', None)
+        if saved_rd is not None:
+            try:
+                saved_rd = float(saved_rd)
+                drv_obj  = self.printer.lookup_object(self.drive_stepper_name)
+                current_rd = drv_obj.get_steppers()[0].get_rotation_distance()[0]
+                if abs(current_rd - saved_rd) > 0.001:
+                    ok, result = self.calibration._patch_hardware_cfg(
+                        self.drive_stepper_name, 'rotation_distance', '%.4f' % saved_rd)
+                    if ok:
+                        logging.warning(
+                            "StealthAutoloader: hardware.cfg rotation_distance updated "
+                            "to %.4f from save_variables — restart Klipper to apply.",
+                            saved_rd)
+                    else:
+                        logging.warning(
+                            "StealthAutoloader: rotation_distance mismatch "
+                            "(cfg=%.4f saved=%.4f) — could not patch: %s",
+                            current_rd, saved_rd, result)
+            except Exception as e:
+                logging.warning("StealthAutoloader: rotation_distance sync failed: %s", e)
+        logging.info("StealthAutoloader: calibrations restored from save_variables")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hardware name helpers
