@@ -343,18 +343,25 @@ class Panel(ScreenPanel):
             % (_LIME, i, swatch_mu, state.upper(), info, hint))
 
     def _effective_state(self, i):
-        entry = self._path_entry[i] if i < len(self._path_entry) else None
-        th    = self._path_th[i]    if i < len(self._path_th)    else None
-        ex    = self._path_ex[i]    if i < len(self._path_ex)    else None
+        stored = self._path_states[i] if i < len(self._path_states) else 'unknown'
+        entry  = self._path_entry[i] if i < len(self._path_entry) else None
+        th     = self._path_th[i]    if i < len(self._path_th)    else None
+        ex     = self._path_ex[i]    if i < len(self._path_ex)    else None
+        # No sensor data → trust backend stored state
         if entry is None:
-            return self._path_states[i] if i < len(self._path_states) else 'unknown'
+            return stored
+        th = th if th is not None else False
+        ex = ex if ex is not None else False
+        # All sensors clear → definitively empty
         if not entry and not th and not ex:
             return 'empty'
-        if entry and th and ex:
+        # Filament at extruder and toolhead → loaded (entry may be clear if roll ran out)
+        if th and ex:
             return 'loaded'
+        # Any sensor active → partial
         if entry or th or ex:
             return 'partial'
-        return self._path_states[i] if i < len(self._path_states) else 'unknown'
+        return stored
 
     # ── Brand page ────────────────────────────────────────────────────────
 

@@ -45,6 +45,8 @@ class Panel(ScreenPanel):
     # ── Main settings page ────────────────────────────────────────────────────
 
     def _build_main_page(self):
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
@@ -81,11 +83,9 @@ class Panel(ScreenPanel):
             css = Gtk.CssProvider()
             cls = "sa-accent-%d" % idx
             css.load_from_data((
-                ".{c} {{ background: {bg}; border-radius: 6px; min-height: 54px;"
-                "  border: 3px solid transparent; }}"
+                ".{c} {{ background: {bg}; border-radius: 6px; min-height: 54px; }}"
                 ".{c}:hover {{ background: {hv}; }}"
                 ".{c}:active {{ background: {ac}; }}"
-                ".{c}.sa-accent-selected {{ border: 3px solid white; }}"
                 ".{c} label {{ color: white; font-weight: bold; }}"
             ).format(c=cls, bg=hex_c, hv=hover, ac=active).encode())
             Gtk.StyleContext.add_provider_for_screen(
@@ -93,7 +93,7 @@ class Panel(ScreenPanel):
                 Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
             btn.get_style_context().add_class(cls)
             if hex_c == self._selected_hex:
-                btn.get_style_context().add_class("sa-accent-selected")
+                btn.get_style_context().add_class("path-selected")
 
             btn.add(Gtk.Label(label=name))
             btn.connect("clicked", self._set_color, hex_c, hover, active)
@@ -132,12 +132,17 @@ class Panel(ScreenPanel):
 
         outer.pack_start(params_grid, False, False, 0)
 
-        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn-alt")
-        detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
-        outer.pack_start(detail_btn, False, False, 0)
-
         scroll.add(outer)
-        return scroll
+        wrapper.pack_start(scroll, True, True, 0)
+
+        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn-alt")
+        detail_btn.set_margin_start(10)
+        detail_btn.set_margin_end(10)
+        detail_btn.set_margin_bottom(4)
+        detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
+        wrapper.pack_start(detail_btn, False, False, 0)
+
+        return wrapper
 
     # ── Detail page ────────────────────────────────────────────────────────────
 
@@ -228,9 +233,9 @@ class Panel(ScreenPanel):
         for h, btn in self._accent_btns.items():
             ctx = btn.get_style_context()
             if h == hex_c:
-                ctx.add_class("sa-accent-selected")
+                ctx.add_class("path-selected")
             else:
-                ctx.remove_class("sa-accent-selected")
+                ctx.remove_class("path-selected")
         self._selected_hex = hex_c
         _prefs.save({"accent_color": hex_c})
         _sbs.reapply(hex_c, hover, active)
