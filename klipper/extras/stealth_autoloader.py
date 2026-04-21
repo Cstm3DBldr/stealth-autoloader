@@ -183,6 +183,7 @@ class StealthAutoloader:
         self._response_ready   = False
         self._cal_state        = None
         self._cal_data         = {}
+        self._cal_prompt       = ''
 
         # ── Subsystems ────────────────────────────────────────────────────────
         self.motion      = SAMotion(self)
@@ -749,6 +750,7 @@ class StealthAutoloader:
             'drive_rotation_distance' : self._get_drive_rotation_distance(),
             'cal_state'               : self._cal_state or '',
             'cal_path'                : self._cal_data.get('path', -1),
+            'cal_prompt'              : self._cal_prompt or '',
         }
 
     # ══════════════════════════════════════════════════════════════════════════

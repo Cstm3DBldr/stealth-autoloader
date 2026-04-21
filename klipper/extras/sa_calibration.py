@@ -83,14 +83,16 @@ class SACalibration:
             motion.servo_engage()
 
     def _clear(self):
-        self.owner._cal_state = None
-        self.owner._cal_data  = {}
+        self.owner._cal_state  = None
+        self.owner._cal_data   = {}
+        self.owner._cal_prompt = ''
 
     def _yes(self, value):
         return value.lower() in ('yes', 'y', '1', 'true', 'ok')
 
     def _prompt(self, gcmd, message, *commands):
         """Print a message with copy-paste commands clearly separated."""
+        self.owner._cal_prompt = message
         lines = [
             "",
             "SA CAL: " + message,
