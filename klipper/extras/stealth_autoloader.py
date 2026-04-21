@@ -213,11 +213,17 @@ class StealthAutoloader:
                 % (path, self.path_states[path]))
 
     def _restore_material_profiles(self):
-        """Read per-path material/color/temp fields from save_variables on boot."""
+        """Read per-path calibration and material/color fields from save_variables on boot."""
         sv = self.printer.lookup_object('save_variables', None)
         if not sv:
             return
         svars = sv.allVariables
+        # Restore calibrated positions and bowden lengths (override config file defaults)
+        for i in range(self.num_paths):
+            if ('selector_position_%d' % i) in svars:
+                self._selector_positions[i] = float(svars['selector_position_%d' % i])
+            if ('bowden_length_%d' % i) in svars:
+                self._bowden_lengths[i] = float(svars['bowden_length_%d' % i])
         for i in range(self.num_paths):
             self.path_materials[i]     = svars.get('sa_material_%d'      % i, '')
             self.path_brands[i]        = svars.get('sa_brand_%d'         % i, '')
