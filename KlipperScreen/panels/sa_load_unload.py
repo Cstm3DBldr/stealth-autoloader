@@ -1,0 +1,617 @@
+import os
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
+import logging
+
+_panels_dir = os.path.dirname(os.path.abspath(__file__))
+_ks_root    = os.path.dirname(_panels_dir)
+for _p in (_ks_root, _panels_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import sa_button_style as _sbs
+from ks_includes.screen_panel import ScreenPanel
+
+logger = logging.getLogger('klipperscreen.sa_load_unload')
+
+_BRANDS_DIR = os.path.expanduser("~/stealth-autoloader/filaments/brands")
+
+try:
+    import sa_filament_db as _db
+except ImportError:
+    _db = None
+    logger.error("sa_load_unload: could not import sa_filament_db")
+
+COLOR_SWATCH   = '⬤'
+EMPTY_SWATCH   = '⊘'
+UNKNOWN_SWATCH = '◌'
+PARTIAL_SWATCH = '◑'
+
+_LIME = '#8BC34A'
+
+
+def _rgba_from_hex(hex_c):
+    rgba = Gdk.RGBA()
+    if hex_c and Gdk.RGBA.parse(rgba, hex_c):
+        return rgba
+    if hex_c and Gdk.RGBA.parse(rgba, '#' + hex_c):
+        return rgba
+    return None
+
+
+class Panel(ScreenPanel):
+    """Load/Unload wizard: select path → pick op → wizard → START."""
+
+    def __init__(self, screen, title):
+        super().__init__(screen, title or "Load / Unload")
+        _sbs.apply()
+
+        self._op          = 'load'
+        self._wz          = {}
+        self._path_states = []
+        self._path_hexes  = []
+        self._path_mats   = []
+        self._path_entry  = []
+        self._path_th     = []
+        self._path_ex     = []
+        self._sel_path    = None
+        self._sel_btn     = None
+
+        # ── Notebook ────────────────────────────────────────────────────────
+        self._nb = Gtk.Notebook()
+        self._nb.set_show_tabs(False)
+
+        self._pages = {}
+        self._pages['path']     = self._make_path_page()
+        self._pages['brand']    = self._make_list_page()
+        self._pages['material'] = self._make_scroll_page()
+        self._pages['line']     = self._make_list_page()
+        self._pages['color']    = self._make_scroll_page(color_mode=True)
+
+        for name in ('path', 'brand', 'material', 'line', 'color'):
+            self._nb.append_page(self._pages[name]['outer'], None)
+
+        self.content.pack_start(self._nb, True, True, 0)
+
+        # ── Nav bar — 3 buttons always visible ──────────────────────────────
+        nav = Gtk.Box(spacing=4, margin=4)
+
+        self._back_btn = _sbs.make("← Back",    "sa-btn-alt")
+        self._save_btn = _sbs.make("SAVE ONLY", "sa-btn-warn")
+        self._conf_btn = _sbs.make("Next →",    "sa-btn")
+
+        self._back_btn.connect("clicked", self._go_back)
+        self._save_btn.connect("clicked", self._save_only)
+        self._conf_btn.connect("clicked", self._confirm)
+
+        for btn in (self._back_btn, self._save_btn, self._conf_btn):
+            nav.pack_start(btn, True, True, 0)
+
+        self.content.pack_end(nav, False, False, 0)
+
+        self._show_page('path')
+
+    # ── Page factories ────────────────────────────────────────────────────
+
+    def _make_path_page(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=6)
+
+        hdr = Gtk.Label(label="Select tool, then choose Load or Unload")
+        hdr.set_halign(Gtk.Align.CENTER)
+        outer.pack_start(hdr, False, False, 0)
+
+        self._path_grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
+                                   row_spacing=4, column_spacing=4)
+        outer.pack_start(self._path_grid, True, True, 0)
+
+        op_box = Gtk.Box(spacing=6)
+        self._load_btn   = _sbs.make("▶  LOAD",   "sa-btn")
+        self._unload_btn = _sbs.make("◀  UNLOAD", "sa-btn-alt")
+        self._load_btn.connect("clicked",   self._set_op, 'load')
+        self._unload_btn.connect("clicked", self._set_op, 'unload')
+        op_box.pack_start(self._load_btn,   True, True, 0)
+        op_box.pack_start(self._unload_btn, True, True, 0)
+        outer.pack_start(op_box, False, False, 0)
+
+        self._path_status = Gtk.Label(label="No tool selected")
+        self._path_status.set_halign(Gtk.Align.CENTER)
+        self._path_status.set_size_request(-1, 28)
+        outer.pack_start(self._path_status, False, False, 0)
+
+        return {'outer': outer}
+
+    def _make_list_page(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
+        hdr = Gtk.Label(label="")
+        hdr.set_halign(Gtk.Align.START)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_overlay_scrolling(False)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        scroll.add(vbox)
+        outer.pack_start(hdr,    False, False, 0)
+        outer.pack_start(scroll, True,  True,  0)
+        return {'outer': outer, 'hdr': hdr, 'vbox': vbox}
+
+    def _make_scroll_page(self, color_mode=False):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
+        hdr = Gtk.Label(label="")
+        hdr.set_halign(Gtk.Align.START)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_overlay_scrolling(False)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+        inner = Gtk.FlowBox()
+        if color_mode:
+            inner.set_max_children_per_line(6)
+            inner.set_min_children_per_line(4)
+        else:
+            inner.set_max_children_per_line(4)
+            inner.set_min_children_per_line(2)
+        inner.set_selection_mode(Gtk.SelectionMode.NONE)
+        inner.set_homogeneous(True)
+        scroll.add(inner)
+        outer.pack_start(hdr,    False, False, 0)
+        outer.pack_start(scroll, True,  True,  0)
+        return {'outer': outer, 'hdr': hdr, 'inner': inner}
+
+    # ── Page navigation ───────────────────────────────────────────────────
+
+    _STEPS = ['path', 'brand', 'material', 'line', 'color']
+
+    def _page_index(self, name):
+        return self._STEPS.index(name)
+
+    def _show_page(self, name):
+        self._cur = name
+        self._nb.set_current_page(self._page_index(name))
+        idx      = self._page_index(name)
+        is_path  = (name == 'path')
+        is_color = (name == 'color')
+        has_path = self._sel_path is not None
+        has_color = bool(self._wz.get('color_hex'))
+
+        self._back_btn.set_sensitive(idx > 0)
+
+        # SAVE ONLY: active only on color page when a color is selected
+        self._save_btn.set_sensitive(is_color and has_color)
+
+        if is_path:
+            has_op = has_path
+            if self._op == 'unload' and has_path:
+                self._conf_btn.set_label("START UNLOAD")
+            elif self._op == 'load' and has_path:
+                self._conf_btn.set_label("START LOAD")
+            else:
+                self._conf_btn.set_label("Next →")
+            self._conf_btn.set_sensitive(has_op)
+        elif is_color:
+            self._conf_btn.set_label("START LOAD")
+            self._conf_btn.set_sensitive(has_color)
+        else:
+            self._conf_btn.set_label("Next →")
+            self._conf_btn.set_sensitive(True)
+
+    def _go_back(self, widget=None):
+        idx = self._page_index(self._cur)
+        if idx > 0:
+            self._show_page(self._STEPS[idx - 1])
+
+    # ── Path page ─────────────────────────────────────────────────────────
+
+    def _path_btn_h(self):
+        """Height of each tool path button — fills available space after nav bar."""
+        avail = self._screen.height - 60 - 74 - 50  # topbar, nav bar, hdr+margins
+        num   = len(self._path_states) or 6
+        rows  = (num + 2) // 3
+        return max(50, min(100, avail // rows))
+
+    def _populate_path_page(self):
+        for child in self._path_grid.get_children():
+            self._path_grid.remove(child)
+
+        self._sel_btn = None
+        num   = len(self._path_states)
+        btn_h = self._path_btn_h()
+
+        for i in range(num):
+            state = self._path_states[i] if i < num else 'unknown'
+            hex_c = self._path_hexes[i]  if i < len(self._path_hexes) else ''
+            mat   = self._path_mats[i]   if i < len(self._path_mats)  else ''
+
+            btn = self._make_path_btn(i, state, hex_c, mat)
+            btn.set_size_request(-1, btn_h)
+            if i == self._sel_path:
+                btn.get_style_context().add_class('path-selected')
+                self._sel_btn = btn
+            self._path_grid.attach(btn, i % 3, i // 3, 1, 1)
+
+        self._path_grid.show_all()
+
+    def _make_path_btn(self, i, state, hex_c, mat):
+        btn = Gtk.Button()
+        btn.get_style_context().add_class("sa-btn")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_halign(Gtk.Align.CENTER)
+
+        t_lbl = Gtk.Label()
+        t_lbl.set_markup(f'<b>T{i}</b>')
+
+        swatch = Gtk.Label()
+        if hex_c:
+            h = hex_c if hex_c.startswith('#') else '#' + hex_c
+            swatch.set_markup(f'<span font_size="xx-large" foreground="{h}">{COLOR_SWATCH}</span>')
+        elif state == 'empty':
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#666666">{EMPTY_SWATCH}</span>')
+        elif state == 'partial':
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#E65100">{PARTIAL_SWATCH}</span>')
+        elif state == 'loaded':
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#888888">{COLOR_SWATCH}</span>')
+        else:
+            swatch.set_markup(f'<span font_size="xx-large" foreground="#F9A825">{UNKNOWN_SWATCH}</span>')
+
+        mat_lbl = Gtk.Label()
+        mat_lbl.set_markup(f'<span font_size="small">{mat[:6] if mat else "---"}</span>')
+
+        box.pack_start(t_lbl,   False, False, 0)
+        box.pack_start(swatch,  False, False, 0)
+        box.pack_start(mat_lbl, False, False, 0)
+        btn.add(box)
+        btn.connect("clicked", self._select_path, i)
+        return btn
+
+    def _set_op(self, widget, op):
+        self._op = op
+        self._update_path_status()
+        self._show_page('path')
+
+    def _select_path(self, widget, path):
+        if self._sel_btn is not None:
+            self._sel_btn.get_style_context().remove_class('path-selected')
+        widget.get_style_context().add_class('path-selected')
+        self._sel_btn  = widget
+        self._sel_path = path
+        self._wz['path'] = path
+        self._update_path_status()
+        self._show_page('path')
+
+    def _update_path_status(self):
+        if self._sel_path is None:
+            self._path_status.set_text("No tool selected")
+            return
+        op_txt = "LOAD" if self._op == 'load' else "UNLOAD"
+        i      = self._sel_path
+        state  = self._effective_state(i)
+        mat    = self._path_mats[i]  if i < len(self._path_mats)  else ''
+        hex_c  = self._path_hexes[i] if i < len(self._path_hexes) else ''
+        info   = f" · {mat}" if mat else ''
+        if hex_c:
+            h = hex_c if hex_c.startswith('#') else '#' + hex_c
+            swatch_mu = f' <span foreground="{h}">{COLOR_SWATCH}</span>'
+        else:
+            swatch_mu = ''
+        self._path_status.set_markup(
+            f'<span foreground="{_LIME}"><b>T{i}</b></span>'
+            f'{swatch_mu}  {state.upper()}{info}  —  {op_txt}')
+
+    def _effective_state(self, i):
+        entry = self._path_entry[i] if i < len(self._path_entry) else None
+        th    = self._path_th[i]    if i < len(self._path_th)    else None
+        ex    = self._path_ex[i]    if i < len(self._path_ex)    else None
+        if entry is None:
+            return self._path_states[i] if i < len(self._path_states) else 'unknown'
+        if not entry and not th and not ex:
+            return 'empty'
+        if entry and th and ex:
+            return 'loaded'
+        if entry or th or ex:
+            return 'partial'
+        return self._path_states[i] if i < len(self._path_states) else 'unknown'
+
+    # ── Brand page ────────────────────────────────────────────────────────
+
+    def _go_to_brand(self):
+        if _db is None:
+            self._screen.show_popup_message("sa_filament_db not available")
+            return
+        brands = _db.scan_brands(_BRANDS_DIR)
+        page = self._pages['brand']
+        page['hdr'].set_text(f"T{self._sel_path} — Select Brand")
+        self._fill_list(page['vbox'], [
+            (name, self._select_brand, (name, fpath))
+            for name, fpath in brands
+        ])
+        self._show_page('brand')
+
+    def _select_brand(self, widget, args):
+        name, fpath = args
+        self._wz['brand_name'] = name
+        self._wz['brand_path'] = fpath
+        brand_data = _db.load_brand(fpath)
+        self._wz['brand_data'] = brand_data
+        materials = _db.get_materials(brand_data)
+        page = self._pages['material']
+        page['hdr'].set_text(f"T{self._sel_path} — {name} — Select Material")
+        self._fill_flow(page['inner'], [
+            (m, self._select_material, m) for m in materials
+        ])
+        self._show_page('material')
+
+    # ── Material page ─────────────────────────────────────────────────────
+
+    def _select_material(self, widget, material):
+        self._wz['material'] = material
+        raw = _db.get_product_lines(self._wz['brand_data'], material)
+        lines = [{**pl, 'line_id': lid} for lid, pl in raw]
+        if len(lines) == 1:
+            self._select_line(None, lines[0])
+            return
+        page = self._pages['line']
+        page['hdr'].set_text(
+            f"T{self._sel_path} — {self._wz['brand_name']} {material} — Select Product Line")
+        self._fill_list(page['vbox'], [
+            (f"{pl['display_name']}  ·  {pl['load_temp']}°C  ·  Bed {pl.get('bed_temp','—')}°C",
+             self._select_line, pl)
+            for pl in lines
+        ])
+        self._show_page('line')
+
+    # ── Line page ─────────────────────────────────────────────────────────
+
+    def _select_line(self, widget, pl):
+        self._wz['line']         = pl.get('line_id', '')
+        self._wz['line_name']    = pl.get('display_name', '')
+        self._wz['load_temp']    = pl.get('load_temp',    200)
+        self._wz['unload_temp']  = pl.get('unload_temp',  185)
+        self._wz['purge_speed']  = pl.get('purge_speed',  5)
+        self._wz['purge_length'] = pl.get('purge_length', 30)
+        colors = pl.get('colors', [])
+        page = self._pages['color']
+        page['hdr'].set_text(f"T{self._sel_path} — {pl.get('display_name','')} — Select Color")
+        self._fill_color_flow(page['inner'], colors)
+        self._wz['color_hex'] = ''
+        self._show_page('color')
+
+    # ── Color page ────────────────────────────────────────────────────────
+
+    def _fill_color_flow(self, flowbox, colors):
+        for child in flowbox.get_children():
+            flowbox.remove(child)
+        for c in colors:
+            flowbox.add(self._make_color_button(c))
+        flowbox.show_all()
+
+    def _make_color_button(self, c):
+        hex_c = c.get('hex', '')
+        name  = c.get('name', '?')
+        btn = Gtk.Button()
+        btn.get_style_context().add_class("sa-btn")
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        vbox.set_valign(Gtk.Align.CENTER)
+        vbox.set_halign(Gtk.Align.CENTER)
+
+        swatch = Gtk.Label()
+        h = hex_c if hex_c.startswith('#') else ('#' + hex_c if hex_c else '#808080')
+        swatch.set_markup(f'<span font_size="xx-large" foreground="{h}">{COLOR_SWATCH}</span>')
+
+        name_lbl = Gtk.Label()
+        name_lbl.set_line_wrap(True)
+        name_lbl.set_max_width_chars(9)
+        name_lbl.set_justify(Gtk.Justification.CENTER)
+        name_lbl.set_markup(f'<span font_size="small">{name}</span>')
+
+        vbox.pack_start(swatch,   False, False, 0)
+        vbox.pack_start(name_lbl, False, False, 0)
+        btn.add(vbox)
+        btn.connect("clicked", self._select_color, c)
+        return btn
+
+    def _select_color(self, widget, c):
+        self._wz['color_name'] = c.get('name', '')
+        self._wz['color_hex']  = c.get('hex',  '')
+        self._wz['color_id']   = c.get('id',   '')
+        page = self._pages['color']
+        hex_c = self._wz['color_hex']
+        h = hex_c if hex_c.startswith('#') else '#' + hex_c if hex_c else '#808080'
+        page['hdr'].set_markup(
+            f"T{self._sel_path} — "
+            f'<span foreground="{h}">{COLOR_SWATCH}</span>'
+            f" {self._wz['color_name']}  ({hex_c})")
+        self._conf_btn.set_sensitive(True)
+        self._save_btn.set_sensitive(True)
+
+    # ── Utilities ─────────────────────────────────────────────────────────
+
+    def _list_btn_h(self):
+        return max(60, min(90, self._screen.height // 5))
+
+    def _fill_list(self, vbox, items):
+        for child in vbox.get_children():
+            vbox.remove(child)
+        for label, callback, arg in items:
+            btn = _sbs.make(label)
+            btn.set_size_request(-1, self._list_btn_h())
+            btn.connect("clicked", callback, arg)
+            vbox.pack_start(btn, False, False, 0)
+        vbox.show_all()
+
+    def _fill_flow(self, flowbox, items):
+        for child in flowbox.get_children():
+            flowbox.remove(child)
+        for label, callback, arg in items:
+            btn = _sbs.make(label)
+            btn.set_hexpand(True)
+            btn.connect("clicked", callback, arg)
+            flowbox.add(btn)
+        flowbox.show_all()
+
+    def _set_material_gcode(self):
+        wz = self._wz
+        return (
+            'SA_SET_MATERIAL TOOL={tool} MATERIAL="{mat}" BRAND="{brand}" '
+            'LINE="{line}" COLOR_NAME="{cname}" COLOR_HEX="{chex}" '
+            'LOAD_TEMP={lt} UNLOAD_TEMP={ut} '
+            'PURGE_SPEED={ps} PURGE_LENGTH={pl}'.format(
+                tool=self._sel_path,
+                mat=wz.get('material', ''),
+                brand=wz.get('brand_name', ''),
+                line=wz.get('line', ''),
+                cname=wz.get('color_name', ''),
+                chex=wz.get('color_hex', ''),
+                lt=wz.get('load_temp', 200),
+                ut=wz.get('unload_temp', 185),
+                ps=wz.get('purge_speed', 5),
+                pl=wz.get('purge_length', 30),
+            ))
+
+    def _gcode(self, script):
+        self._screen._ws.klippy.gcode_script(script)
+
+    # ── Confirm / Save-only / Unload ─────────────────────────────────────
+
+    def _confirm(self, widget=None):
+        if self._cur == 'path':
+            if self._sel_path is None:
+                return
+            if self._op == 'unload':
+                self._do_unload()
+            elif self._op == 'load':
+                self._do_load()
+            else:
+                self._go_to_brand()
+        elif self._cur == 'color':
+            if self._wz.get('color_hex'):
+                self._gcode(self._set_material_gcode())
+                self._gcode(f"SA_LOAD TOOL={self._sel_path}")
+                self._screen.show_popup_message(f"Loading T{self._sel_path} …", level=1)
+                self._reset()
+        else:
+            idx = self._page_index(self._cur)
+            if idx < len(self._STEPS) - 1:
+                self._show_page(self._STEPS[idx + 1])
+
+    def _save_only(self, widget=None):
+        if not self._wz.get('color_hex'):
+            return
+        self._gcode(self._set_material_gcode())
+        self._screen.show_popup_message(
+            f"T{self._sel_path} — material profile saved", level=1)
+        self._reset()
+
+    def _do_load(self, widget=None):
+        path = self._sel_path
+        if path is None:
+            return
+        self._gcode("SA_LOAD TOOL=%d" % path)
+        self._screen.show_popup_message("Loading T%d …" % path, level=1)
+        self._reset()
+
+    def _do_unload(self, widget=None):
+        path = self._sel_path
+        if path is None:
+            return
+        self._gcode("SA_UNLOAD TOOL=%d" % path)
+        self._screen.show_popup_message("Unloading T%d …" % path, level=1)
+        self._reset()
+
+    def _reset(self):
+        self._wz       = {}
+        self._sel_path = None
+        self._sel_btn  = None
+        self._op       = 'load'
+        self._show_page('path')
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────
+
+    def _query_sa(self):
+        try:
+            resp = self._screen.apiclient.send_request(
+                "printer/objects/query?stealth_autoloader")
+            if resp and 'status' in resp:
+                return resp['status'].get('stealth_autoloader', {})
+        except Exception as e:
+            logger.error("sa_load_unload: query failed: %s", e)
+        return {}
+
+    def activate(self):
+        self._screen._ws.klippy.object_subscription(
+            {"objects": {"stealth_autoloader": None}})
+        sa = self._query_sa()
+        self._apply_sa(sa)
+        self._reset()
+
+    def _apply_sa(self, sa):
+        num = sa.get("num_paths", 0)
+        self._path_states = sa.get("path_states",      ['unknown'] * num)
+        self._path_hexes  = sa.get("path_color_hexes", [''] * num)
+        self._path_mats   = sa.get("path_materials",   [''] * num)
+        self._path_entry  = sa.get("entry_filament",   [False] * num)
+        self._path_th     = sa.get("toolhead_filament",[False] * num)
+        self._path_ex     = sa.get("extruder_filament",[False] * num)
+        self._populate_path_page()
+
+    def process_update(self, action, data):
+        if action != "notify_status_update":
+            return
+        sa = data.get("stealth_autoloader")
+        if sa is None:
+            return
+
+        new_entry  = sa.get("entry_filament",    self._path_entry)
+        new_th     = sa.get("toolhead_filament",  self._path_th)
+        new_ex     = sa.get("extruder_filament",  self._path_ex)
+        new_states = sa.get("path_states",        self._path_states)
+        new_hexes  = sa.get("path_color_hexes",   self._path_hexes)
+        new_mats   = sa.get("path_materials",     self._path_mats)
+
+        for i in range(len(new_entry)):
+            old_entry = self._path_entry[i] if i < len(self._path_entry) else False
+            old_th    = self._path_th[i]    if i < len(self._path_th)    else False
+            old_ex    = self._path_ex[i]    if i < len(self._path_ex)    else False
+
+            if not old_entry and new_entry[i]:
+                GLib.idle_add(self._on_filament_inserted, i)
+
+            had_fil = old_entry or old_th or old_ex
+            has_fil = (new_entry[i] or
+                       (new_th[i] if i < len(new_th) else False) or
+                       (new_ex[i] if i < len(new_ex) else False))
+            if had_fil and not has_fil:
+                GLib.idle_add(self._clear_material, i)
+
+        changed = (new_states != self._path_states or
+                   new_hexes  != self._path_hexes  or
+                   new_mats   != self._path_mats   or
+                   new_entry  != self._path_entry  or
+                   new_th     != self._path_th     or
+                   new_ex     != self._path_ex)
+        if changed:
+            self._path_states = new_states
+            self._path_hexes  = new_hexes
+            self._path_mats   = new_mats
+            self._path_entry  = new_entry
+            self._path_th     = new_th
+            self._path_ex     = new_ex
+            GLib.idle_add(self._populate_path_page)
+            if self._sel_path is not None:
+                GLib.idle_add(self._update_path_status)
+
+    def _on_filament_inserted(self, path):
+        self._screen.show_panel('sa_load_unload', 'Load / Unload')
+        self._sel_path = path
+        self._wz['path'] = path
+        self._populate_path_page()
+        self._update_path_status()
+        self._show_page('path')
+        return False
+
+    def _clear_material(self, path):
+        self._gcode(
+            f'SA_SET_MATERIAL TOOL={path} MATERIAL="" BRAND="" LINE="" '
+            f'COLOR_NAME="" COLOR_HEX="" LOAD_TEMP=200 UNLOAD_TEMP=185 '
+            f'PURGE_SPEED=5 PURGE_LENGTH=30')
+        return False
