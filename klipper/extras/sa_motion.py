@@ -52,23 +52,22 @@ class SAMotion:
     # ══════════════════════════════════════════════════════════════════════════
 
     def servo_engage(self):
-        """Move servo to engaged angle, jitter drive gear to help mesh, then cut PWM.
+        """Move servo to engaged angle and jitter drive gear to seat gear teeth.
 
-        Jitter pattern from Happy Hare: ±0.8mm × 3 at 25mm/s after servo moves.
-        Vibration seats the drive gear teeth against filament before latching.
+        PWM stays active while engaged — spring-loaded servo returns to disengaged
+        when PWM is cut, so we must keep the signal live to hold the engaged position.
+        Call servo_disengage() or servo_off() to release.
+
+        Jitter: ±0.8mm × 3 at 25mm/s, retract-first so final move is always forward.
         """
         owner = self.owner
         sn    = self._owner_srv_name()
         dn    = self._owner_drv_name()
 
-        # Servo moves first — let it reach position before jitter
         owner.gcode.run_script_from_command(
             "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, owner.servo_engaged_angle))
         owner.reactor.pause(owner.reactor.monotonic() + owner.servo_move_delay)
 
-        # Jitter: ±0.8mm × 3 at 25mm/s to seat gear teeth.
-        # Retract-first order (-0.8 then +0.8) so the final move is always forward,
-        # which keeps barely-inserted filament pulled INTO the gear rather than pushed out.
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
         for _ in range(3):
             owner.gcode.run_script_from_command(
@@ -77,13 +76,12 @@ class SAMotion:
                 "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 MOVE=0.8 SPEED=25" % dn)
         owner.gcode.run_script_from_command("M400")
 
-        # Cut PWM — servo latches in place
-        owner.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
+        # PWM intentionally left active — do NOT cut here.
         owner._servo_is_engaged = True
-        logging.debug("SAMotion: servo engaged (%.1f°) with gear jitter", owner.servo_engaged_angle)
+        logging.debug("SAMotion: servo engaged (%.1f°), PWM active", owner.servo_engaged_angle)
 
     def servo_disengage(self):
-        """Move servo to disengaged angle and cut PWM (latching servo)."""
+        """Move servo to disengaged angle then cut PWM (spring holds at disengaged)."""
         owner = self.owner
         sn = self._owner_srv_name()
         owner.gcode.run_script_from_command(
@@ -91,7 +89,7 @@ class SAMotion:
         owner.reactor.pause(owner.reactor.monotonic() + owner.servo_move_delay)
         owner.gcode.run_script_from_command("SET_SERVO SERVO=%s WIDTH=0" % sn)
         owner._servo_is_engaged = False
-        logging.debug("SAMotion: servo disengaged (%.1f°)", owner.servo_disengaged_angle)
+        logging.debug("SAMotion: servo disengaged (%.1f°), PWM cut", owner.servo_disengaged_angle)
 
     def servo_off(self):
         """Immediately cut servo PWM (emergency cutoff, no movement)."""
