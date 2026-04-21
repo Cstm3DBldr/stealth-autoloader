@@ -590,10 +590,11 @@ class SASequences:
                 "Toolhead left in current position.")
             return
         elif v == 'more':
-            f = self._extrude_speed_mmm()
-            gcmd.respond_info("SA: Purging %.1fmm more..." % owner.purge_length)
+            f      = self._extrude_speed_mmm()
+            more_l = 60.0
+            gcmd.respond_info("SA: Purging %.0fmm more..." % more_l)
             owner.gcode.run_script_from_command("M83")
-            self._extrude_mm(owner.purge_length, f)
+            self._extrude_mm(more_l, f)
             self._prompt_purge(gcmd, path)
         elif v.startswith('load:') or v.startswith('unload:'):
             action, _, n_str = v.partition(':')

@@ -57,6 +57,7 @@ class Panel(ScreenPanel):
         self._entry_prev = []
         self._last_sa = {}
         self._enc_distances = {}
+        self._last_cal_state = ''
 
         _sbs.apply()
 
@@ -235,6 +236,13 @@ class Panel(ScreenPanel):
                     GLib.idle_add(
                         self._screen.show_panel, 'sa_load_unload', 'Load / Unload')
             self._entry_prev = list(new_entry)
+
+            cal = self._last_sa.get("cal_state", "")
+            if cal in ('load_purge', 'unload_done') and self._last_cal_state not in ('load_purge', 'unload_done'):
+                import sa_ui_prefs as _prefs
+                if _prefs.get("popup_on_complete", True):
+                    GLib.idle_add(self._screen.show_panel, 'sa_post_load', 'SA Action')
+            self._last_cal_state = cal
 
         GLib.idle_add(self._redraw)
 

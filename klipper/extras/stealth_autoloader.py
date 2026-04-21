@@ -689,6 +689,7 @@ class StealthAutoloader:
         self._pending_response = value
         self._response_ready   = True
         gcmd.respond_info("SA: Response received: '%s'" % value)
+        self.calibration.respond(gcmd, value)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
@@ -734,6 +735,8 @@ class StealthAutoloader:
             'purge_length'       : self.purge_length,
             'nozzle_distance'    : self.nozzle_distance,
             'bowden_lengths'     : list(self._bowden_lengths),
+            'cal_state'          : self._cal_state or '',
+            'cal_path'           : self._cal_data.get('path', -1),
         }
 
     # ══════════════════════════════════════════════════════════════════════════

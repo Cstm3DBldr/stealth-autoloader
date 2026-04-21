@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
@@ -39,6 +40,33 @@ def _rgba_from_hex(hex_c):
     if hex_c and Gdk.RGBA.parse(rgba, '#' + hex_c):
         return rgba
     return None
+
+
+def _hex_to_rgb01(hex_c):
+    h = (hex_c or '808080').lstrip('#')
+    if len(h) == 3:
+        h = ''.join(c*2 for c in h)
+    if len(h) != 6:
+        return (0.5, 0.5, 0.5)
+    return (int(h[0:2], 16)/255.0, int(h[2:4], 16)/255.0, int(h[4:6], 16)/255.0)
+
+
+def _luminance(r, g, b):
+    return 0.2126*r + 0.7152*g + 0.0722*b
+
+
+def _draw_color_swatch(widget, cr, r, g, b):
+    w = widget.get_allocated_width()
+    h = widget.get_allocated_height()
+    rad = 5
+    cr.set_source_rgb(r, g, b)
+    cr.arc(rad,   rad,   rad, math.pi,       3*math.pi/2)
+    cr.arc(w-rad, rad,   rad, 3*math.pi/2,   0)
+    cr.arc(w-rad, h-rad, rad, 0,              math.pi/2)
+    cr.arc(rad,   h-rad, rad, math.pi/2,     math.pi)
+    cr.close_path()
+    cr.fill()
+    return False
 
 
 class Panel(ScreenPanel):
@@ -405,26 +433,31 @@ class Panel(ScreenPanel):
     def _make_color_button(self, c):
         hex_c = c.get('hex', '')
         name  = c.get('name', '?')
+
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
+        btn.set_size_request(72, 82)
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-        vbox.set_valign(Gtk.Align.CENTER)
-        vbox.set_halign(Gtk.Align.CENTER)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        swatch = Gtk.Label()
-        h = hex_c if hex_c.startswith('#') else ('#' + hex_c if hex_c else '#808080')
-        swatch.set_markup(
-            '<span font_size="xx-large" foreground="%s">%s</span>' % (h, COLOR_SWATCH))
+        # Colored swatch fills top portion via DrawingArea
+        da = Gtk.DrawingArea()
+        da.set_size_request(-1, 52)
+        r, g, b = _hex_to_rgb01(hex_c)
+        da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
 
+        # Name label — choose text color for contrast
+        lum = _luminance(r, g, b)
+        fg  = "#FFFFFF" if lum < 0.45 else "#212121"
         name_lbl = Gtk.Label()
-        name_lbl.set_line_wrap(True)
+        name_lbl.set_ellipsize(3)
         name_lbl.set_max_width_chars(9)
-        name_lbl.set_justify(Gtk.Justification.CENTER)
-        name_lbl.set_markup('<span font_size="small">%s</span>' % name)
+        name_lbl.set_markup(
+            '<span font_size="x-small" foreground="%s">%s</span>' % (fg, name))
+        name_lbl.set_halign(Gtk.Align.CENTER)
 
-        vbox.pack_start(swatch,   False, False, 0)
-        vbox.pack_start(name_lbl, False, False, 0)
+        vbox.pack_start(da,       True,  True,  0)
+        vbox.pack_start(name_lbl, False, False, 3)
         btn.add(vbox)
         btn.connect("clicked", self._select_color, c)
         return btn
