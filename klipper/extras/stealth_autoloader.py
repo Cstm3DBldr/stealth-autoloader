@@ -40,7 +40,6 @@
 #   SA_ENCODER_WATCH   [TOOL DURATION INTERVAL]
 #   SA_SET_STATE  TOOL=N STATE=x
 #   SA_RESPOND    VALUE=x
-#   SA_TEST_SENSORLESS
 
 import sys, os as _os
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
@@ -119,7 +118,6 @@ class StealthAutoloader:
         self.tube_length             = config.getfloat('tube_length',             800.0)
         self.nozzle_distance         = config.getfloat('nozzle_distance',          50.0)
         self.purge_length            = config.getfloat('purge_length',             30.0)
-        self.sensor_retry_dist       = config.getfloat('sensor_retry_dist',        20.0)
         self.load_temperature        = config.getfloat('load_temperature',        200.0)
         self.engage_max_distance     = config.getfloat('engage_max_distance',      60.0)
         self.slip_tolerance          = config.getfloat('slip_tolerance',           15.0)
@@ -132,47 +130,30 @@ class StealthAutoloader:
         self.selector_max_travel     = config.getfloat('selector_max_travel',     200.0)
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
-        # Selector position calibration geometry
-        self.selector_end_offset  = config.getfloat('selector_end_offset',  0.0)
-        self.path_width           = config.getfloat('path_width',            0.0)
-        self.selector_cal_current = config.getfloat('selector_cal_current', 0.4)
-
-        # ── Load positioning ──────────────────────────────────────────────────
-        self.load_park_x       = config.getfloat('load_park_x',        175.0)
-        self.load_park_y       = config.getfloat('load_park_y',          0.0)
-        self.load_park_z       = config.getfloat('load_park_z',        100.0)
-        self.load_print_park_x = config.getfloat('load_print_park_x',   0.0)
-        self.load_print_park_y = config.getfloat('load_print_park_y', 200.0)
-        self.fill_nozzle_length  = config.getfloat('fill_nozzle_length',   70.0)
-        self.max_volumetric_flow = config.getfloat('max_volumetric_flow',   8.0)
-        self.cooling_pad_enabled  = config.getboolean('cooling_pad_enabled',  True)
-        self.clean_nozzle_enabled = config.getboolean('clean_nozzle_enabled', True)
-
-        # ── Tip forming (unload) ──────────────────────────────────────────────
-        self.tip_form_temp             = config.getfloat('tip_form_temp',             185.0)
-        self.tip_form_push_length      = config.getfloat('tip_form_push_length',       8.0)
-        self.tip_form_push_speed       = config.getfloat('tip_form_push_speed',       20.0)
-        self.tip_form_retract_speed    = config.getfloat('tip_form_retract_speed',    40.0)
-        self.tip_form_heatbreak_dist   = config.getfloat('tip_form_heatbreak_dist',   30.0)
-        self.tip_form_heatbreak_speed  = config.getfloat('tip_form_heatbreak_speed',   5.0)
-        self.tip_form_slow_speed       = config.getfloat('tip_form_slow_speed',       12.0)
-        self.tip_form_dwell            = config.getfloat('tip_form_dwell',             0.0)
-        self.nozzle_to_sensor_dist     = config.getfloat('nozzle_to_sensor_dist',    120.0)
-        self.min_unload_temp        = config.getfloat('min_unload_temp',        170.0)
-
-        # ── Sensor verify / park ──────────────────────────────────────────────
-        self.encoder_to_gear_distance = config.getfloat('encoder_to_gear_distance', 30.0)
-        self.wiggle_distance          = config.getfloat('wiggle_distance',           10.0)
+        # Sensorless calibration (SA_CALIBRATE_SELECTOR)
+        self.selector_stall_threshold = config.getint(  'selector_stall_threshold',  1)
+        self.selector_stall_current   = config.getfloat('selector_stall_current',    0.3)
+        self.selector_stall_speed     = config.getfloat('selector_stall_speed',     30.0)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
-        self._selector_homed   = False
         self._servo_is_engaged = False
         self.path_states       = [self.STATE_UNKNOWN] * self.num_paths
 
-        # Calibration state machine (SA_RESPOND dispatches here; cleared on restart)
-        self._cal_state = None   # str key e.g. 'sel_confirm', or None
-        self._cal_data  = {}     # data bag passed between calibration phases
+        # ── Per-path material/color profiles (restored from save_variables) ────
+        self.path_materials     = [''] * self.num_paths
+        self.path_brands        = [''] * self.num_paths
+        self.path_product_lines = [''] * self.num_paths
+        self.path_color_names   = [''] * self.num_paths
+        self.path_color_hexes   = [''] * self.num_paths
+        self.path_load_temps    = [self.load_temperature]       * self.num_paths
+        self.path_unload_temps  = [self.load_temperature - 15.] * self.num_paths
+        self.path_purge_speeds  = [5.0]                         * self.num_paths
+        self.path_purge_lengths = [self.purge_length]           * self.num_paths
+
+        # SA_RESPOND mailbox (used by calibration routines)
+        self._pending_response = None
+        self._response_ready   = False
 
         # ── Subsystems ────────────────────────────────────────────────────────
         self.motion      = SAMotion(self)
@@ -192,51 +173,43 @@ class StealthAutoloader:
         self.reactor.register_callback(self._init_hardware)
 
     def _init_hardware(self, eventtime):
-        self._load_variable_overrides()
         self.motion.on_ready()
+        self._restore_material_profiles()
 
-    def _load_variable_overrides(self):
-        """Load calibrated values from save_variables, overriding hardware.cfg defaults."""
+    def save_path_state(self, path):
+        """Persist path_states[path] to save_variables."""
         sv = self.printer.lookup_object('save_variables', None)
-        if sv is None:
-            return
-        allvars = sv.allVariables
-        for i in range(self.num_paths):
-            key = 'selector_position_%d' % i
-            if key in allvars:
-                try:
-                    self._selector_positions[i] = float(allvars[key])
-                except (ValueError, TypeError):
-                    pass
-            key = 'bowden_length_%d' % i
-            if key in allvars:
-                try:
-                    self._bowden_lengths[i] = float(allvars[key])
-                except (ValueError, TypeError):
-                    pass
-        if 'drive_rotation_distance' in allvars:
-            try:
-                self._apply_drive_rotation_distance(float(allvars['drive_rotation_distance']))
-            except (ValueError, TypeError):
-                pass
-        logging.info("StealthAutoloader: save_variables overrides applied")
+        if sv:
+            self.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\""
+                % (path, self.path_states[path]))
 
-    def _apply_drive_rotation_distance(self, new_rd):
-        """Apply a calibrated rotation_distance to the drive stepper in memory."""
-        try:
-            drv_obj  = self.printer.lookup_object(self.drive_stepper_name)
-            steppers = drv_obj.get_steppers()
-            if steppers:
-                s      = steppers[0]
-                old_rd = s.get_rotation_distance()[0]
-                old_sd = s.get_step_dist()
-                new_sd = old_sd * (new_rd / old_rd)
-                s.set_step_dist(new_sd)
-                logging.info(
-                    "StealthAutoloader: drive rotation_distance=%.4f applied "
-                    "(step_dist=%.6f)", new_rd, new_sd)
-        except Exception as e:
-            logging.warning("StealthAutoloader: failed to apply drive_rd: %s", e)
+    def _restore_material_profiles(self):
+        """Read per-path material/color/temp fields from save_variables on boot."""
+        sv = self.printer.lookup_object('save_variables', None)
+        if not sv:
+            return
+        svars = sv.allVariables
+        for i in range(self.num_paths):
+            self.path_materials[i]     = svars.get('sa_material_%d'      % i, '')
+            self.path_brands[i]        = svars.get('sa_brand_%d'         % i, '')
+            self.path_product_lines[i] = svars.get('sa_product_line_%d'  % i, '')
+            self.path_color_names[i]   = svars.get('sa_color_name_%d'    % i, '')
+            self.path_color_hexes[i]   = svars.get('sa_color_hex_%d'     % i, '')
+            self.path_load_temps[i]    = float(svars.get(
+                'sa_load_temp_%d'   % i, self.load_temperature))
+            self.path_unload_temps[i]  = float(svars.get(
+                'sa_unload_temp_%d' % i, self.load_temperature - 15.))
+            self.path_purge_speeds[i]  = float(svars.get(
+                'sa_purge_speed_%d' % i, 5.0))
+            self.path_purge_lengths[i] = float(svars.get(
+                'sa_purge_length_%d' % i, self.purge_length))
+            # Restore path state as well if saved
+            saved_state = svars.get('sa_state_%d' % i, None)
+            if saved_state in (self.STATE_UNKNOWN, self.STATE_EMPTY,
+                               self.STATE_PARTIAL, self.STATE_LOADED):
+                self.path_states[i] = saved_state
+        logging.info("StealthAutoloader: material profiles restored from save_variables")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hardware name helpers
@@ -351,9 +324,6 @@ class StealthAutoloader:
             ('SA_CALIBRATE_ENCODER',
              self._cmd_calibrate_encoder,
              "Interactive encoder mm_per_pulse calibration. TOOL=N"),
-            ('SA_CALIBRATE_ENCODER_SPEED',
-             self._cmd_calibrate_encoder_speed,
-             "Find max encoder-accurate feed speed. TOOL=N"),
             ('SA_CALIBRATE_BOWDEN',
              self._cmd_calibrate_bowden,
              "Guided Bowden tube length calibration. TOOL=N"),
@@ -369,12 +339,14 @@ class StealthAutoloader:
             ('SA_RESPOND',
              self._cmd_respond,
              "Send a value back to a waiting calibration routine. VALUE=x"),
-            ('SA_PARK_FILAMENT',
-             self._cmd_park_filament,
-             "Park filament at encoder for consistent load start. TOOL=N"),
-            ('SA_FILAMENT_INSERT',
-             self._cmd_filament_insert,
-             "Auto-called by entry sensor insert_gcode. TOOL=N"),
+            ('SA_SET_MATERIAL',
+             self._cmd_set_material,
+             "Store filament profile for a path. TOOL=N MATERIAL=PLA BRAND=x "
+             "LINE=x COLOR_NAME=x COLOR_HEX=#rrggbb "
+             "LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30"),
+            ('SA_PARK',
+             self._cmd_park,
+             "Park filament at drive encoder (phases 0-2 only). TOOL=N"),
         ]
         for name, fn, desc in cmds:
             self.gcode.register_command(name, fn, desc=desc)
@@ -413,6 +385,10 @@ class StealthAutoloader:
     def _cmd_unload(self, gcmd):
         path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
         self.sequences.do_unload(gcmd, path)
+
+    def _cmd_park(self, gcmd):
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+        self.sequences.do_park(gcmd, path)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Command handlers — status and diagnostics
@@ -581,9 +557,6 @@ class StealthAutoloader:
     def _cmd_calibrate_encoder(self, gcmd):
         self.calibration.calibrate_encoder(gcmd)
 
-    def _cmd_calibrate_encoder_speed(self, gcmd):
-        self.calibration.calibrate_encoder_speed(gcmd)
-
     def _cmd_calibrate_bowden(self, gcmd):
         self.calibration.calibrate_bowden(gcmd)
 
@@ -601,31 +574,64 @@ class StealthAutoloader:
                 "SA: Invalid STATE '%s'. Valid values: %s" % (state, ', '.join(valid)))
             return
         self.path_states[path] = state
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv:
+            self.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\"" % (path, state))
         gcmd.respond_info("SA: Path %d state set to '%s'." % (path, state))
 
+    def _cmd_set_material(self, gcmd):
+        """SA_SET_MATERIAL — store and persist a filament profile for one path."""
+        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
+
+        material     = gcmd.get('MATERIAL',    '')
+        brand        = gcmd.get('BRAND',       '')
+        product_line = gcmd.get('LINE',        '')
+        color_name   = gcmd.get('COLOR_NAME',  '')
+        color_hex    = gcmd.get('COLOR_HEX',   '')
+        load_temp    = gcmd.get_float('LOAD_TEMP',    self.load_temperature)
+        unload_temp  = gcmd.get_float('UNLOAD_TEMP',  load_temp - 15.)
+        purge_speed  = gcmd.get_float('PURGE_SPEED',  5.0)
+        purge_length = gcmd.get_float('PURGE_LENGTH', self.purge_length)
+
+        self.path_materials[path]     = material
+        self.path_brands[path]        = brand
+        self.path_product_lines[path] = product_line
+        self.path_color_names[path]   = color_name
+        self.path_color_hexes[path]   = color_hex
+        self.path_load_temps[path]    = load_temp
+        self.path_unload_temps[path]  = unload_temp
+        self.path_purge_speeds[path]  = purge_speed
+        self.path_purge_lengths[path] = purge_length
+
+        sv = self.printer.lookup_object('save_variables', None)
+        if sv:
+            def _save(var, val):
+                self.gcode.run_script_from_command(
+                    "SAVE_VARIABLE VARIABLE=%s VALUE=\"'%s'\"" % (var, str(val)))
+            _save('sa_material_%d'      % path, material)
+            _save('sa_brand_%d'         % path, brand)
+            _save('sa_product_line_%d'  % path, product_line)
+            _save('sa_color_name_%d'    % path, color_name)
+            _save('sa_color_hex_%d'     % path, color_hex)
+            _save('sa_load_temp_%d'     % path, load_temp)
+            _save('sa_unload_temp_%d'   % path, unload_temp)
+            _save('sa_purge_speed_%d'   % path, purge_speed)
+            _save('sa_purge_length_%d'  % path, purge_length)
+
+        gcmd.respond_info(
+            "SA: Path %d profile set — %s %s %s | %s %s | "
+            "%.0f°C load / %.0f°C unload / %.0fmm purge"
+            % (path, brand, product_line, material,
+               color_name, color_hex,
+               load_temp, unload_temp, purge_length))
+
     def _cmd_respond(self, gcmd):
-        """SA_RESPOND VALUE=x — advance the active calibration to its next phase."""
-        value = gcmd.get('VALUE').strip()
-        if self._cal_state is not None:
-            gcmd.respond_info(
-                "SA: Responding '%s' (state=%s)" % (value, self._cal_state))
-        self.calibration.respond(gcmd, value)
-
-    def _cmd_park_filament(self, gcmd):
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        self.sequences.park_filament(gcmd, path)
-
-    def _cmd_filament_insert(self, gcmd):
-        """Called by entry sensor insert_gcode. Parks filament if not printing."""
-        path = gcmd.get_int('TOOL', minval=0, maxval=self.num_paths - 1)
-        if self._cal_state is not None:
-            return  # don't interrupt calibration
-        if self.sequences._is_printing():
-            gcmd.respond_info(
-                "SA: Filament detected at path %d entry (print in progress — not parking)." % path)
-            return
-        gcmd.respond_info("SA: Filament inserted at path %d — auto-parking..." % path)
-        self.sequences.park_filament(gcmd, path)
+        """SA_RESPOND VALUE=x — deliver a console response to a waiting calibration routine."""
+        value = gcmd.get('VALUE')
+        self._pending_response = value
+        self._response_ready   = True
+        gcmd.respond_info("SA: Response received: '%s'" % value)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper status — readable in macros as printer['stealth_autoloader']
@@ -650,17 +656,27 @@ class StealthAutoloader:
                    if self.current_path >= 0 else -1.0)
 
         return {
-            'num_paths'         : self.num_paths,
-            'current_path'      : self.current_path,
-            'servo_engaged'     : self._servo_is_engaged,
-            'path_states'       : list(self.path_states),
-            'encoder_dist'      : enc_distances,
-            'entry_filament'    : entry_filament,
-            'toolhead_filament' : toolhead_filament,
-            'extruder_filament' : extruder_filament,
-            'filament_loaded'   : filament_loaded,
-            'selector_position' : sel_pos,
-            'cal_state'         : self._cal_state or '',
+            'num_paths'          : self.num_paths,
+            'current_path'       : self.current_path,
+            'servo_engaged'      : self._servo_is_engaged,
+            'path_states'        : list(self.path_states),
+            'encoder_dist'       : enc_distances,
+            'entry_filament'     : entry_filament,
+            'toolhead_filament'  : toolhead_filament,
+            'extruder_filament'  : extruder_filament,
+            'filament_loaded'    : filament_loaded,
+            'selector_position'  : sel_pos,
+            'path_materials'     : list(self.path_materials),
+            'path_brands'        : list(self.path_brands),
+            'path_product_lines' : list(self.path_product_lines),
+            'path_color_names'   : list(self.path_color_names),
+            'path_color_hexes'   : list(self.path_color_hexes),
+            'path_load_temps'    : list(self.path_load_temps),
+            'path_unload_temps'  : list(self.path_unload_temps),
+            'feed_speed'         : self.feed_speed,
+            'purge_length'       : self.purge_length,
+            'nozzle_distance'    : self.nozzle_distance,
+            'bowden_lengths'     : list(self._bowden_lengths),
         }
 
     # ══════════════════════════════════════════════════════════════════════════
