@@ -135,6 +135,7 @@ class StealthAutoloader:
         self.selector_stall_current      = config.getfloat('selector_stall_current',    0.3)
         self.selector_stall_speed        = config.getfloat('selector_stall_speed',     30.0)
         self.encoder_to_gear_distance    = config.getfloat('encoder_to_gear_distance',  20.0)
+        self.sensor_retry_dist           = config.getfloat('sensor_retry_dist',          20.0)
 
         # ── Park positions ────────────────────────────────────────────────────
         self.load_park_x           = config.getfloat('load_park_x',           175.0)
@@ -338,6 +339,13 @@ class StealthAutoloader:
             return self._encoder(path).mm_per_pulse
         except Exception:
             return None
+
+    def _get_drive_rotation_distance(self):
+        try:
+            drv_obj = self.printer.lookup_object(self.drive_stepper_name)
+            return round(drv_obj.get_steppers()[0].get_rotation_distance()[0], 4)
+        except Exception:
+            return 0.0
 
     # ══════════════════════════════════════════════════════════════════════════
     # GCode command registration
@@ -734,9 +742,13 @@ class StealthAutoloader:
             'feed_speed'         : self.feed_speed,
             'purge_length'       : self.purge_length,
             'nozzle_distance'    : self.nozzle_distance,
-            'bowden_lengths'     : list(self._bowden_lengths),
-            'cal_state'          : self._cal_state or '',
-            'cal_path'           : self._cal_data.get('path', -1),
+            'bowden_lengths'          : list(self._bowden_lengths),
+            'selector_positions'      : list(self._selector_positions),
+            'encoder_mpp'             : [self._encoder_mm_per_pulse(i) or 0.0
+                                         for i in range(self.num_paths)],
+            'drive_rotation_distance' : self._get_drive_rotation_distance(),
+            'cal_state'               : self._cal_state or '',
+            'cal_path'                : self._cal_data.get('path', -1),
         }
 
     # ══════════════════════════════════════════════════════════════════════════

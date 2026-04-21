@@ -10,7 +10,6 @@ from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_settings')
 
-# Accent color palette — label, hex, auto-derived hover/active
 _COLORS = [
     ("Blue",        "#1565C0", "#1976D2", "#0D47A1"),
     ("Teal",        "#00695C", "#00897B", "#004D40"),
@@ -32,6 +31,20 @@ class Panel(ScreenPanel):
         super().__init__(screen, title or "SA Settings")
         _sbs.apply()
 
+        self._last_sa = {}
+
+        self._stack = Gtk.Stack()
+        self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self._stack.set_transition_duration(150)
+
+        self._stack.add_named(self._build_main_page(), "main")
+        self._stack.add_named(self._build_detail_page(), "detail")
+
+        self.content.pack_start(self._stack, True, True, 0)
+
+    # ── Main settings page ────────────────────────────────────────────────────
+
+    def _build_main_page(self):
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
@@ -49,8 +62,8 @@ class Panel(ScreenPanel):
         self._popup_switch.set_active(_prefs.get("popup_on_complete", True))
         self._popup_switch.set_valign(Gtk.Align.CENTER)
         self._popup_switch.connect("notify::active", self._on_popup_toggle)
-        popup_row.pack_start(popup_lbl,           True,  True,  0)
-        popup_row.pack_start(self._popup_switch,  False, False, 0)
+        popup_row.pack_start(popup_lbl,          True,  True,  0)
+        popup_row.pack_start(self._popup_switch, False, False, 0)
         outer.pack_start(popup_row, False, False, 0)
 
         outer.pack_start(Gtk.Separator(), False, False, 4)
@@ -58,39 +71,38 @@ class Panel(ScreenPanel):
         # ── Accent color ──────────────────────────────────────────────────────
         outer.pack_start(self._section("BUTTON ACCENT COLOR"), False, False, 0)
 
-        current = _prefs.get("accent_color", "#1565C0")
+        self._accent_btns  = {}
+        self._selected_hex = _prefs.get("accent_color", "#1565C0")
         color_grid = Gtk.Grid(row_spacing=6, column_spacing=6,
                               row_homogeneous=True, column_homogeneous=True)
 
         for idx, (name, hex_c, hover, active) in enumerate(_COLORS):
             btn = Gtk.Button()
-            # Build the button as a colored swatch with a name label
             css = Gtk.CssProvider()
             cls = "sa-accent-%d" % idx
             css.load_from_data((
-                ".{c} {{ background: {bg}; border-radius: 6px; min-height: 54px; }}"
+                ".{c} {{ background: {bg}; border-radius: 6px; min-height: 54px;"
+                "  border: 3px solid transparent; }}"
                 ".{c}:hover {{ background: {hv}; }}"
                 ".{c}:active {{ background: {ac}; }}"
+                ".{c}.sa-accent-selected {{ border: 3px solid white; }}"
                 ".{c} label {{ color: white; font-weight: bold; }}"
             ).format(c=cls, bg=hex_c, hv=hover, ac=active).encode())
             Gtk.StyleContext.add_provider_for_screen(
                 Gdk.Screen.get_default(), css,
                 Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
             btn.get_style_context().add_class(cls)
+            if hex_c == self._selected_hex:
+                btn.get_style_context().add_class("sa-accent-selected")
 
-            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
-            inner.set_halign(Gtk.Align.CENTER)
-            inner.set_valign(Gtk.Align.CENTER)
-            lbl = Gtk.Label(label=name)
-            inner.pack_start(lbl, False, False, 0)
-            if hex_c == current:
-                chk = Gtk.Label(label="\u2713")
-                inner.pack_start(chk, False, False, 0)
-            btn.add(inner)
+            btn.add(Gtk.Label(label=name))
             btn.connect("clicked", self._set_color, hex_c, hover, active)
+            self._accent_btns[hex_c] = btn
             color_grid.attach(btn, idx % 4, idx // 4, 1, 1)
 
         outer.pack_start(color_grid, False, False, 0)
+
+        outer.pack_start(Gtk.Separator(), False, False, 4)
 
         # ── Material profiles ─────────────────────────────────────────────────
         outer.pack_start(self._section("MATERIAL PROFILES"), False, False, 0)
@@ -98,6 +110,8 @@ class Panel(ScreenPanel):
         reset_btn = _sbs.make("Reset All Material Profiles", "sa-btn-warn")
         reset_btn.connect("clicked", self._reset_materials)
         outer.pack_start(reset_btn, False, False, 0)
+
+        outer.pack_start(Gtk.Separator(), False, False, 4)
 
         # ── Feed parameters ───────────────────────────────────────────────────
         outer.pack_start(self._section("FEED PARAMETERS"), False, False, 0)
@@ -108,42 +122,129 @@ class Panel(ScreenPanel):
             ("feed_speed",    "Feed Speed (mm/s)"),
             ("purge_length",  "Default Purge Length (mm)"),
             ("nozzle_dist",   "Nozzle Distance (mm)"),
-            ("bowden_length", "Bowden Length (mm)"),
+            ("bowden_avg",    "Avg Bowden Length (mm)"),
         ]):
             name_lbl = Gtk.Label(label=label, halign=Gtk.Align.START)
-            val_lbl  = Gtk.Label(label="—",   halign=Gtk.Align.END)
+            val_lbl  = Gtk.Label(label="\u2014",   halign=Gtk.Align.END)
             params_grid.attach(name_lbl, 0, row, 1, 1)
             params_grid.attach(val_lbl,  1, row, 1, 1)
             self._param_labels[key] = val_lbl
 
         outer.pack_start(params_grid, False, False, 0)
 
+        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn-alt")
+        detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
+        outer.pack_start(detail_btn, False, False, 0)
+
         scroll.add(outer)
-        self.content.pack_start(scroll, True, True, 0)
+        return scroll
+
+    # ── Detail page ────────────────────────────────────────────────────────────
+
+    def _build_detail_page(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
+
+        self._detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                   spacing=6, margin=10)
+        scroll.add(self._detail_box)
+        outer.pack_start(scroll, True, True, 0)
+
+        back_btn = _sbs.make("\u2190  Back", "sa-btn-alt")
+        back_btn.set_margin_start(10)
+        back_btn.set_margin_end(10)
+        back_btn.set_margin_bottom(6)
+        back_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("main"))
+        outer.pack_start(back_btn, False, False, 0)
+
+        return outer
+
+    def _populate_detail(self, sa):
+        box = self._detail_box
+        for child in box.get_children():
+            box.remove(child)
+
+        num          = sa.get("num_paths", 0)
+        bowden_lens  = sa.get("bowden_lengths", [])
+        sel_pos      = sa.get("selector_positions", [])
+        enc_mpp      = sa.get("encoder_mpp", [])
+        feed_speed   = sa.get("feed_speed",    "\u2014")
+        purge_length = sa.get("purge_length",  "\u2014")
+        nozzle_dist  = sa.get("nozzle_distance", "\u2014")
+        drv_rot_dist = sa.get("drive_rotation_distance", "\u2014")
+
+        def row(label, value, fg="#FFFFFF"):
+            r = Gtk.Box(spacing=8)
+            ll = Gtk.Label(label=label, halign=Gtk.Align.START, xalign=0.0)
+            ll.set_hexpand(True)
+            vl = Gtk.Label(halign=Gtk.Align.END)
+            vl.set_markup('<span foreground="%s">%s</span>' % (fg, str(value)))
+            r.pack_start(ll, True,  True,  0)
+            r.pack_start(vl, False, False, 0)
+            return r
+
+        box.pack_start(self._section("MOTION"), False, False, 0)
+        box.pack_start(row("Feed Speed",          "%s mm/s" % feed_speed),  False, False, 0)
+        box.pack_start(row("Purge Length",         "%s mm"   % purge_length), False, False, 0)
+        box.pack_start(row("Nozzle Distance",      "%s mm"   % nozzle_dist),  False, False, 0)
+        box.pack_start(row("Drive Rotation Dist",  str(drv_rot_dist)),        False, False, 0)
+
+        box.pack_start(Gtk.Separator(), False, False, 4)
+        box.pack_start(self._section("PER-PATH BOWDEN LENGTH"), False, False, 0)
+        for i in range(num):
+            val = ("%.1f mm" % bowden_lens[i]) if i < len(bowden_lens) else "\u2014"
+            box.pack_start(row("T%d" % i, val, "#90CAF9"), False, False, 0)
+
+        if sel_pos:
+            box.pack_start(Gtk.Separator(), False, False, 4)
+            box.pack_start(self._section("SELECTOR POSITIONS"), False, False, 0)
+            for i in range(num):
+                val = ("%.2f mm" % sel_pos[i]) if i < len(sel_pos) else "\u2014"
+                box.pack_start(row("T%d" % i, val, "#FFCC80"), False, False, 0)
+
+        if enc_mpp:
+            box.pack_start(Gtk.Separator(), False, False, 4)
+            box.pack_start(self._section("ENCODER mm/pulse"), False, False, 0)
+            for i in range(num):
+                val = ("%.4f" % enc_mpp[i]) if i < len(enc_mpp) else "\u2014"
+                box.pack_start(row("T%d" % i, val, "#CE93D8"), False, False, 0)
+
+        box.show_all()
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _section(self, title):
         lbl = Gtk.Label(halign=Gtk.Align.START)
-        lbl.set_markup(f'<b><span font_size="large">{title}</span></b>')
+        lbl.set_markup('<b><span font_size="large">%s</span></b>' % title)
         return lbl
 
     def _on_popup_toggle(self, widget, param):
         _prefs.save({"popup_on_complete": widget.get_active()})
 
     def _set_color(self, widget, hex_c, hover, active):
+        for h, btn in self._accent_btns.items():
+            ctx = btn.get_style_context()
+            if h == hex_c:
+                ctx.add_class("sa-accent-selected")
+            else:
+                ctx.remove_class("sa-accent-selected")
+        self._selected_hex = hex_c
+        _prefs.save({"accent_color": hex_c})
         _sbs.reapply(hex_c, hover, active)
         self._screen.show_popup_message(
-            f"Button color updated — reopen panels to see changes", level=1)
+            "Button color updated \u2014 reopen panels to see changes", level=1)
 
     def _reset_materials(self, widget):
-        sa = self._query_sa()
+        sa = self._last_sa
         n  = sa.get("num_paths", 6)
         for i in range(n):
             self._screen._ws.klippy.gcode_script(
-                f'SA_SET_MATERIAL TOOL={i} MATERIAL="" BRAND="" LINE="" '
-                f'COLOR_NAME="" COLOR_HEX="" '
-                f'LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30')
+                'SA_SET_MATERIAL TOOL=%d MATERIAL="" BRAND="" LINE="" '
+                'COLOR_NAME="" COLOR_HEX="" '
+                'LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30' % i)
         self._screen.show_popup_message("All material profiles cleared", level=1)
 
     def _query_sa(self):
@@ -157,15 +258,25 @@ class Panel(ScreenPanel):
         return {}
 
     def activate(self):
+        self._stack.set_visible_child_name("main")
         sa = self._query_sa()
+        self._last_sa = sa
         self._update_params(sa)
+        self._populate_detail(sa)
 
     def _update_params(self, sa):
+        bowden_lens = sa.get("bowden_lengths", [])
+        if bowden_lens:
+            avg = sum(bowden_lens) / len(bowden_lens)
+            bowden_val = "%.1f" % avg
+        else:
+            bowden_val = "\u2014"
+
         mapping = {
-            "feed_speed":    sa.get("feed_speed",    "—"),
-            "purge_length":  sa.get("purge_length",  "—"),
-            "nozzle_dist":   sa.get("nozzle_distance","—"),
-            "bowden_length": sa.get("bowden_length",  "—"),
+            "feed_speed":   sa.get("feed_speed",     "\u2014"),
+            "purge_length": sa.get("purge_length",   "\u2014"),
+            "nozzle_dist":  sa.get("nozzle_distance", "\u2014"),
+            "bowden_avg":   bowden_val,
         }
         for key, val in mapping.items():
             lbl = self._param_labels.get(key)

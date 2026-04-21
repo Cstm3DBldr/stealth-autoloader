@@ -136,7 +136,7 @@ class Panel(ScreenPanel):
 
         op_box = Gtk.Box(spacing=6)
         self._load_btn   = _sbs.make("\u25b6  LOAD",   "sa-btn")
-        self._unload_btn = _sbs.make("\u25c0  UNLOAD", "sa-btn-alt")
+        self._unload_btn = _sbs.make("\u25c0  UNLOAD", "sa-btn")
         self._load_btn.connect("clicked",   self._do_load)
         self._unload_btn.connect("clicked", self._do_unload)
         op_box.pack_start(self._load_btn,   True, True, 0)
@@ -213,10 +213,11 @@ class Panel(ScreenPanel):
         self._save_btn.set_sensitive(is_color and has_color)
 
         if is_path:
-            # LOAD: active only when path selected AND has a material profile
-            self._load_btn.set_sensitive(has_path and has_prof)
-            # UNLOAD: active whenever a path is selected
-            self._unload_btn.set_sensitive(has_path)
+            state = self._effective_state(self._sel_path) if has_path else 'unknown'
+            # LOAD: needs profile, and not already fully loaded
+            self._load_btn.set_sensitive(has_path and has_prof and state != 'loaded')
+            # UNLOAD: needs path with filament present (not empty)
+            self._unload_btn.set_sensitive(has_path and state != 'empty')
             # conf_btn: "Set Material \u2192" when path selected, else greyed
             self._conf_btn.set_label("Set Material \u2192")
             self._conf_btn.set_sensitive(has_path)
@@ -266,8 +267,9 @@ class Panel(ScreenPanel):
         if self._cur == 'path':
             has_path = self._sel_path is not None
             has_prof = self._has_profile(self._sel_path)
-            self._load_btn.set_sensitive(has_path and has_prof)
-            self._unload_btn.set_sensitive(has_path)
+            state    = self._effective_state(self._sel_path) if has_path else 'unknown'
+            self._load_btn.set_sensitive(has_path and has_prof and state != 'loaded')
+            self._unload_btn.set_sensitive(has_path and state != 'empty')
             self._conf_btn.set_sensitive(has_path)
 
     def _make_path_btn(self, i, state, hex_c, mat):
