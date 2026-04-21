@@ -66,13 +66,15 @@ class SAMotion:
             "SET_SERVO SERVO=%s ANGLE=%.1f" % (sn, owner.servo_engaged_angle))
         owner.reactor.pause(owner.reactor.monotonic() + owner.servo_move_delay)
 
-        # Jitter: ±0.8mm × 3 at 25mm/s to seat gear teeth
+        # Jitter: ±0.8mm × 3 at 25mm/s to seat gear teeth.
+        # Retract-first order (-0.8 then +0.8) so the final move is always forward,
+        # which keeps barely-inserted filament pulled INTO the gear rather than pushed out.
         owner.gcode.run_script_from_command("MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
         for _ in range(3):
             owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 MOVE=0.8 SPEED=25" % dn)
-            owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 MOVE=-0.8 SPEED=25" % dn)
+            owner.gcode.run_script_from_command(
+                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0 MOVE=0.8 SPEED=25" % dn)
         owner.gcode.run_script_from_command("M400")
 
         # Cut PWM — servo latches in place
