@@ -131,9 +131,35 @@ class StealthAutoloader:
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
         # Sensorless calibration (SA_CALIBRATE_SELECTOR)
-        self.selector_stall_threshold = config.getint(  'selector_stall_threshold',  1)
-        self.selector_stall_current   = config.getfloat('selector_stall_current',    0.3)
-        self.selector_stall_speed     = config.getfloat('selector_stall_speed',     30.0)
+        self.selector_stall_threshold    = config.getint(  'selector_stall_threshold',  1)
+        self.selector_stall_current      = config.getfloat('selector_stall_current',    0.3)
+        self.selector_stall_speed        = config.getfloat('selector_stall_speed',     30.0)
+        self.encoder_to_gear_distance    = config.getfloat('encoder_to_gear_distance',  20.0)
+
+        # ── Park positions ────────────────────────────────────────────────────
+        self.load_park_x           = config.getfloat('load_park_x',           175.0)
+        self.load_park_y           = config.getfloat('load_park_y',            10.0)
+        self.load_park_z           = config.getfloat('load_park_z',            50.0)
+        self.load_print_park_x     = config.getfloat('load_print_park_x',      10.0)
+        self.load_print_park_y     = config.getfloat('load_print_park_y',      10.0)
+        self.cooling_pad_enabled   = config.getboolean('cooling_pad_enabled',  True)
+        self.clean_nozzle_enabled  = config.getboolean('clean_nozzle_enabled', True)
+
+        # ── Load / extrusion params ───────────────────────────────────────────
+        self.fill_nozzle_length    = config.getfloat('fill_nozzle_length',     50.0)
+        self.max_volumetric_flow   = config.getfloat('max_volumetric_flow',     5.0)
+        self.wiggle_distance       = config.getfloat('wiggle_distance',         5.0)
+        self.nozzle_to_sensor_dist = config.getfloat('nozzle_to_sensor_dist',  50.0)
+
+        # ── Tip forming ───────────────────────────────────────────────────────
+        self.tip_form_temp           = config.getfloat('tip_form_temp',           185.0)
+        self.tip_form_push_length    = config.getfloat('tip_form_push_length',      8.0)
+        self.tip_form_push_speed     = config.getfloat('tip_form_push_speed',      25.0)
+        self.tip_form_heatbreak_dist = config.getfloat('tip_form_heatbreak_dist',  40.0)
+        self.tip_form_heatbreak_speed= config.getfloat('tip_form_heatbreak_speed', 70.0)
+        self.tip_form_retract_speed  = config.getfloat('tip_form_retract_speed',   70.0)
+        self.tip_form_slow_speed     = config.getfloat('tip_form_slow_speed',      15.0)
+        self.tip_form_dwell          = config.getfloat('tip_form_dwell',            0.5)
 
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
@@ -154,6 +180,8 @@ class StealthAutoloader:
         # SA_RESPOND mailbox (used by calibration routines)
         self._pending_response = None
         self._response_ready   = False
+        self._cal_state        = None
+        self._cal_data         = {}
 
         # ── Subsystems ────────────────────────────────────────────────────────
         self.motion      = SAMotion(self)
