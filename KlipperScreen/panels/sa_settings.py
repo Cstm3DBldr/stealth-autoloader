@@ -45,8 +45,6 @@ class Panel(ScreenPanel):
     # ── Main settings page ────────────────────────────────────────────────────
 
     def _build_main_page(self):
-        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
@@ -111,17 +109,15 @@ class Panel(ScreenPanel):
         reset_btn.connect("clicked", self._reset_materials)
         outer.pack_start(reset_btn, False, False, 0)
 
-        scroll.add(outer)
-        wrapper.pack_start(scroll, True, True, 0)
+        outer.pack_start(Gtk.Separator(), False, False, 4)
 
-        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn-alt")
-        detail_btn.set_margin_start(10)
-        detail_btn.set_margin_end(10)
-        detail_btn.set_margin_bottom(4)
+        # ── Configured values — scrolls with the page, uses accent color ──────
+        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn")
         detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
-        wrapper.pack_start(detail_btn, False, False, 0)
+        outer.pack_start(detail_btn, False, False, 0)
 
-        return wrapper
+        scroll.add(outer)
+        return scroll
 
     # ── Detail page ────────────────────────────────────────────────────────────
 
