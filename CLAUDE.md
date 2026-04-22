@@ -131,8 +131,8 @@ Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when emp
 **BTT EBB36 toolhead sensor pins (per toolhead MCU `etN`):**
 | Pin | Sensor | Role |
 |---|---|---|
-| `^etN:PB8` | `toolhead_sensor_N` | Filament presence at nozzle end of Bowden tube |
-| `^etN:PB5` | `extruder_sensor_N` | Filament at extruder gears (Bowden cal + load target) |
+| `^etN:PB8` | `toolhead_sensor_N` | Filament past extruder gears, entering hotend (final load confirmation) |
+| `^etN:PB5` | `extruder_sensor_N` | Filament at toolhead entry, before extruder gears (Bowden calibration endpoint) |
 
 ---
 

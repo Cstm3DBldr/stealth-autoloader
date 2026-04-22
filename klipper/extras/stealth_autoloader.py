@@ -306,7 +306,7 @@ class StealthAutoloader:
             return False
 
     def _toolhead_sensor_active(self, path):
-        """True if filament is detected at the toolhead (nozzle end) of *path*."""
+        """True if filament is past the extruder gears and entering the hotend on *path*."""
         name = self._toolhead_sensor_names[path]
         if not name:
             return False
@@ -317,7 +317,7 @@ class StealthAutoloader:
             return False
 
     def _extruder_sensor_active(self, path):
-        """True if filament has arrived at the extruder gears for *path*."""
+        """True if filament has arrived at toolhead entry (before extruder gears) on *path*."""
         name = self._extruder_sensor_names[path]
         if not name:
             return False
