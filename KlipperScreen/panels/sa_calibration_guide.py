@@ -73,7 +73,7 @@ class Panel(ScreenPanel):
         nav = Gtk.Box(spacing=6, margin_start=6, margin_end=6,
                       margin_top=4, margin_bottom=4)
 
-        self._prev_btn = _sbs.make("◀  Back", "sa-btn-nav")
+        self._prev_btn = _sbs.make("◀  Back", "sa-btn")
         self._prev_btn.set_size_request(110, -1)
         self._prev_btn.connect("clicked", self._go_prev)
 
@@ -81,7 +81,7 @@ class Panel(ScreenPanel):
         self._step_lbl.set_hexpand(True)
         self._step_lbl.set_halign(Gtk.Align.CENTER)
 
-        self._next_btn = _sbs.make("Next  ▶", "sa-btn-nav")
+        self._next_btn = _sbs.make("Next  ▶", "sa-btn")
         self._next_btn.set_size_request(110, -1)
         self._next_btn.connect("clicked", self._go_next)
 
