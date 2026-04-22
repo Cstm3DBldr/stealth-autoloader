@@ -64,11 +64,12 @@ class Panel(ScreenPanel):
 
         # ── 1. TEST MOTORS ────────────────────────────────────────────────────
         box.pack_start(self._section("1 — TEST MOTORS"), False, False, 0)
-        box.pack_start(self._hint("Run both buzz tests to confirm motor wiring."),
-                       False, False, 0)
+        box.pack_start(self._hint(
+            "Run both buzz tests to confirm motor wiring and direction."),
+            False, False, 0)
         row = Gtk.Grid(column_spacing=6, row_spacing=0)
-        b1  = _sbs.make("BUZZ DRIVE",     "sa-btn-alt")
-        b2  = _sbs.make("BUZZ SELECTOR",  "sa-btn-alt")
+        b1  = _sbs.make("BUZZ DRIVE",    "sa-btn-alt")
+        b2  = _sbs.make("BUZZ SELECTOR", "sa-btn-alt")
         b1.connect("clicked", self._send, "SA_BUZZ_DRIVE")
         b2.connect("clicked", self._send, "SA_BUZZ_SELECTOR")
         row.attach(b1, 0, 0, 1, 1)
@@ -83,7 +84,11 @@ class Panel(ScreenPanel):
         homed_str = ("\u2713 Homed" if homed else "\u2715 Not homed")
         homed_fg  = _GREEN if homed else _AMBER
         box.pack_start(self._status(homed_str, homed_fg), False, False, 0)
-        home_btn = _sbs.make("SA_HOME", "sa-btn-alt")
+        box.pack_start(self._hint(
+            "Moves selector to the physical endstop and zeros its position. "
+            "Required before any selector movement."),
+            False, False, 0)
+        home_btn = _sbs.make("HOME SELECTOR", "sa-btn-alt")
         home_btn.connect("clicked", self._send, "SA_HOME")
         box.pack_start(home_btn, False, False, 0)
 
@@ -104,12 +109,13 @@ class Panel(ScreenPanel):
             box.pack_start(self._status("\u2715 Using defaults (run to calibrate)",
                                         _AMBER), False, False, 0)
         box.pack_start(self._hint(
-            "Auto-sweeps rail to measure total travel. "
-            "Follow prompts in the cal prompt popup."), False, False, 0)
+            "Sweeps the full rail length using stallguard to find the far end, "
+            "then homes back to measure total travel and calculate even path spacing."),
+            False, False, 0)
         if cal_state:
             box.pack_start(self._status("In progress: %s" % cal_state, _AMBER),
                            False, False, 0)
-        sel_btn = _sbs.make("SA_CALIBRATE_SELECTOR", "sa-btn-alt")
+        sel_btn = _sbs.make("CAL SELECTOR", "sa-btn-alt")
         sel_btn.connect("clicked", self._send, "SA_CALIBRATE_SELECTOR")
         box.pack_start(sel_btn, False, False, 0)
 
@@ -125,10 +131,11 @@ class Panel(ScreenPanel):
             box.pack_start(self._status("\u2715 Not calibrated", _AMBER),
                            False, False, 0)
         box.pack_start(self._hint(
-            "Load filament into drive gear manually. "
-            "Follow console prompts to measure and save rotation_distance."),
+            "Manually load filament through the drive gear. Marks a 100mm "
+            "reference, drives it, then prompts you to measure actual movement "
+            "to calculate rotation_distance."),
             False, False, 0)
-        drv_btn = _sbs.make("SA_CALIBRATE_DRIVE", "sa-btn-alt")
+        drv_btn = _sbs.make("CAL DRIVE", "sa-btn-alt")
         drv_btn.connect("clicked", self._send, "SA_CALIBRATE_DRIVE")
         box.pack_start(drv_btn, False, False, 0)
 
@@ -145,20 +152,21 @@ class Panel(ScreenPanel):
             box.pack_start(self._status("\u2715 Not calibrated  (blast defaults to 75 mm/s)",
                                         _AMBER), False, False, 0)
         box.pack_start(self._hint(
-            "Finds highest reliable speed without encoder slip. "
-            "Run with filament loaded through drive gear."),
+            "Ramps feed speed up until the encoder starts slipping, then saves "
+            "the highest reliable speed. Run with filament loaded through the drive gear."),
             False, False, 0)
-        spd_btn = _sbs.make("SA_CALIBRATE_ENCODER_SPEED", "sa-btn-alt")
+        spd_btn = _sbs.make("CAL ENCODER SPEED", "sa-btn-alt")
         spd_btn.connect("clicked", self._send, "SA_CALIBRATE_ENCODER_SPEED")
         box.pack_start(spd_btn, False, False, 0)
 
         box.pack_start(Gtk.Separator(), False, False, 2)
 
-        # ── 6. CALIBRATE ENCODER mm/pulse ────────────────────────────────────
+        # ── 6. CALIBRATE ENCODER (mm/pulse) ──────────────────────────────────
         box.pack_start(self._section("6 — CALIBRATE ENCODER (mm/pulse)"),
                        False, False, 0)
         box.pack_start(self._hint(
-            "Run with filament loaded past drive gear for each path."),
+            "Measures how many mm of filament the encoder sees per pulse. "
+            "Run per path with filament loaded past the drive gear."),
             False, False, 0)
         enc_grid = Gtk.Grid(column_spacing=4, row_spacing=4)
         enc_grid.set_column_homogeneous(True)
@@ -184,7 +192,8 @@ class Panel(ScreenPanel):
         box.pack_start(self._section("7 — CALIBRATE BOWDEN LENGTH"),
                        False, False, 0)
         box.pack_start(self._hint(
-            "Run after encoder is calibrated. Loads filament to extruder sensor."),
+            "Loads filament from the drive gear until it reaches the extruder "
+            "sensor and records the distance. Run per path after encoder is calibrated."),
             False, False, 0)
         bow_grid = Gtk.Grid(column_spacing=4, row_spacing=4)
         bow_grid.set_column_homogeneous(True)
