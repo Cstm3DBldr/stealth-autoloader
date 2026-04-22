@@ -75,20 +75,16 @@ class Panel(ScreenPanel):
 
         bar = Gtk.Grid(row_spacing=4, column_spacing=4, margin=4,
                        row_homogeneous=True, column_homogeneous=True)
-        for (label, cmd), (col, row) in zip(
-            [("HOME",      "SA_HOME"),
-             ("ENGAGE",    "SA_ENGAGE"),
-             ("DISENGAGE", "SA_DISENGAGE"),
-             ("REFRESH",   None)],
-            [(0, 0), (1, 0), (0, 1), (1, 1)]
-        ):
-            btn = _sbs.make(label)
-            if cmd:
-                btn.connect("clicked", self._send, cmd)
-            else:
-                btn.connect("clicked", self._refresh)
-            btn.set_hexpand(True)
-            bar.attach(btn, col, row, 1, 1)
+        home_btn = _sbs.make("HOME")
+        home_btn.connect("clicked", self._send, "SA_HOME")
+        home_btn.set_hexpand(True)
+        bar.attach(home_btn, 0, 0, 1, 1)
+
+        refresh_btn = _sbs.make("REFRESH")
+        refresh_btn.connect("clicked", self._refresh)
+        refresh_btn.set_hexpand(True)
+        bar.attach(refresh_btn, 1, 0, 1, 1)
+
         self.content.pack_end(bar, False, False, 0)
 
     def _build_header(self):
