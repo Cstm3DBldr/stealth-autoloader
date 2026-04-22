@@ -45,7 +45,7 @@ class Panel(ScreenPanel):
         self._stack.add_named(self._build_pages_view(), "pages")
         self._stack.add_named(self._build_tool_page(),  "tool")
 
-        self.content.add(self._stack)
+        self.content.pack_start(self._stack, True, True, 0)
 
     # ── Pages view ────────────────────────────────────────────────────────────
 
@@ -69,19 +69,22 @@ class Panel(ScreenPanel):
 
         wrapper.pack_start(self._page_stack, True, True, 0)
 
-        # Nav bar: [◀ Back]  Step N of 7  [Next ▶]
-        nav = Gtk.Box(spacing=6, margin=6)
+        # Nav bar: [◀ Back]  Step N of 7  [Next ▶]  — compact, fixed height
+        nav = Gtk.Box(spacing=6, margin_start=6, margin_end=6,
+                      margin_top=4, margin_bottom=4)
 
-        self._prev_btn = _sbs.make("◀  Back", "sa-btn-alt")
-        self._prev_btn.set_size_request(110, -1)
+        self._prev_btn = Gtk.Button(label="◀  Back",
+                                    hexpand=False, vexpand=False, can_focus=False)
+        self._prev_btn.set_size_request(110, 40)
         self._prev_btn.connect("clicked", self._go_prev)
 
         self._step_lbl = Gtk.Label()
         self._step_lbl.set_hexpand(True)
         self._step_lbl.set_halign(Gtk.Align.CENTER)
 
-        self._next_btn = _sbs.make("Next  ▶", "sa-btn-alt")
-        self._next_btn.set_size_request(110, -1)
+        self._next_btn = Gtk.Button(label="Next  ▶",
+                                    hexpand=False, vexpand=False, can_focus=False)
+        self._next_btn.set_size_request(110, 40)
         self._next_btn.connect("clicked", self._go_next)
 
         nav.pack_start(self._prev_btn, False, False, 0)
