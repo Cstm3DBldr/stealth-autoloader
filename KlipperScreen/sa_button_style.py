@@ -53,6 +53,20 @@ def _build_css(accent, hover, active):
 .sa-btn-warn:active {{ background: #BF360C; }}
 .sa-btn-warn label  {{ color: white; }}
 
+.sa-btn-nav {{
+    padding: 2px 8px;
+    min-height: 42px;
+    min-width: 0px;
+    border-radius: 6px;
+    background: #37474F;
+    color: white;
+}}
+.sa-btn-nav:hover          {{ background: #455A64; }}
+.sa-btn-nav:active         {{ background: #263238; }}
+.sa-btn-nav:disabled       {{ background: #424242; color: #9E9E9E; }}
+.sa-btn-nav label          {{ color: white; }}
+.sa-btn-nav:disabled label {{ color: #9E9E9E; }}
+
 .path-selected {{ border: 3px solid #8BC34A; }}
 """.format(accent=accent, hover=hover, active=active)).encode()
 

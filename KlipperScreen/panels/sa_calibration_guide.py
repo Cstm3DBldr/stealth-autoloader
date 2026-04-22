@@ -69,22 +69,20 @@ class Panel(ScreenPanel):
 
         wrapper.pack_start(self._page_stack, True, True, 0)
 
-        # Nav bar: [◀ Back]  Step N of 7  [Next ▶]  — compact, fixed height
+        # Nav bar: [◀ Back]  Step N of 7  [Next ▶]
         nav = Gtk.Box(spacing=6, margin_start=6, margin_end=6,
                       margin_top=4, margin_bottom=4)
 
-        self._prev_btn = Gtk.Button(label="◀  Back",
-                                    hexpand=False, vexpand=False, can_focus=False)
-        self._prev_btn.set_size_request(110, 40)
+        self._prev_btn = _sbs.make("◀  Back", "sa-btn-nav")
+        self._prev_btn.set_size_request(110, -1)
         self._prev_btn.connect("clicked", self._go_prev)
 
         self._step_lbl = Gtk.Label()
         self._step_lbl.set_hexpand(True)
         self._step_lbl.set_halign(Gtk.Align.CENTER)
 
-        self._next_btn = Gtk.Button(label="Next  ▶",
-                                    hexpand=False, vexpand=False, can_focus=False)
-        self._next_btn.set_size_request(110, 40)
+        self._next_btn = _sbs.make("Next  ▶", "sa-btn-nav")
+        self._next_btn.set_size_request(110, -1)
         self._next_btn.connect("clicked", self._go_next)
 
         nav.pack_start(self._prev_btn, False, False, 0)
@@ -149,8 +147,8 @@ class Panel(ScreenPanel):
             False, False, 0)
         row = Gtk.Grid(column_spacing=8)
         row.set_column_homogeneous(True)
-        b1 = _sbs.make("BUZZ DRIVE",    "sa-btn-alt")
-        b2 = _sbs.make("BUZZ SELECTOR", "sa-btn-alt")
+        b1 = _sbs.make("BUZZ DRIVE",    "sa-btn")
+        b2 = _sbs.make("BUZZ SELECTOR", "sa-btn")
         b1.connect("clicked", self._send, "SA_BUZZ_DRIVE")
         b2.connect("clicked", self._send, "SA_BUZZ_SELECTOR")
         row.attach(b1, 0, 0, 1, 1)
@@ -166,7 +164,7 @@ class Panel(ScreenPanel):
             "Moves the selector to the physical endstop and zeros its position. "
             "Required before any selector movement."),
             False, False, 0)
-        btn = _sbs.make("HOME SELECTOR", "sa-btn-alt")
+        btn = _sbs.make("HOME SELECTOR", "sa-btn")
         btn.connect("clicked", self._send, "SA_HOME")
         box.pack_start(btn, False, False, 0)
 
@@ -187,7 +185,7 @@ class Panel(ScreenPanel):
             "Sweeps the full rail using stallguard to find the far end, then "
             "homes back to measure total travel and calculate even path spacing."),
             False, False, 0)
-        btn = _sbs.make("CAL SELECTOR", "sa-btn-alt")
+        btn = _sbs.make("CAL SELECTOR", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_SELECTOR")
         box.pack_start(btn, False, False, 0)
 
@@ -204,7 +202,7 @@ class Panel(ScreenPanel):
             "reference, drives it, then prompts you to measure actual movement "
             "to calculate rotation_distance."),
             False, False, 0)
-        btn = _sbs.make("CAL DRIVE", "sa-btn-alt")
+        btn = _sbs.make("CAL DRIVE", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_DRIVE")
         box.pack_start(btn, False, False, 0)
 
@@ -222,7 +220,7 @@ class Panel(ScreenPanel):
             "Ramps feed speed up until the encoder starts slipping, then saves "
             "the highest reliable speed. Run with filament loaded through the drive gear."),
             False, False, 0)
-        btn = _sbs.make("CAL ENCODER SPEED", "sa-btn-alt")
+        btn = _sbs.make("CAL ENCODER SPEED", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_ENCODER_SPEED")
         box.pack_start(btn, False, False, 0)
 
@@ -242,7 +240,7 @@ class Panel(ScreenPanel):
                            % (fg, i, ("%.4f" % mpp) if done else "\u2715"))
             lbl.set_size_request(-1, 34)
             grid.attach(lbl, i % 3, i // 3 * 2,     1, 1)
-            btn = _sbs.make("T%d" % i, "sa-btn-alt")
+            btn = _sbs.make("T%d" % i, "sa-btn")
             btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_ENCODER TOOL={t}", i)
             grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
         box.pack_start(grid, False, False, 0)
@@ -263,7 +261,7 @@ class Panel(ScreenPanel):
                            % (fg, i, ("%.0fmm" % blen) if done else "\u2715"))
             lbl.set_size_request(-1, 34)
             grid.attach(lbl, i % 3, i // 3 * 2,     1, 1)
-            btn = _sbs.make("T%d" % i, "sa-btn-alt")
+            btn = _sbs.make("T%d" % i, "sa-btn")
             btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_BOWDEN TOOL={t}", i)
             grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
         box.pack_start(grid, False, False, 0)
@@ -284,7 +282,7 @@ class Panel(ScreenPanel):
                                    margin_start=8, margin_end=8)
         outer.pack_start(self._tool_grid, True, True, 0)
 
-        back_btn = _sbs.make("\u2190  Cancel", "sa-btn-alt")
+        back_btn = _sbs.make("\u2190  Cancel", "sa-btn-nav")
         back_btn.set_margin_start(8)
         back_btn.set_margin_end(8)
         back_btn.set_margin_top(6)
@@ -297,7 +295,7 @@ class Panel(ScreenPanel):
         for child in self._tool_grid.get_children():
             self._tool_grid.remove(child)
         for i in range(num_paths):
-            style = "sa-btn" if i == preselected else "sa-btn-alt"
+            style = "sa-btn" if i == preselected else "sa-btn"
             btn = _sbs.make("T%d" % i, style)
             btn.connect("clicked", self._tool_selected, i)
             self._tool_grid.attach(btn, i % 3, i // 3, 1, 1)
