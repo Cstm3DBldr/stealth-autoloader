@@ -163,6 +163,14 @@ class Panel(ScreenPanel):
         row.attach(b1, 0, 0, 1, 1)
         row.attach(b2, 1, 0, 1, 1)
         box.pack_start(row, False, False, 0)
+        box.pack_start(self._expect(
+            "Motor clicks/buzzes and moves slightly back and forth."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "No movement \u2192 check motor wiring and driver power.\n"
+            "Wrong direction \u2192 swap any two motor phase wires.\n"
+            "Very weak \u2192 increase driver current in hardware.cfg."),
+            False, False, 0)
 
     def _step_home(self, box, homed):
         box.pack_start(
@@ -176,6 +184,15 @@ class Panel(ScreenPanel):
         btn = _sbs.make("HOME SELECTOR", "sa-btn")
         btn.connect("clicked", self._send, "SA_HOME")
         box.pack_start(btn, False, False, 0)
+        box.pack_start(self._expect(
+            "Selector moves toward endstop, slows, touches, backs off, touches again "
+            "to confirm position."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "Moves away from endstop \u2192 invert endstop pin or swap motor wires.\n"
+            "Never triggers \u2192 check endstop wiring and SA_SELECTOR_STOP pin.\n"
+            "Slams hard \u2192 reduce selector_homing_speed in hardware.cfg."),
+            False, False, 0)
 
     def _step_selector(self, box, sel_pos, cal_state, num):
         has_cal = (bool(sel_pos) and
@@ -197,6 +214,15 @@ class Panel(ScreenPanel):
         btn = _sbs.make("CAL SELECTOR", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_SELECTOR")
         box.pack_start(btn, False, False, 0)
+        box.pack_start(self._expect(
+            "Homes, sweeps outward until stall detected or end reached, homes back. "
+            "Reports total travel (~105\u2013130 mm for 6 paths) and even spacing (~21 mm)."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "Stalls mid-rail \u2192 increase selector_stall_threshold in hardware.cfg.\n"
+            "Misses far end \u2192 decrease selector_stall_threshold.\n"
+            "Spacing wrong \u2192 verify rail is unobstructed and re-run."),
+            False, False, 0)
 
     def _step_drive(self, box, drv_rot):
         if drv_rot and drv_rot > 0:
@@ -214,6 +240,15 @@ class Panel(ScreenPanel):
         btn = _sbs.make("CAL DRIVE", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_DRIVE")
         box.pack_start(btn, False, False, 0)
+        box.pack_start(self._expect(
+            "Filament moves forward ~100 mm. Measure the actual distance moved "
+            "and enter it when prompted. Typical rotation_distance: 22\u201326."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "No movement \u2192 engage servo first (SA_ENGAGE), check drive gear.\n"
+            "Filament slips \u2192 tighten idler or increase servo_engaged_angle.\n"
+            "Result far from 100 mm \u2192 re-check microstep and full_steps_per_rotation settings."),
+            False, False, 0)
 
     def _step_enc_speed(self, box, enc_max):
         if enc_max and enc_max > 0:
@@ -232,6 +267,15 @@ class Panel(ScreenPanel):
         btn = _sbs.make("CAL ENCODER SPEED", "sa-btn")
         btn.connect("clicked", self._send, "SA_CALIBRATE_ENCODER_SPEED")
         box.pack_start(btn, False, False, 0)
+        box.pack_start(self._expect(
+            "Speed ramps up in steps. Stops when encoder falls behind. "
+            "Saves max reliable speed (typically 100\u2013200 mm/s)."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "Saves very low speed (<50 mm/s) \u2192 check encoder wiring and position on shaft.\n"
+            "Fails immediately \u2192 encoder not counting, verify SA_ENCODER pin.\n"
+            "Inconsistent results \u2192 ensure filament has no resistance in tube."),
+            False, False, 0)
 
     def _step_encoder(self, box, enc_mpp, num):
         box.pack_start(self._hint(
@@ -253,6 +297,16 @@ class Panel(ScreenPanel):
             btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_ENCODER TOOL={t}", i)
             grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
         box.pack_start(grid, False, False, 0)
+        box.pack_start(self._expect(
+            "Each path runs filament ~100 mm through the drive gear and compares "
+            "encoder count to actual distance. Typical value: 0.010\u20130.020 mm/pulse."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "Value near 0 \u2192 encoder not counting, check wiring and SA_ENCODER pin.\n"
+            "Values differ wildly between paths \u2192 filament not fully engaged, "
+            "re-seat and retry.\n"
+            "Value way off (>0.05) \u2192 wrong encoder resolution in sa_encoder config."),
+            False, False, 0)
 
     def _step_bowden(self, box, bowden_lens, num):
         box.pack_start(self._hint(
@@ -274,6 +328,17 @@ class Panel(ScreenPanel):
             btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_BOWDEN TOOL={t}", i)
             grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
         box.pack_start(grid, False, False, 0)
+        box.pack_start(self._expect(
+            "Filament loads until the extruder sensor triggers. Distance is saved "
+            "per path. Values should be consistent across paths (within ~10 mm)."),
+            False, False, 0)
+        box.pack_start(self._warn(
+            "Sensor never triggers \u2192 check extruder sensor wiring and pin polarity.\n"
+            "Distance too short \u2192 filament may have buckled in the PTFE tube, "
+            "check routing.\n"
+            "Large variation between paths \u2192 PTFE tube lengths differ, "
+            "check tube routing for each path."),
+            False, False, 0)
 
     # ── Tool picker page ──────────────────────────────────────────────────────
 
@@ -321,6 +386,28 @@ class Panel(ScreenPanel):
         lbl = Gtk.Label(label=text, halign=Gtk.Align.START, xalign=0.0, wrap=True)
         lbl.get_style_context().add_class("color4")
         return lbl
+
+    def _expect(self, text):
+        """Green 'what to expect when it works' block."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        hdr = Gtk.Label(halign=Gtk.Align.START)
+        hdr.set_markup('<b><span foreground="%s">\u2713 Expected</span></b>' % _GREEN)
+        lbl = Gtk.Label(label=text, halign=Gtk.Align.START, xalign=0.0, wrap=True)
+        lbl.set_markup('<span foreground="%s">%s</span>' % (_GREEN, text))
+        box.pack_start(hdr, False, False, 0)
+        box.pack_start(lbl, False, False, 0)
+        return box
+
+    def _warn(self, text):
+        """Amber 'if something is wrong' block."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        hdr = Gtk.Label(halign=Gtk.Align.START)
+        hdr.set_markup('<b><span foreground="%s">\u26a0 If wrong</span></b>' % _AMBER)
+        lbl = Gtk.Label(halign=Gtk.Align.START, xalign=0.0, wrap=True)
+        lbl.set_markup('<span foreground="%s">%s</span>' % (_AMBER, text))
+        box.pack_start(hdr, False, False, 0)
+        box.pack_start(lbl, False, False, 0)
+        return box
 
     def _status(self, text, fg=_GREY):
         lbl = Gtk.Label(halign=Gtk.Align.START)
