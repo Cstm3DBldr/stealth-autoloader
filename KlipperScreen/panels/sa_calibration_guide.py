@@ -96,7 +96,9 @@ class Panel(ScreenPanel):
         self._step_lbl.set_markup(
             '<b>Step %d of %d</b>' % (self._step + 1, _NUM_STEPS))
         self._prev_btn.set_sensitive(self._step > 0)
-        self._next_btn.set_sensitive(self._step < _NUM_STEPS - 1)
+        last = self._step == _NUM_STEPS - 1
+        self._next_btn.set_label("Done" if last else "Next  ▶")
+        self._next_btn.set_sensitive(True)
 
     def _go_prev(self, widget):
         if self._step > 0:
@@ -107,6 +109,8 @@ class Panel(ScreenPanel):
         if self._step < _NUM_STEPS - 1:
             self._step += 1
             self._show_step()
+        else:
+            self._screen.back()
 
     def _show_step(self):
         self._page_stack.set_visible_child_name("step%d" % self._step)
