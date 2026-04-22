@@ -98,7 +98,14 @@ class Panel(ScreenPanel):
         self._prev_btn.set_sensitive(self._step > 0)
         last = self._step == _NUM_STEPS - 1
         self._next_btn.set_label("Done" if last else "Next  ▶")
-        self._next_btn.set_sensitive(True)
+        self._next_btn.set_sensitive(not last)
+        ctx = self._next_btn.get_style_context()
+        if last:
+            ctx.remove_class("sa-btn")
+            ctx.add_class("sa-btn-nav")
+        else:
+            ctx.remove_class("sa-btn-nav")
+            ctx.add_class("sa-btn")
 
     def _go_prev(self, widget):
         if self._step > 0:
@@ -109,8 +116,6 @@ class Panel(ScreenPanel):
         if self._step < _NUM_STEPS - 1:
             self._step += 1
             self._show_step()
-        else:
-            self._screen.back()
 
     def _show_step(self):
         self._page_stack.set_visible_child_name("step%d" % self._step)
