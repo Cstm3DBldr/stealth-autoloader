@@ -110,6 +110,7 @@ class Panel(ScreenPanel):
         self._back_btn = _sbs.make("\u2190 Back",    "sa-btn")
         self._save_btn = _sbs.make("SAVE ONLY",      "sa-btn-warn")
         self._conf_btn = _sbs.make("Next \u2192",    "sa-btn")
+        self._conf_btn.set_visible(False)   # hidden on path page; shown only in wizard
 
         self._back_btn.connect("clicked", self._go_back)
         self._save_btn.connect("clicked", self._save_only)
@@ -227,9 +228,7 @@ class Panel(ScreenPanel):
             self._setmat_btn.set_sensitive(has_path)
             # CLEAR PROFILE: only when path is empty (no filament to protect)
             self._clear_btn.set_sensitive(has_path and has_prof and state == 'empty')
-            # conf_btn hidden on path page — actions are now in the button row
-            self._conf_btn.set_label("Set Material \u2192")
-            self._conf_btn.set_sensitive(False)
+            # conf_btn never shown on path page
             self._conf_btn.set_visible(False)
         elif is_color:
             self._conf_btn.set_visible(True)

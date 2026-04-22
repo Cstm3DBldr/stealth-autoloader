@@ -111,31 +111,6 @@ class Panel(ScreenPanel):
         reset_btn.connect("clicked", self._reset_materials)
         outer.pack_start(reset_btn, False, False, 0)
 
-        outer.pack_start(Gtk.Separator(), False, False, 4)
-
-        # ── Feed parameters ───────────────────────────────────────────────────
-        outer.pack_start(self._section("FEED PARAMETERS"), False, False, 0)
-
-        params_grid = Gtk.Grid(row_spacing=6, column_spacing=12, margin_start=4)
-        self._param_labels = {}
-        for row_idx, (key, label) in enumerate([
-            ("feed_speed",         "Feed Speed (mm/s)"),
-            ("selector_speed",     "Selector Speed (mm/s)"),
-            ("encoder_max_speed",  "Encoder Max Speed (mm/s)"),
-            ("blast_speed",        "Blast Speed 75% (mm/s)"),
-            ("purge_length",       "Default Purge Length (mm)"),
-            ("nozzle_to_sensor",   "Toolhead Sensor \u2192 Nozzle (mm)"),
-            ("nozzle_dist",        "Extruder Gears \u2192 Nozzle (mm)"),
-            ("bowden_avg",         "Avg Bowden Length (mm)"),
-        ]):
-            name_lbl = Gtk.Label(label=label, halign=Gtk.Align.START)
-            val_lbl  = Gtk.Label(label="\u2014",   halign=Gtk.Align.END)
-            params_grid.attach(name_lbl, 0, row_idx, 1, 1)
-            params_grid.attach(val_lbl,  1, row_idx, 1, 1)
-            self._param_labels[key] = val_lbl
-
-        outer.pack_start(params_grid, False, False, 0)
-
         scroll.add(outer)
         wrapper.pack_start(scroll, True, True, 0)
 
@@ -296,35 +271,7 @@ class Panel(ScreenPanel):
         self._stack.set_visible_child_name("main")
         sa = self._query_sa()
         self._last_sa = sa
-        self._update_params(sa)
         self._populate_detail(sa)
-
-    def _update_params(self, sa):
-        bowden_lens = sa.get("bowden_lengths", [])
-        if bowden_lens:
-            avg = sum(bowden_lens) / len(bowden_lens)
-            bowden_val = "%.1f" % avg
-        else:
-            bowden_val = "\u2014"
-
-        enc_max = sa.get("encoder_max_speed", 0)
-        blast_val = ("%.1f" % (enc_max * 0.75)) if enc_max > 0 else "\u2014"
-        enc_max_val = ("%.1f" % enc_max) if enc_max > 0 else "\u2014"
-
-        mapping = {
-            "feed_speed":        sa.get("feed_speed",           "\u2014"),
-            "selector_speed":    sa.get("selector_speed",       "\u2014"),
-            "encoder_max_speed": enc_max_val,
-            "blast_speed":       blast_val,
-            "purge_length":      sa.get("purge_length",         "\u2014"),
-            "nozzle_to_sensor":  sa.get("nozzle_to_sensor_dist", "\u2014"),
-            "nozzle_dist":       sa.get("nozzle_distance",      "\u2014"),
-            "bowden_avg":        bowden_val,
-        }
-        for key, val in mapping.items():
-            lbl = self._param_labels.get(key)
-            if lbl:
-                lbl.set_text(str(val))
 
     def process_update(self, action, data):
         pass

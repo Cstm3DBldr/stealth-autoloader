@@ -404,6 +404,9 @@ class StealthAutoloader:
             ('SA_CALIBRATE_BOWDEN',
              self._cmd_calibrate_bowden,
              "Guided Bowden tube length calibration. TOOL=N"),
+            ('SA_CALIBRATE_ENCODER_SPEED',
+             self._cmd_calibrate_encoder_speed,
+             "Find max reliable encoder speed and save as encoder_max_speed"),
             ('SA_ENCODER_QUERY',
              self._cmd_encoder_query,
              "Snapshot all encoder distances. [TOOL=N] [RESET=1]"),
@@ -636,6 +639,9 @@ class StealthAutoloader:
 
     def _cmd_calibrate_bowden(self, gcmd):
         self.calibration.calibrate_bowden(gcmd)
+
+    def _cmd_calibrate_encoder_speed(self, gcmd):
+        self.calibration.calibrate_encoder_speed(gcmd)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Command handlers — state management
