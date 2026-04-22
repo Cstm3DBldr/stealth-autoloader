@@ -110,7 +110,8 @@ class Panel(ScreenPanel):
         self._back_btn = _sbs.make("\u2190 Back",    "sa-btn")
         self._save_btn = _sbs.make("SAVE ONLY",      "sa-btn-warn")
         self._conf_btn = _sbs.make("Next \u2192",    "sa-btn")
-        self._conf_btn.set_visible(False)   # hidden on path page; shown only in wizard
+        self._conf_btn.set_no_show_all(True)  # prevent show_all() from overriding hide
+        self._conf_btn.set_visible(False)     # hidden on path page; shown only in wizard
 
         self._back_btn.connect("clicked", self._go_back)
         self._save_btn.connect("clicked", self._save_only)
