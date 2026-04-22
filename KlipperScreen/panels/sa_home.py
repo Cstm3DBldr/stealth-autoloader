@@ -4,46 +4,46 @@ from gi.repository import Gtk
 import logging
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import sa_button_style as _sbs
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_home')
 
 # Layout: 6-column grid (LCM of 2 and 3)
 #   Row 0: STATUS (span 3) | LOAD / UNLOAD (span 3)   — 2 wide buttons
-#   Row 1: MACROS (span 2) | CALIBRATION (span 2) | SETTINGS (span 2)  — 3 buttons
+#   Row 1: MACROS (span 2) | CALIBRATION (span 2) | SETTINGS (span 2)
 
 _TOP_ROW = [
-    ("STATUS",        "sa_main",              "SA Status"),
-    ("LOAD / UNLOAD", "sa_load_unload",       "Load / Unload"),
+    ("STATUS",        "sa_main",              "SA Status",      "color1"),
+    ("LOAD / UNLOAD", "sa_load_unload",       "Load / Unload",  "color3"),
 ]
 
 _BOT_ROW = [
-    ("MACROS",        "sa_macros",            "SA Macros"),
-    ("CALIBRATION",   "sa_calibration_guide", "SA Calibration"),
-    ("SETTINGS",      "sa_settings",          "SA Settings"),
+    ("MACROS",        "sa_macros",            "SA Macros",      "color2"),
+    ("CALIBRATION",   "sa_calibration_guide", "SA Calibration", "color1"),
+    ("SETTINGS",      "sa_settings",          "SA Settings",    "color3"),
 ]
 
 
 class Panel(ScreenPanel):
-    """Stealth Autoloader home — 2 wide top + 3 equal bottom."""
+    """Stealth Autoloader home — 2 wide top + 3 equal bottom, native KS style."""
 
     def __init__(self, screen, title):
         super().__init__(screen, title or "Autoloader")
-        _sbs.apply()
 
         grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
-                        row_spacing=8, column_spacing=8, margin=12)
+                        row_spacing=6, column_spacing=6, margin=10)
 
         # Top row — 2 buttons each spanning 3 of 6 columns
-        for idx, (label, panel, ptitle) in enumerate(_TOP_ROW):
-            btn = _sbs.make(label)
+        for idx, (label, panel, ptitle, color) in enumerate(_TOP_ROW):
+            btn = Gtk.Button(label=label)
+            btn.get_style_context().add_class(color)
             btn.connect("clicked", self._open_panel, panel, ptitle)
             grid.attach(btn, idx * 3, 0, 3, 1)
 
         # Bottom row — 3 buttons each spanning 2 of 6 columns
-        for idx, (label, panel, ptitle) in enumerate(_BOT_ROW):
-            btn = _sbs.make(label)
+        for idx, (label, panel, ptitle, color) in enumerate(_BOT_ROW):
+            btn = Gtk.Button(label=label)
+            btn.get_style_context().add_class(color)
             btn.connect("clicked", self._open_panel, panel, ptitle)
             grid.attach(btn, idx * 2, 1, 2, 1)
 
