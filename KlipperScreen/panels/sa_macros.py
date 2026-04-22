@@ -21,6 +21,7 @@ _BTNS = [
     ("CAL DRIVE",      "SA_CALIBRATE_DRIVE",               False),
     ("CAL BOWDEN",     "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
     ("CAL ENCODER",    "SA_CALIBRATE_ENCODER TOOL={t}",    True),
+    ("CAL ENC SPEED",  "SA_CALIBRATE_ENCODER_SPEED",       False),
 ]
 
 
