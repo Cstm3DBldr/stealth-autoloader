@@ -13,14 +13,14 @@ logger = logging.getLogger('klipperscreen.sa_home')
 #   Row 1: MACROS (span 2) | CALIBRATION (span 2) | SETTINGS (span 2)
 
 _TOP_ROW = [
-    ("STATUS",        "sa_main",              "SA Status",      "color1"),
-    ("LOAD / UNLOAD", "sa_load_unload",       "Load / Unload",  "color3"),
+    ("STATUS",        "sa_main",              "SA Status",      "color1", "spoolman"),
+    ("LOAD / UNLOAD", "sa_load_unload",       "Load / Unload",  "color3", "load"),
 ]
 
 _BOT_ROW = [
-    ("MACROS",        "sa_macros",            "SA Macros",      "color2"),
-    ("CALIBRATION",   "sa_calibration_guide", "SA Calibration", "color1"),
-    ("SETTINGS",      "sa_settings",          "SA Settings",    "color3"),
+    ("MACROS",        "sa_macros",            "SA Macros",      "color2", "move"),
+    ("CALIBRATION",   "sa_calibration_guide", "SA Calibration", "color1", "settings"),
+    ("SETTINGS",      "sa_settings",          "SA Settings",    "color3", "settings"),
 ]
 
 
@@ -34,16 +34,14 @@ class Panel(ScreenPanel):
                         row_spacing=6, column_spacing=6, margin=10)
 
         # Top row — 2 buttons each spanning 3 of 6 columns
-        for idx, (label, panel, ptitle, color) in enumerate(_TOP_ROW):
-            btn = Gtk.Button(label=label)
-            btn.get_style_context().add_class(color)
+        for idx, (label, panel, ptitle, color, icon) in enumerate(_TOP_ROW):
+            btn = self._gtk.Button(icon, label, color)
             btn.connect("clicked", self._open_panel, panel, ptitle)
             grid.attach(btn, idx * 3, 0, 3, 1)
 
         # Bottom row — 3 buttons each spanning 2 of 6 columns
-        for idx, (label, panel, ptitle, color) in enumerate(_BOT_ROW):
-            btn = Gtk.Button(label=label)
-            btn.get_style_context().add_class(color)
+        for idx, (label, panel, ptitle, color, icon) in enumerate(_BOT_ROW):
+            btn = self._gtk.Button(icon, label, color)
             btn.connect("clicked", self._open_panel, panel, ptitle)
             grid.attach(btn, idx * 2, 1, 2, 1)
 
