@@ -12,16 +12,20 @@ logger = logging.getLogger('klipperscreen.sa_macros')
 # (label, gcode_template, needs_tool)
 # Use {t} as placeholder for TOOL=N when needs_tool=True
 _BTNS = [
-    ("HOME SELECTOR",  "SA_HOME",                          False),
-    ("SELECT PATH",    "SA_SELECT TOOL={t}",               True),
-    ("STATUS REPORT",  "SA_STATUS",                        False),
-    ("BUZZ DRIVE",     "SA_BUZZ_DRIVE",                    False),
-    ("BUZZ SELECTOR",  "SA_BUZZ_SELECTOR",                 False),
-    ("CAL SELECTOR",   "SA_CALIBRATE_SELECTOR",            False),
-    ("CAL DRIVE",      "SA_CALIBRATE_DRIVE",               False),
-    ("CAL BOWDEN",     "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
-    ("CAL ENCODER",    "SA_CALIBRATE_ENCODER TOOL={t}",    True),
-    ("CAL ENC SPEED",  "SA_CALIBRATE_ENCODER_SPEED",       False),
+    # ── Most used ─────────────────────────────────────────────────────────────
+    ("HOME SELECTOR",        "SA_HOME",                          False),
+    ("SELECT PATH",          "SA_SELECT TOOL={t}",               True),
+    ("STATUS REPORT",        "SA_STATUS",                        False),
+    ("ENGAGE",               "SA_ENGAGE",                        False),
+    ("DISENGAGE",            "SA_DISENGAGE",                     False),
+    # ── Calibration (in order) ────────────────────────────────────────────────
+    ("BUZZ DRIVE",           "SA_BUZZ_DRIVE",                    False),
+    ("BUZZ SELECTOR",        "SA_BUZZ_SELECTOR",                 False),
+    ("CAL SELECTOR",         "SA_CALIBRATE_SELECTOR",            False),
+    ("CAL DRIVE",            "SA_CALIBRATE_DRIVE",               False),
+    ("CAL ENCODER SPEED",    "SA_CALIBRATE_ENCODER_SPEED",       False),
+    ("CAL ENCODER",          "SA_CALIBRATE_ENCODER TOOL={t}",    True),
+    ("CAL BOWDEN",           "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
 ]
 
 
