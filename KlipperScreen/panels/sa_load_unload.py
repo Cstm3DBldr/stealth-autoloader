@@ -17,7 +17,7 @@ from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_load_unload')
 
-_BRANDS_DIR = os.path.expanduser("~/stealth-autoloader/filaments/brands")
+_BRANDS_DIR = os.path.expanduser("~/printer_data/config/stealth-autoloader/filament_profiles")
 
 try:
     import sa_filament_db as _db
