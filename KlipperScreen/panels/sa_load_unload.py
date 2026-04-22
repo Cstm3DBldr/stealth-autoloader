@@ -76,16 +76,17 @@ class Panel(ScreenPanel):
         super().__init__(screen, title or "Load / Unload")
         _sbs.apply()
 
-        self._op          = 'load'
-        self._wz          = {}
-        self._path_states = []
-        self._path_hexes  = []
-        self._path_mats   = []
-        self._path_entry  = []
-        self._path_th     = []
-        self._path_ex     = []
-        self._sel_path    = None
-        self._sel_btn     = None
+        self._op             = 'load'
+        self._wz             = {}
+        self._path_states    = []
+        self._path_hexes     = []
+        self._path_mats      = []
+        self._path_entry     = []
+        self._path_th        = []
+        self._path_ex        = []
+        self._sel_path       = None
+        self._sel_btn        = None
+        self._profile_timers = {}   # path -> GLib timeout id
 
         # ── Notebook ────────────────────────────────────────────────────────
         self._nb = Gtk.Notebook()
@@ -106,7 +107,7 @@ class Panel(ScreenPanel):
         # ── Nav bar ──────────────────────────────────────────────────────────
         nav = Gtk.Box(spacing=4, margin=4)
 
-        self._back_btn = _sbs.make("\u2190 Back",    "sa-btn-alt")
+        self._back_btn = _sbs.make("\u2190 Back",    "sa-btn")
         self._save_btn = _sbs.make("SAVE ONLY",      "sa-btn-warn")
         self._conf_btn = _sbs.make("Next \u2192",    "sa-btn")
 
@@ -134,13 +135,17 @@ class Panel(ScreenPanel):
                                    row_spacing=4, column_spacing=4)
         outer.pack_start(self._path_grid, True, True, 0)
 
-        op_box = Gtk.Box(spacing=6)
+        op_box = Gtk.Box(spacing=4)
         self._load_btn   = _sbs.make("\u25b6  LOAD",   "sa-btn")
         self._unload_btn = _sbs.make("\u25c0  UNLOAD", "sa-btn")
-        self._load_btn.connect("clicked",   self._do_load)
-        self._unload_btn.connect("clicked", self._do_unload)
-        op_box.pack_start(self._load_btn,   True, True, 0)
-        op_box.pack_start(self._unload_btn, True, True, 0)
+        self._setmat_btn = _sbs.make("\u270e  MATERIAL", "sa-btn")
+        self._clear_btn  = _sbs.make("\u2715  CLEAR",  "sa-btn-warn")
+        self._load_btn.connect("clicked",    self._do_load)
+        self._unload_btn.connect("clicked",  self._do_unload)
+        self._setmat_btn.connect("clicked",  self._do_set_material)
+        self._clear_btn.connect("clicked",   self._do_clear_profile)
+        for btn in (self._load_btn, self._unload_btn, self._setmat_btn, self._clear_btn):
+            op_box.pack_start(btn, True, True, 0)
         outer.pack_start(op_box, False, False, 0)
 
         self._path_status = Gtk.Label(label="No tool selected")
@@ -218,14 +223,20 @@ class Panel(ScreenPanel):
             self._load_btn.set_sensitive(has_path and has_prof and state != 'loaded')
             # UNLOAD: needs path with filament present (not empty)
             self._unload_btn.set_sensitive(has_path and state != 'empty')
-            # conf_btn: "Set Material \u2192" when path selected, else greyed
+            # SET MATERIAL: always available when a path is selected
+            self._setmat_btn.set_sensitive(has_path)
+            # CLEAR PROFILE: only when path is empty (no filament to protect)
+            self._clear_btn.set_sensitive(has_path and has_prof and state == 'empty')
+            # conf_btn hidden on path page — actions are now in the button row
             self._conf_btn.set_label("Set Material \u2192")
-            self._conf_btn.set_sensitive(has_path)
+            self._conf_btn.set_sensitive(False)
+            self._conf_btn.set_visible(False)
         elif is_color:
-            # End of wizard: DONE saves profile and returns — no load triggered here
+            self._conf_btn.set_visible(True)
             self._conf_btn.set_label("DONE")
             self._conf_btn.set_sensitive(has_color)
         else:
+            self._conf_btn.set_visible(True)
             self._conf_btn.set_label("Next \u2192")
             self._conf_btn.set_sensitive(True)
 
@@ -263,14 +274,17 @@ class Panel(ScreenPanel):
             self._path_grid.attach(btn, i % 3, i // 3, 1, 1)
 
         self._path_grid.show_all()
-        # Refresh LOAD/UNLOAD button state after path grid rebuild
+        # Refresh button states after path grid rebuild
         if self._cur == 'path':
             has_path = self._sel_path is not None
             has_prof = self._has_profile(self._sel_path)
             state    = self._effective_state(self._sel_path) if has_path else 'unknown'
             self._load_btn.set_sensitive(has_path and has_prof and state != 'loaded')
             self._unload_btn.set_sensitive(has_path and state != 'empty')
-            self._conf_btn.set_sensitive(has_path)
+            self._setmat_btn.set_sensitive(has_path)
+            self._clear_btn.set_sensitive(has_path and has_prof and state == 'empty')
+            self._conf_btn.set_sensitive(False)
+            self._conf_btn.set_visible(False)
 
     def _make_path_btn(self, i, state, hex_c, mat):
         btn = Gtk.Button()
@@ -538,24 +552,12 @@ class Panel(ScreenPanel):
 
     def _confirm(self, widget=None):
         if self._cur == 'path':
-            # conf_btn on path page = "Set Material ->" -> start wizard
             if self._sel_path is None:
                 return
             self._go_to_brand()
         elif self._cur == 'color':
-            # DONE: save profile, return to path page (load triggered separately)
             if self._wz.get('color_hex'):
-                self._gcode(self._set_material_gcode())
-                self._screen.show_popup_message(
-                    "T%d material saved — press LOAD to begin" % self._sel_path, level=1)
-                # Update local state so LOAD button enables immediately
-                i = self._sel_path
-                if i is not None and i < len(self._path_hexes):
-                    self._path_hexes[i] = self._wz.get('color_hex', '')
-                    self._path_mats[i]  = self._wz.get('material', '')
-                self._wz = {}
-                self._show_page('path')
-                self._update_path_status()
+                self._save_profile_and_return(show_msg=True)
         else:
             idx = self._page_index(self._cur)
             if idx < len(self._STEPS) - 1:
@@ -564,16 +566,57 @@ class Panel(ScreenPanel):
     def _save_only(self, widget=None):
         if not self._wz.get('color_hex'):
             return
-        self._gcode(self._set_material_gcode())
-        self._screen.show_popup_message(
-            "T%d material profile saved" % self._sel_path, level=1)
+        self._save_profile_and_return(show_msg=False)
+
+    def _save_profile_and_return(self, show_msg=True):
+        """Commit wizard profile to path, refresh grid, start auto-clear timer."""
         i = self._sel_path
-        if i is not None and i < len(self._path_hexes):
+        if i is None:
+            return
+        self._gcode(self._set_material_gcode())
+        if show_msg:
+            self._screen.show_popup_message(
+                "T%d material saved \u2014 press LOAD to begin" % i, level=1)
+        else:
+            self._screen.show_popup_message(
+                "T%d material profile saved" % i, level=1)
+        # Update local cache immediately so grid refreshes without waiting for
+        # a status update from Klipper
+        if i < len(self._path_hexes):
             self._path_hexes[i] = self._wz.get('color_hex', '')
             self._path_mats[i]  = self._wz.get('material', '')
         self._wz = {}
+        self._populate_path_page()   # rebuild grid with new color/material
         self._show_page('path')
         self._update_path_status()
+        self._start_profile_timer(i)
+
+    # ── 5-minute auto-clear timer ─────────────────────────────────────────────
+
+    def _start_profile_timer(self, path):
+        """If path isn't loaded within 5 minutes of profile save, clear it."""
+        self._cancel_profile_timer(path)
+        tid = GLib.timeout_add(5 * 60 * 1000, self._profile_timer_fired, path)
+        self._profile_timers[path] = tid
+
+    def _cancel_profile_timer(self, path):
+        tid = self._profile_timers.pop(path, None)
+        if tid is not None:
+            GLib.source_remove(tid)
+
+    def _profile_timer_fired(self, path):
+        """Auto-clear profile if path still hasn't been loaded."""
+        self._profile_timers.pop(path, None)
+        state = self._effective_state(path)
+        if state in ('empty', 'unknown', 'partial'):
+            logger.info("sa_load_unload: profile timer — clearing T%d (state=%s)", path, state)
+            self._clear_profile_gcode(path)
+        return False  # don't repeat
+
+    def _do_set_material(self, widget=None):
+        if self._sel_path is None:
+            return
+        self._go_to_brand()
 
     def _do_load(self, widget=None):
         path = self._sel_path
@@ -581,10 +624,10 @@ class Panel(ScreenPanel):
             return
         if not self._has_profile(path):
             self._screen.show_popup_message(
-                "Set material profile first (Set Material \u2192)", level=2)
+                "Set material profile first", level=2)
             return
+        self._cancel_profile_timer(path)
         self._gcode("SA_LOAD TOOL=%d" % path)
-        # Navigate to status tab to monitor the load
         self._screen.show_panel('sa_main', 'SA Status')
 
     def _do_unload(self, widget=None):
@@ -594,6 +637,31 @@ class Panel(ScreenPanel):
         self._gcode("SA_UNLOAD TOOL=%d" % path)
         self._screen.show_popup_message("Unloading T%d \u2026" % path, level=1)
         self._reset()
+
+    def _do_clear_profile(self, widget=None):
+        path = self._sel_path
+        if path is None:
+            return
+        state = self._effective_state(path)
+        if state != 'empty':
+            self._screen.show_popup_message(
+                "Cannot clear profile — unload filament first", level=2)
+            return
+        self._cancel_profile_timer(path)
+        self._clear_profile_gcode(path)
+        # Update local cache
+        if path < len(self._path_hexes):
+            self._path_hexes[path] = ''
+            self._path_mats[path]  = ''
+        self._populate_path_page()
+        self._update_path_status()
+        self._screen.show_popup_message("T%d profile cleared" % path, level=1)
+
+    def _clear_profile_gcode(self, path):
+        self._gcode(
+            'SA_SET_MATERIAL TOOL=%d MATERIAL="" BRAND="" LINE="" '
+            'COLOR_NAME="" COLOR_HEX="" LOAD_TEMP=200 UNLOAD_TEMP=185 '
+            'PURGE_SPEED=5 PURGE_LENGTH=30' % path)
 
     def _reset(self):
         self._wz       = {}
@@ -686,8 +754,7 @@ class Panel(ScreenPanel):
         return False
 
     def _clear_material(self, path):
-        self._gcode(
-            'SA_SET_MATERIAL TOOL=%d MATERIAL="" BRAND="" LINE="" '
-            'COLOR_NAME="" COLOR_HEX="" LOAD_TEMP=200 UNLOAD_TEMP=185 '
-            'PURGE_SPEED=5 PURGE_LENGTH=30' % path)
+        self._cancel_profile_timer(path)
+        self._clear_profile_gcode(path)
+        return False
         return False

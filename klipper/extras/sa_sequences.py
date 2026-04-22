@@ -262,11 +262,16 @@ class SASequences:
     # Park filament
     # ═══════════════════════════════════════════════════════════════════════════
 
-    def _park_filament_at_encoder(self, gcmd, path):
+    def _park_filament_at_encoder(self, gcmd, path, from_load=True):
         """Park filament tip at a consistent position just before the encoder.
 
         Two-pass encoder detection gives a repeatable starting point for blast.
         Servo must already be engaged before calling this.
+
+        from_load=True  (default): feed forward first to pull barely-inserted
+                                   filament into the drive gear before parking.
+        from_load=False (unload):  filament tip is already inside the tube —
+                                   skip the feed-forward, go straight to retract loop.
         """
         owner = self.owner
         motion = owner.motion
@@ -276,12 +281,14 @@ class SASequences:
 
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
-        # Feed forward first to pull filament into the drive gear and past the encoder.
-        # Without this, a retract on barely-inserted filament pushes it back out.
-        enc.set_direction(forward=True)
-        enc.reset_distance()
-        motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
-        owner.reactor.pause(owner.reactor.monotonic() + 0.3)
+        if from_load:
+            # Feed forward first to pull filament into the drive gear and past
+            # the encoder.  Without this, a retract on barely-inserted filament
+            # pushes it back out.
+            enc.set_direction(forward=True)
+            enc.reset_distance()
+            motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
         # Retract until encoder goes quiet (filament tip cleared encoder)
         enc.set_direction(forward=False)
@@ -1124,7 +1131,7 @@ class SASequences:
 
             # Park precisely at drive gear encoder (servo still engaged)
             gcmd.respond_info("SA: Positioning filament precisely at drive gear...")
-            self._park_filament_at_encoder(gcmd, path)
+            self._park_filament_at_encoder(gcmd, path, from_load=False)
 
             motion.servo_disengage()
             owner.path_states[path] = 'partial'
