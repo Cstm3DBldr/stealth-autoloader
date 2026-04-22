@@ -102,19 +102,19 @@ class Panel(ScreenPanel):
 
         outer.pack_start(Gtk.Separator(), False, False, 4)
 
+        # ── Configured values — scrolls with the page, uses accent color ──────
+        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn")
+        detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
+        outer.pack_start(detail_btn, False, False, 0)
+
+        outer.pack_start(Gtk.Separator(), False, False, 4)
+
         # ── Material profiles ─────────────────────────────────────────────────
         outer.pack_start(self._section("MATERIAL PROFILES"), False, False, 0)
 
         reset_btn = _sbs.make("Reset All Material Profiles", "sa-btn-warn")
         reset_btn.connect("clicked", self._reset_materials)
         outer.pack_start(reset_btn, False, False, 0)
-
-        outer.pack_start(Gtk.Separator(), False, False, 4)
-
-        # ── Configured values — scrolls with the page, uses accent color ──────
-        detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn")
-        detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
-        outer.pack_start(detail_btn, False, False, 0)
 
         scroll.add(outer)
         return scroll
