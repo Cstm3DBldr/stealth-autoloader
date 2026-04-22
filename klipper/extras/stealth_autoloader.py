@@ -348,6 +348,17 @@ class StealthAutoloader:
         except Exception:
             return 0.0
 
+    def _get_encoder_max_speed(self):
+        """Return calibrated encoder_max_speed from save_variables, or 0 if not set."""
+        try:
+            sv = self.printer.lookup_object('save_variables', None)
+            if sv:
+                val = sv.allVariables.get('encoder_max_speed', 0)
+                return float(val) if val else 0.0
+        except Exception:
+            pass
+        return 0.0
+
     # ══════════════════════════════════════════════════════════════════════════
     # GCode command registration
     # ══════════════════════════════════════════════════════════════════════════
@@ -740,9 +751,12 @@ class StealthAutoloader:
             'path_color_hexes'   : list(self.path_color_hexes),
             'path_load_temps'    : list(self.path_load_temps),
             'path_unload_temps'  : list(self.path_unload_temps),
-            'feed_speed'         : self.feed_speed,
-            'purge_length'       : self.purge_length,
-            'nozzle_distance'    : self.nozzle_distance,
+            'feed_speed'              : self.feed_speed,
+            'selector_speed'          : self.selector_speed,
+            'purge_length'            : self.purge_length,
+            'nozzle_distance'         : self.nozzle_distance,
+            'nozzle_to_sensor_dist'   : self.nozzle_to_sensor_dist,
+            'encoder_max_speed'       : self._get_encoder_max_speed(),
             'bowden_lengths'          : list(self._bowden_lengths),
             'selector_positions'      : list(self._selector_positions),
             'encoder_mpp'             : [self._encoder_mm_per_pulse(i) or 0.0

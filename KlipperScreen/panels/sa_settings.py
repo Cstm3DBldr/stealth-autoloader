@@ -118,16 +118,20 @@ class Panel(ScreenPanel):
 
         params_grid = Gtk.Grid(row_spacing=6, column_spacing=12, margin_start=4)
         self._param_labels = {}
-        for row, (key, label) in enumerate([
-            ("feed_speed",    "Feed Speed (mm/s)"),
-            ("purge_length",  "Default Purge Length (mm)"),
-            ("nozzle_dist",   "Nozzle Distance (mm)"),
-            ("bowden_avg",    "Avg Bowden Length (mm)"),
+        for row_idx, (key, label) in enumerate([
+            ("feed_speed",         "Feed Speed (mm/s)"),
+            ("selector_speed",     "Selector Speed (mm/s)"),
+            ("encoder_max_speed",  "Encoder Max Speed (mm/s)"),
+            ("blast_speed",        "Blast Speed 75% (mm/s)"),
+            ("purge_length",       "Default Purge Length (mm)"),
+            ("nozzle_to_sensor",   "Toolhead Sensor \u2192 Nozzle (mm)"),
+            ("nozzle_dist",        "Extruder Gears \u2192 Nozzle (mm)"),
+            ("bowden_avg",         "Avg Bowden Length (mm)"),
         ]):
             name_lbl = Gtk.Label(label=label, halign=Gtk.Align.START)
             val_lbl  = Gtk.Label(label="\u2014",   halign=Gtk.Align.END)
-            params_grid.attach(name_lbl, 0, row, 1, 1)
-            params_grid.attach(val_lbl,  1, row, 1, 1)
+            params_grid.attach(name_lbl, 0, row_idx, 1, 1)
+            params_grid.attach(val_lbl,  1, row_idx, 1, 1)
             self._param_labels[key] = val_lbl
 
         outer.pack_start(params_grid, False, False, 0)
@@ -172,14 +176,17 @@ class Panel(ScreenPanel):
         for child in box.get_children():
             box.remove(child)
 
-        num          = sa.get("num_paths", 0)
-        bowden_lens  = sa.get("bowden_lengths", [])
-        sel_pos      = sa.get("selector_positions", [])
-        enc_mpp      = sa.get("encoder_mpp", [])
-        feed_speed   = sa.get("feed_speed",    "\u2014")
-        purge_length = sa.get("purge_length",  "\u2014")
-        nozzle_dist  = sa.get("nozzle_distance", "\u2014")
-        drv_rot_dist = sa.get("drive_rotation_distance", "\u2014")
+        num               = sa.get("num_paths", 0)
+        bowden_lens       = sa.get("bowden_lengths", [])
+        sel_pos           = sa.get("selector_positions", [])
+        enc_mpp           = sa.get("encoder_mpp", [])
+        feed_speed        = sa.get("feed_speed",              "\u2014")
+        selector_speed    = sa.get("selector_speed",          "\u2014")
+        purge_length      = sa.get("purge_length",            "\u2014")
+        nozzle_dist       = sa.get("nozzle_distance",         "\u2014")
+        nozzle_to_sensor  = sa.get("nozzle_to_sensor_dist",   "\u2014")
+        drv_rot_dist      = sa.get("drive_rotation_distance", "\u2014")
+        enc_max           = sa.get("encoder_max_speed",       0)
 
         def row(label, value, fg="#FFFFFF"):
             r = Gtk.Box(spacing=8)
@@ -191,18 +198,40 @@ class Panel(ScreenPanel):
             r.pack_start(vl, False, False, 0)
             return r
 
-        box.pack_start(self._section("MOTION"), False, False, 0)
-        box.pack_start(row("Feed Speed",          "%s mm/s" % feed_speed),  False, False, 0)
-        box.pack_start(row("Purge Length",         "%s mm"   % purge_length), False, False, 0)
-        box.pack_start(row("Nozzle Distance",      "%s mm"   % nozzle_dist),  False, False, 0)
-        box.pack_start(row("Drive Rotation Dist",  str(drv_rot_dist)),        False, False, 0)
+        # ── Speeds ────────────────────────────────────────────────────────────
+        box.pack_start(self._section("SPEEDS"), False, False, 0)
+        box.pack_start(row("Feed Speed",        "%s mm/s" % feed_speed),     False, False, 0)
+        box.pack_start(row("Selector Speed",    "%s mm/s" % selector_speed), False, False, 0)
+        if enc_max and enc_max > 0:
+            blast = enc_max * 0.75
+            box.pack_start(row("Encoder Max Speed",
+                               "%.1f mm/s" % enc_max), False, False, 0)
+            box.pack_start(row("Blast Speed (75%)",
+                               "%.1f mm/s" % blast),   False, False, 0)
+        else:
+            box.pack_start(row("Encoder Max Speed", "\u2014 (run CAL ENCODER SPEED)"),
+                           False, False, 0)
 
+        # ── Distances ─────────────────────────────────────────────────────────
+        box.pack_start(Gtk.Separator(), False, False, 4)
+        box.pack_start(self._section("DISTANCES"), False, False, 0)
+        box.pack_start(row("Purge Length",
+                           "%s mm" % purge_length),       False, False, 0)
+        box.pack_start(row("Toolhead Sensor \u2192 Nozzle",
+                           "%s mm" % nozzle_to_sensor),   False, False, 0)
+        box.pack_start(row("Extruder Gears \u2192 Nozzle",
+                           "%s mm" % nozzle_dist),        False, False, 0)
+        box.pack_start(row("Drive Rotation Dist",
+                           str(drv_rot_dist)),            False, False, 0)
+
+        # ── Per-path bowden ───────────────────────────────────────────────────
         box.pack_start(Gtk.Separator(), False, False, 4)
         box.pack_start(self._section("PER-PATH BOWDEN LENGTH"), False, False, 0)
         for i in range(num):
             val = ("%.1f mm" % bowden_lens[i]) if i < len(bowden_lens) else "\u2014"
             box.pack_start(row("T%d" % i, val, "#90CAF9"), False, False, 0)
 
+        # ── Selector positions ────────────────────────────────────────────────
         if sel_pos:
             box.pack_start(Gtk.Separator(), False, False, 4)
             box.pack_start(self._section("SELECTOR POSITIONS"), False, False, 0)
@@ -210,6 +239,7 @@ class Panel(ScreenPanel):
                 val = ("%.2f mm" % sel_pos[i]) if i < len(sel_pos) else "\u2014"
                 box.pack_start(row("T%d" % i, val, "#FFCC80"), False, False, 0)
 
+        # ── Encoder mm/pulse ──────────────────────────────────────────────────
         if enc_mpp:
             box.pack_start(Gtk.Separator(), False, False, 4)
             box.pack_start(self._section("ENCODER mm/pulse"), False, False, 0)
@@ -277,11 +307,19 @@ class Panel(ScreenPanel):
         else:
             bowden_val = "\u2014"
 
+        enc_max = sa.get("encoder_max_speed", 0)
+        blast_val = ("%.1f" % (enc_max * 0.75)) if enc_max > 0 else "\u2014"
+        enc_max_val = ("%.1f" % enc_max) if enc_max > 0 else "\u2014"
+
         mapping = {
-            "feed_speed":   sa.get("feed_speed",     "\u2014"),
-            "purge_length": sa.get("purge_length",   "\u2014"),
-            "nozzle_dist":  sa.get("nozzle_distance", "\u2014"),
-            "bowden_avg":   bowden_val,
+            "feed_speed":        sa.get("feed_speed",           "\u2014"),
+            "selector_speed":    sa.get("selector_speed",       "\u2014"),
+            "encoder_max_speed": enc_max_val,
+            "blast_speed":       blast_val,
+            "purge_length":      sa.get("purge_length",         "\u2014"),
+            "nozzle_to_sensor":  sa.get("nozzle_to_sensor_dist", "\u2014"),
+            "nozzle_dist":       sa.get("nozzle_distance",      "\u2014"),
+            "bowden_avg":        bowden_val,
         }
         for key, val in mapping.items():
             lbl = self._param_labels.get(key)
