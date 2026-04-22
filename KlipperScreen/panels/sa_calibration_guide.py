@@ -9,120 +9,186 @@ from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_calibration_guide')
 
-_GREY  = "#616161"
-_GREEN = "#388E3C"
-_AMBER = "#F9A825"
+_GREY      = "#616161"
+_GREEN     = "#388E3C"
+_AMBER     = "#F9A825"
+_NUM_STEPS = 7
+
+_STEP_TITLES = [
+    "1 — Test Motors",
+    "2 — Home Selector",
+    "3 — Calibrate Selector",
+    "4 — Calibrate Drive Motor",
+    "5 — Calibrate Encoder Speed",
+    "6 — Calibrate Encoder (mm/pulse)",
+    "7 — Calibrate Bowden Length",
+]
 
 
 class Panel(ScreenPanel):
-    """Step-by-step calibration guide for the Stealth Autoloader."""
+    """Step-by-step calibration guide — one full page per step."""
 
     def __init__(self, screen, title):
         super().__init__(screen, title or "SA Calibration")
         _sbs.apply()
 
-        self._num_paths    = 6
-        self._last_sa      = {}
-        self._pending_cmd  = None
+        self._num_paths   = 6
+        self._last_sa     = {}
+        self._pending_cmd = None
+        self._step        = 0
 
+        # Outer stack: "pages" (step navigator) | "tool" (path picker)
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_transition_duration(150)
 
-        self._stack.add_named(self._build_guide_page(), "guide")
+        self._stack.add_named(self._build_pages_view(), "pages")
         self._stack.add_named(self._build_tool_page(),  "tool")
+
         self.content.add(self._stack)
 
-    # ── Guide page ─────────────────────────────────────────────────────────────
+    # ── Pages view ────────────────────────────────────────────────────────────
 
-    def _build_guide_page(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    def _build_pages_view(self):
+        wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_overlay_scrolling(False)
+        # Inner stack — one ScrolledWindow per step
+        self._page_stack = Gtk.Stack()
+        self._page_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self._page_stack.set_transition_duration(200)
 
-        self._guide_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                                  spacing=8, margin=10)
-        scroll.add(self._guide_box)
-        outer.pack_start(scroll, True, True, 0)
-        return outer
+        self._step_boxes = []
+        for i in range(_NUM_STEPS):
+            scroll = Gtk.ScrolledWindow()
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_overlay_scrolling(False)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=12)
+            scroll.add(box)
+            self._step_boxes.append(box)
+            self._page_stack.add_named(scroll, "step%d" % i)
 
-    def _populate_guide(self, sa):
-        box = self._guide_box
+        wrapper.pack_start(self._page_stack, True, True, 0)
+
+        # Nav bar: [◀ Back]  Step N of 7  [Next ▶]
+        nav = Gtk.Box(spacing=6, margin=6)
+
+        self._prev_btn = _sbs.make("◀  Back", "sa-btn-alt")
+        self._prev_btn.set_size_request(110, -1)
+        self._prev_btn.connect("clicked", self._go_prev)
+
+        self._step_lbl = Gtk.Label()
+        self._step_lbl.set_hexpand(True)
+        self._step_lbl.set_halign(Gtk.Align.CENTER)
+
+        self._next_btn = _sbs.make("Next  ▶", "sa-btn-alt")
+        self._next_btn.set_size_request(110, -1)
+        self._next_btn.connect("clicked", self._go_next)
+
+        nav.pack_start(self._prev_btn, False, False, 0)
+        nav.pack_start(self._step_lbl, True,  True,  0)
+        nav.pack_start(self._next_btn, False, False, 0)
+        wrapper.pack_start(nav, False, False, 0)
+
+        return wrapper
+
+    def _update_nav(self):
+        self._step_lbl.set_markup(
+            '<b>Step %d of %d</b>' % (self._step + 1, _NUM_STEPS))
+        self._prev_btn.set_sensitive(self._step > 0)
+        self._next_btn.set_sensitive(self._step < _NUM_STEPS - 1)
+
+    def _go_prev(self, widget):
+        if self._step > 0:
+            self._step -= 1
+            self._show_step()
+
+    def _go_next(self, widget):
+        if self._step < _NUM_STEPS - 1:
+            self._step += 1
+            self._show_step()
+
+    def _show_step(self):
+        self._page_stack.set_visible_child_name("step%d" % self._step)
+        self._update_nav()
+        self._populate_step(self._step, self._last_sa)
+
+    # ── Step content ──────────────────────────────────────────────────────────
+
+    def _populate_step(self, idx, sa):
+        box = self._step_boxes[idx]
         for child in box.get_children():
             box.remove(child)
 
-        homed        = sa.get("current_path", -1) >= 0
-        sel_pos      = sa.get("selector_positions", [])
-        enc_mpp      = sa.get("encoder_mpp", [])
-        bowden_lens  = sa.get("bowden_lengths", [])
-        drv_rot      = sa.get("drive_rotation_distance", 0.0)
-        enc_max      = sa.get("encoder_max_speed", 0.0)
-        num          = sa.get("num_paths", self._num_paths)
-        cal_state    = sa.get("cal_state", "")
+        homed       = sa.get("current_path", -1) >= 0
+        sel_pos     = sa.get("selector_positions", [])
+        enc_mpp     = sa.get("encoder_mpp", [])
+        bowden_lens = sa.get("bowden_lengths", [])
+        drv_rot     = sa.get("drive_rotation_distance", 0.0)
+        enc_max     = sa.get("encoder_max_speed", 0.0)
+        num         = sa.get("num_paths", self._num_paths)
+        cal_state   = sa.get("cal_state", "")
 
-        # ── 1. TEST MOTORS ────────────────────────────────────────────────────
-        box.pack_start(self._section("1 — TEST MOTORS"), False, False, 0)
+        box.pack_start(self._section(_STEP_TITLES[idx]), False, False, 0)
+
+        if   idx == 0: self._step_motors(box)
+        elif idx == 1: self._step_home(box, homed)
+        elif idx == 2: self._step_selector(box, sel_pos, cal_state, num)
+        elif idx == 3: self._step_drive(box, drv_rot)
+        elif idx == 4: self._step_enc_speed(box, enc_max)
+        elif idx == 5: self._step_encoder(box, enc_mpp, num)
+        elif idx == 6: self._step_bowden(box, bowden_lens, num)
+
+        box.show_all()
+
+    def _step_motors(self, box):
         box.pack_start(self._hint(
             "Run both buzz tests to confirm motor wiring and direction."),
             False, False, 0)
-        row = Gtk.Grid(column_spacing=6, row_spacing=0)
-        b1  = _sbs.make("BUZZ DRIVE",    "sa-btn-alt")
-        b2  = _sbs.make("BUZZ SELECTOR", "sa-btn-alt")
+        row = Gtk.Grid(column_spacing=8)
+        row.set_column_homogeneous(True)
+        b1 = _sbs.make("BUZZ DRIVE",    "sa-btn-alt")
+        b2 = _sbs.make("BUZZ SELECTOR", "sa-btn-alt")
         b1.connect("clicked", self._send, "SA_BUZZ_DRIVE")
         b2.connect("clicked", self._send, "SA_BUZZ_SELECTOR")
         row.attach(b1, 0, 0, 1, 1)
         row.attach(b2, 1, 0, 1, 1)
-        row.set_column_homogeneous(True)
         box.pack_start(row, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 2. HOME SELECTOR ─────────────────────────────────────────────────
-        box.pack_start(self._section("2 — HOME SELECTOR"), False, False, 0)
-        homed_str = ("\u2713 Homed" if homed else "\u2715 Not homed")
-        homed_fg  = _GREEN if homed else _AMBER
-        box.pack_start(self._status(homed_str, homed_fg), False, False, 0)
+    def _step_home(self, box, homed):
+        box.pack_start(
+            self._status("\u2713 Homed" if homed else "\u2715 Not homed",
+                         _GREEN if homed else _AMBER),
+            False, False, 0)
         box.pack_start(self._hint(
-            "Moves selector to the physical endstop and zeros its position. "
+            "Moves the selector to the physical endstop and zeros its position. "
             "Required before any selector movement."),
             False, False, 0)
-        home_btn = _sbs.make("HOME SELECTOR", "sa-btn-alt")
-        home_btn.connect("clicked", self._send, "SA_HOME")
-        box.pack_start(home_btn, False, False, 0)
+        btn = _sbs.make("HOME SELECTOR", "sa-btn-alt")
+        btn.connect("clicked", self._send, "SA_HOME")
+        box.pack_start(btn, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 3. CALIBRATE SELECTOR ─────────────────────────────────────────────
-        box.pack_start(self._section("3 — CALIBRATE SELECTOR"), False, False, 0)
-        # Check if any positions differ from default (N * 21mm)
-        has_sel_cal = (bool(sel_pos) and
-                       any(abs(sel_pos[i] - i * 21.0) > 1.0
-                           for i in range(len(sel_pos))))
-        if has_sel_cal:
-            pos_str = "  ".join("T%d:%.1f" % (i, sel_pos[i])
-                                for i in range(len(sel_pos)))
+    def _step_selector(self, box, sel_pos, cal_state, num):
+        has_cal = (bool(sel_pos) and
+                   any(abs(sel_pos[i] - i * 21.0) > 1.0 for i in range(len(sel_pos))))
+        if has_cal:
+            pos_str = "  ".join("T%d:%.1f" % (i, sel_pos[i]) for i in range(len(sel_pos)))
             box.pack_start(self._status("\u2713 Calibrated  " + pos_str, _GREEN),
                            False, False, 0)
         else:
-            box.pack_start(self._status("\u2715 Using defaults (run to calibrate)",
-                                        _AMBER), False, False, 0)
-        box.pack_start(self._hint(
-            "Sweeps the full rail length using stallguard to find the far end, "
-            "then homes back to measure total travel and calculate even path spacing."),
-            False, False, 0)
+            box.pack_start(self._status("\u2715 Using defaults (run to calibrate)", _AMBER),
+                           False, False, 0)
         if cal_state:
             box.pack_start(self._status("In progress: %s" % cal_state, _AMBER),
                            False, False, 0)
-        sel_btn = _sbs.make("CAL SELECTOR", "sa-btn-alt")
-        sel_btn.connect("clicked", self._send, "SA_CALIBRATE_SELECTOR")
-        box.pack_start(sel_btn, False, False, 0)
+        box.pack_start(self._hint(
+            "Sweeps the full rail using stallguard to find the far end, then "
+            "homes back to measure total travel and calculate even path spacing."),
+            False, False, 0)
+        btn = _sbs.make("CAL SELECTOR", "sa-btn-alt")
+        btn.connect("clicked", self._send, "SA_CALIBRATE_SELECTOR")
+        box.pack_start(btn, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 4. CALIBRATE DRIVE MOTOR ─────────────────────────────────────────
-        box.pack_start(self._section("4 — CALIBRATE DRIVE MOTOR"), False, False, 0)
+    def _step_drive(self, box, drv_rot):
         if drv_rot and drv_rot > 0:
             box.pack_start(
                 self._status("\u2713 rotation_distance = %.4f" % drv_rot, _GREEN),
@@ -131,92 +197,75 @@ class Panel(ScreenPanel):
             box.pack_start(self._status("\u2715 Not calibrated", _AMBER),
                            False, False, 0)
         box.pack_start(self._hint(
-            "Manually load filament through the drive gear. Marks a 100mm "
+            "Manually load filament through the drive gear. Marks a 100 mm "
             "reference, drives it, then prompts you to measure actual movement "
             "to calculate rotation_distance."),
             False, False, 0)
-        drv_btn = _sbs.make("CAL DRIVE", "sa-btn-alt")
-        drv_btn.connect("clicked", self._send, "SA_CALIBRATE_DRIVE")
-        box.pack_start(drv_btn, False, False, 0)
+        btn = _sbs.make("CAL DRIVE", "sa-btn-alt")
+        btn.connect("clicked", self._send, "SA_CALIBRATE_DRIVE")
+        box.pack_start(btn, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 5. CALIBRATE ENCODER SPEED ───────────────────────────────────────
-        box.pack_start(self._section("5 — CALIBRATE ENCODER SPEED"), False, False, 0)
+    def _step_enc_speed(self, box, enc_max):
         if enc_max and enc_max > 0:
             box.pack_start(
-                self._status("\u2713 Max speed = %.1f mm/s  (blast = %.1f mm/s)"
+                self._status("\u2713 Max = %.1f mm/s  (blast = %.1f mm/s)"
                              % (enc_max, enc_max * 0.75), _GREEN),
                 False, False, 0)
         else:
-            box.pack_start(self._status("\u2715 Not calibrated  (blast defaults to 75 mm/s)",
-                                        _AMBER), False, False, 0)
+            box.pack_start(
+                self._status("\u2715 Not calibrated  (blast defaults to 75 mm/s)", _AMBER),
+                False, False, 0)
         box.pack_start(self._hint(
             "Ramps feed speed up until the encoder starts slipping, then saves "
             "the highest reliable speed. Run with filament loaded through the drive gear."),
             False, False, 0)
-        spd_btn = _sbs.make("CAL ENCODER SPEED", "sa-btn-alt")
-        spd_btn.connect("clicked", self._send, "SA_CALIBRATE_ENCODER_SPEED")
-        box.pack_start(spd_btn, False, False, 0)
+        btn = _sbs.make("CAL ENCODER SPEED", "sa-btn-alt")
+        btn.connect("clicked", self._send, "SA_CALIBRATE_ENCODER_SPEED")
+        box.pack_start(btn, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 6. CALIBRATE ENCODER (mm/pulse) ──────────────────────────────────
-        box.pack_start(self._section("6 — CALIBRATE ENCODER (mm/pulse)"),
-                       False, False, 0)
+    def _step_encoder(self, box, enc_mpp, num):
         box.pack_start(self._hint(
-            "Measures how many mm of filament the encoder sees per pulse. "
+            "Measures mm of filament per encoder pulse. "
             "Run per path with filament loaded past the drive gear."),
             False, False, 0)
-        enc_grid = Gtk.Grid(column_spacing=4, row_spacing=4)
-        enc_grid.set_column_homogeneous(True)
+        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+        grid.set_column_homogeneous(True)
         for i in range(num):
-            mpp = enc_mpp[i] if i < len(enc_mpp) else 0.0
+            mpp  = enc_mpp[i] if i < len(enc_mpp) else 0.0
             done = mpp > 0.0
             fg   = _GREEN if done else _GREY
-            status = ("%.4f" % mpp) if done else "\u2715"
-            lbl = Gtk.Label(halign=Gtk.Align.CENTER)
+            lbl  = Gtk.Label(halign=Gtk.Align.CENTER)
             lbl.set_markup('<span foreground="%s" font_size="small">T%d\n%s</span>'
-                           % (fg, i, status))
+                           % (fg, i, ("%.4f" % mpp) if done else "\u2715"))
             lbl.set_size_request(-1, 34)
-            enc_grid.attach(lbl, i % 3, i // 3 * 2, 1, 1)
+            grid.attach(lbl, i % 3, i // 3 * 2,     1, 1)
             btn = _sbs.make("T%d" % i, "sa-btn-alt")
-            btn.connect("clicked", self._pick_tool,
-                        "SA_CALIBRATE_ENCODER TOOL={t}", i)
-            enc_grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
-        box.pack_start(enc_grid, False, False, 0)
+            btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_ENCODER TOOL={t}", i)
+            grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
+        box.pack_start(grid, False, False, 0)
 
-        box.pack_start(Gtk.Separator(), False, False, 2)
-
-        # ── 7. CALIBRATE BOWDEN LENGTH ────────────────────────────────────────
-        box.pack_start(self._section("7 — CALIBRATE BOWDEN LENGTH"),
-                       False, False, 0)
+    def _step_bowden(self, box, bowden_lens, num):
         box.pack_start(self._hint(
-            "Loads filament from the drive gear until it reaches the extruder "
-            "sensor and records the distance. Run per path after encoder is calibrated."),
+            "Loads filament from the drive gear to the extruder sensor and "
+            "records the distance. Run per path after encoder is calibrated."),
             False, False, 0)
-        bow_grid = Gtk.Grid(column_spacing=4, row_spacing=4)
-        bow_grid.set_column_homogeneous(True)
+        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+        grid.set_column_homogeneous(True)
         for i in range(num):
             blen = bowden_lens[i] if i < len(bowden_lens) else 800.0
-            # 800mm is default; assume calibrated if measurably different
             done = abs(blen - 800.0) > 5.0
             fg   = _GREEN if done else _GREY
-            status = ("%.0fmm" % blen) if done else "\u2715"
-            lbl = Gtk.Label(halign=Gtk.Align.CENTER)
+            lbl  = Gtk.Label(halign=Gtk.Align.CENTER)
             lbl.set_markup('<span foreground="%s" font_size="small">T%d\n%s</span>'
-                           % (fg, i, status))
+                           % (fg, i, ("%.0fmm" % blen) if done else "\u2715"))
             lbl.set_size_request(-1, 34)
-            bow_grid.attach(lbl, i % 3, i // 3 * 2, 1, 1)
+            grid.attach(lbl, i % 3, i // 3 * 2,     1, 1)
             btn = _sbs.make("T%d" % i, "sa-btn-alt")
-            btn.connect("clicked", self._pick_tool,
-                        "SA_CALIBRATE_BOWDEN TOOL={t}", i)
-            bow_grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
-        box.pack_start(bow_grid, False, False, 0)
+            btn.connect("clicked", self._pick_tool, "SA_CALIBRATE_BOWDEN TOOL={t}", i)
+            grid.attach(btn, i % 3, i // 3 * 2 + 1, 1, 1)
+        box.pack_start(grid, False, False, 0)
 
-        box.show_all()
-
-    # ── Tool picker page ───────────────────────────────────────────────────────
+    # ── Tool picker page ──────────────────────────────────────────────────────
 
     def _build_tool_page(self):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -237,7 +286,7 @@ class Panel(ScreenPanel):
         back_btn.set_margin_end(8)
         back_btn.set_margin_top(6)
         back_btn.set_margin_bottom(8)
-        back_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("guide"))
+        back_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("pages"))
         outer.pack_start(back_btn, False, False, 0)
         return outer
 
@@ -251,7 +300,7 @@ class Panel(ScreenPanel):
             self._tool_grid.attach(btn, i % 3, i // 3, 1, 1)
         self._tool_grid.show_all()
 
-    # ── Helpers ────────────────────────────────────────────────────────────────
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _section(self, title):
         lbl = Gtk.Label(halign=Gtk.Align.START)
@@ -259,8 +308,7 @@ class Panel(ScreenPanel):
         return lbl
 
     def _hint(self, text):
-        lbl = Gtk.Label(label=text, halign=Gtk.Align.START, xalign=0.0,
-                        wrap=True)
+        lbl = Gtk.Label(label=text, halign=Gtk.Align.START, xalign=0.0, wrap=True)
         lbl.get_style_context().add_class("color4")
         return lbl
 
@@ -282,16 +330,16 @@ class Panel(ScreenPanel):
             cmd = self._pending_cmd.replace("{t}", str(tool_idx))
             self._screen._ws.klippy.gcode_script(cmd)
             self._pending_cmd = None
-        self._stack.set_visible_child_name("guide")
+        self._stack.set_visible_child_name("pages")
 
-    # ── Lifecycle ──────────────────────────────────────────────────────────────
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def activate(self):
         sa = self._printer.data.get("stealth_autoloader", {})
         self._last_sa   = dict(sa)
         self._num_paths = sa.get("num_paths", 6)
-        self._stack.set_visible_child_name("guide")
-        self._populate_guide(self._last_sa)
+        self._stack.set_visible_child_name("pages")
+        self._show_step()
 
     def process_update(self, action, data):
         if action != "notify_status_update":
@@ -302,9 +350,9 @@ class Panel(ScreenPanel):
             n = sa.get("num_paths")
             if n is not None:
                 self._num_paths = n
-            GLib.idle_add(self._refresh_guide)
+            GLib.idle_add(self._refresh_current_step)
 
-    def _refresh_guide(self):
-        if self._stack.get_visible_child_name() == "guide":
-            self._populate_guide(self._last_sa)
+    def _refresh_current_step(self):
+        if self._stack.get_visible_child_name() == "pages":
+            self._populate_step(self._step, self._last_sa)
         return False
