@@ -53,6 +53,10 @@ class SACalibration:
                 self._enc_respond(gcmd, state, val)
             elif state.startswith('bow_'):
                 self._bow_respond(gcmd, state, val)
+            elif state == 'load_purge':
+                self.owner.sequences._load_purge_respond(gcmd, val)
+            elif state == 'unload_done':
+                self.owner.sequences._unload_done_respond(gcmd, val)
             else:
                 gcmd.respond_info(
                     "SA CAL: Unknown calibration state '%s' — clearing." % state)
@@ -79,14 +83,16 @@ class SACalibration:
             motion.servo_engage()
 
     def _clear(self):
-        self.owner._cal_state = None
-        self.owner._cal_data  = {}
+        self.owner._cal_state  = None
+        self.owner._cal_data   = {}
+        self.owner._cal_prompt = ''
 
     def _yes(self, value):
         return value.lower() in ('yes', 'y', '1', 'true', 'ok')
 
     def _prompt(self, gcmd, message, *commands):
         """Print a message with copy-paste commands clearly separated."""
+        self.owner._cal_prompt = message
         lines = [
             "",
             "SA CAL: " + message,
@@ -521,31 +527,23 @@ class SACalibration:
             motion._cancel_timeout(dn)
             owner.gcode.run_script_from_command(
                 "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s SET_POSITION=0" % dn)
 
             gcmd.respond_info(
-                "SA CAL: Attempt %d/3 — continuous feed until encoder reads "
+                "SA CAL: Attempt %d/3 — stepping until encoder reads "
                 "%.0fmm (mm_per_pulse=%.5f)..." % (attempt, target, data['best_mpp']))
 
-            # Queue long move — returns immediately (SYNC=0)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s MOVE=%.1f SPEED=%.1f SYNC=0"
-                % (dn, max_travel, cal_speed))
+            # Step-by-step: motor stops fully between steps so encoder
+            # pulses are delivered one-by-one (no CAN batching issue).
+            # Fast approach until 80% of target, then 3mm precision steps.
+            fast_step     = 10.0
+            slow_step     = 3.0
+            slow_threshold = target * 0.8
+            travelled     = 0.0
 
-            # Poll encoder every 50ms — reactor processes pulse callbacks each pause
-            deadline = owner.reactor.monotonic() + (max_travel / cal_speed) + 2.0
-            while enc.get_distance() < target:
-                owner.reactor.pause(owner.reactor.monotonic() + poll_interval)
-                if owner.reactor.monotonic() > deadline:
-                    break
-
-            # Abrupt stop — at cal speed (~25mm/s) overshoot is <2mm
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=0" % dn)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-            owner.gcode.run_script_from_command(
-                "MANUAL_STEPPER STEPPER=%s ENABLE=1" % dn)
+            while enc.get_distance() < target and travelled < max_travel:
+                step = slow_step if enc.get_distance() >= slow_threshold else fast_step
+                motion.drive_move(step, speed=cal_speed)
+                travelled += step
 
             enc_reading = enc.get_distance()
 
@@ -648,6 +646,99 @@ class SACalibration:
                     "SA CAL: Not saved. mm_per_pulse remains %.5f." % orig_mpp)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # SA_CALIBRATE_ENCODER_SPEED
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def calibrate_encoder_speed(self, gcmd):
+        """Find the max feed speed at which the encoder counts accurately.
+
+        Steps through speeds [25, 50, 75, 100, 125, 150, 175, 200] mm/s.
+        Each speed: run 100mm forward, compare encoder reading to commanded
+        distance.  3 tries per speed — need 2/3 within tolerance to pass.
+        Stops at first failing speed.  Saves safe_speed (max_pass * 0.8)
+        to variables.cfg as 'encoder_max_speed'.
+        """
+        owner  = self.owner
+        motion = owner.motion
+        path   = gcmd.get_int('TOOL', 0, minval=0, maxval=owner.num_paths - 1)
+
+        if owner._cal_state is not None:
+            raise gcmd.error(
+                "SA CAL: Calibration in progress (state=%s). SA_RESPOND VALUE=abort"
+                % owner._cal_state)
+
+        if not owner._selector_homed:
+            gcmd.respond_info("SA CAL: Homing selector...")
+            motion.selector_home()
+
+        gcmd.respond_info(
+            "SA ENCODER SPEED CALIBRATION — Path %d\n"
+            "===========================================\n"
+            "Requires filament through drive gear and encoder.\n"
+            "Tests speeds 25→200mm/s, 3 tries each, 100mm per try.\n"
+            "Stops at first failing speed. Safe speed (80%%) saved."
+            % path)
+
+        motion.servo_disengage()
+        motion.selector_move_to(owner._selector_positions[path])
+        owner.current_path = path
+        motion.servo_engage()
+
+        enc        = owner._encoder(path)
+        test_dist  = 100.0
+        tolerance  = 0.05   # 5% max error per try
+        test_speeds = [25, 50, 75, 100, 125, 150, 175, 200]
+        retract_speed = 25.0
+        max_pass   = 0
+
+        for speed in test_speeds:
+            trial_errors = []
+            passes = 0
+            for attempt in range(3):
+                enc.set_direction(forward=True)
+                enc.reset_distance()
+                motion.drive_move(test_dist, speed=float(speed))
+                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                enc_reading = enc.get_distance()
+                error = abs(enc_reading - test_dist) / test_dist
+                trial_errors.append(error * 100.0)
+                if error <= tolerance:
+                    passes += 1
+                # Retract at safe low speed — accuracy not needed here
+                enc.set_direction(forward=False)
+                enc.reset_distance()
+                motion.drive_move(-test_dist, speed=retract_speed)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.2)
+
+            avg_err = sum(trial_errors) / len(trial_errors)
+            passed  = passes >= 2
+            gcmd.respond_info(
+                "  %3dmm/s: %s  (errors: %s  avg %.1f%%)"
+                % (speed,
+                   "PASS" if passed else "FAIL",
+                   [round(e, 1) for e in trial_errors],
+                   avg_err))
+
+            if passed:
+                max_pass = speed
+            else:
+                break   # no point testing faster speeds
+
+        motion.servo_disengage()
+
+        if max_pass == 0:
+            gcmd.respond_info(
+                "SA CAL: FAILED at all speeds. Check encoder wiring / mm_per_pulse.")
+            return
+
+        safe_speed = max_pass * 0.80
+        self._save_variable('encoder_max_speed', '%.1f' % safe_speed)
+        gcmd.respond_info(
+            "SA CAL: Max reliable speed %dmm/s → safe speed %.0fmm/s (80%%).\n"
+            "Saved as encoder_max_speed — Bowden cal blast speed updated automatically."
+            % (max_pass, safe_speed))
+
+    # ══════════════════════════════════════════════════════════════════════════
     # SA_CALIBRATE_BOWDEN
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -704,67 +795,103 @@ class SACalibration:
                 gcmd.respond_info("SA CAL: Must be > 0.")
                 return
 
-            approach_length = estimated * 0.9
+            # Three-phase approach speeds (48V / TMC5160)
+            # Blast speed: use calibrated encoder_max_speed if available, else 100mm/s safe default
+            sv = owner.printer.lookup_object('save_variables', None)
+            saved_max = float(sv.allVariables.get('encoder_max_speed', 0)) if sv else 0
+            # encoder_max_speed tested at 100mm near tube entrance (low friction).
+            # Bowden blast pushes full tube depth — apply 0.75x for tube friction load.
+            blast_speed = (saved_max * 0.75) if saved_max > 0 else 75.0
+            quick_speed    = 50.0              # 65–82.5% — no sensor check
+            approach_speed = owner.feed_speed  # 82.5%+ — sensor polling
+
+            # Distances scale with user's estimate:
+            #   blast = 75%, quick = half of remainder (12.5%), approach = final 12.5%+
+            blast_end  = estimated * 0.75
+            quick_end  = blast_end + (estimated - blast_end) * 0.5   # midpoint of remainder
+            # Sensor polling from quick_end; overshoot budget = 20% beyond estimated
+            inch_limit = estimated * 0.20
+
             gcmd.respond_info(
-                "SA CAL: Running 3 trials "
-                "(fast approach %.0fmm, inch to sensor)..." % approach_length)
+                "SA CAL: Running 3 trials\n"
+                "  Blast  %.0f–%.0fmm @ %.0fmm/s (no sensor)\n"
+                "  Quick  %.0f–%.0fmm @ %.0fmm/s (no sensor)\n"
+                "  Approach %.0fmm+ @ %.0fmm/s with sensor polling\n"
+                "  NOTE: accuracy depends on your estimate being close to actual length."
+                % (0, blast_end, blast_speed,
+                   blast_end, quick_end, quick_speed,
+                   quick_end, approach_speed))
+
+            # Select path and engage servo once — stays engaged for all 3 trials
+            motion.servo_disengage()
+            motion.selector_move_to(owner._selector_positions[path])
+            owner.current_path = path
+            motion.servo_engage()
+
+            enc = owner._encoder(path)
+            retract_speed = blast_speed * 0.5
+
+            def _retract_to_clear(fast_dist):
+                """Retract fast_dist at retract_speed, then 5mm pulses at 25mm/s
+                until encoder goes quiet (filament tip clears encoder).
+                Max 20 slow pulses (100mm) before giving up."""
+                if fast_dist > 0:
+                    motion.drive_move(-fast_dist, speed=retract_speed)
+                enc.set_direction(forward=False)
+                for _ in range(20):
+                    enc.reset_distance()
+                    motion.drive_move(-5.0, speed=25.0)
+                    owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                    if abs(enc.get_distance()) < 0.5:
+                        break
+                enc.set_direction(forward=True)
+                enc.reset_distance()
+
+            # Pre-run: clear any filament stub sitting in encoder before trial 1
+            gcmd.respond_info("SA CAL: Clearing encoder — retracting until filament clears...")
+            _retract_to_clear(0.0)   # no fast phase — just slow pulses from current position
+            gcmd.respond_info("SA CAL: Encoder cleared — starting 3 trials.")
 
             for trial in range(3):
                 gcmd.respond_info("SA CAL: === Trial %d/3 ===" % (trial + 1))
 
-                motion.servo_disengage()
-                motion.selector_move_to(owner._selector_positions[path])
-                owner.current_path = path
-                motion.servo_engage()
-
-                enc = owner._encoder(path)
                 enc.set_direction(forward=True)
                 enc.reset_distance()
 
-                current_pos = 0.0
-                while current_pos < approach_length:
-                    step = min(owner.feed_step_size * 5.0, approach_length - current_pos)
-                    motion.drive_move(step)
-                    current_pos += step
+                # Phase 1: blast to 75% — single move, no sensor check
+                motion.drive_move(blast_end, speed=blast_speed)
+
+                # Phase 2: quick to midpoint of remainder — single move, no sensor check
+                motion.drive_move(quick_end - blast_end, speed=quick_speed)
+
+                # Phase 3: sensor polling from quick_end until triggered or overshoot limit
+                triggered = False
+                inched    = 0.0
+                while not triggered and inched < inch_limit:
+                    motion.drive_move(owner.feed_step_size, speed=approach_speed)
+                    inched += owner.feed_step_size
                     owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
                     if owner._extruder_sensor_active(path):
-                        break
+                        triggered = True
 
-                if owner._extruder_sensor_active(path):
-                    length = enc.get_distance()
-                    gcmd.respond_info(
-                        "SA CAL: Sensor triggered during approach at %.2fmm." % length)
-                else:
-                    inch_max = estimated * 0.3
-                    inched   = 0.0
-                    while not owner._extruder_sensor_active(path) and inched < inch_max:
-                        motion.drive_move(owner.feed_step_size)
-                        inched += owner.feed_step_size
-                        owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+                if not triggered:
+                    motion.servo_disengage()
+                    self._clear()
+                    raise gcmd.error(
+                        "SA CAL: Extruder sensor path %d not triggered within %.0fmm of "
+                        "your estimate (%.0fmm). Re-run with a larger estimate."
+                        % (path, inch_limit, estimated))
 
-                    if not owner._extruder_sensor_active(path):
-                        motion.servo_disengage()
-                        self._clear()
-                        raise gcmd.error(
-                            "SA CAL: Extruder sensor path %d not triggered after %.0fmm. "
-                            "Check sensor or increase estimate." % (path, estimated))
-
-                    length = enc.get_distance()
-                    gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
-
+                length = enc.get_distance()
+                gcmd.respond_info("SA CAL: Sensor triggered at %.2fmm." % length)
                 data['trials'].append(length)
 
-                retract_target = length + 20.0
-                enc.set_direction(forward=False)
-                enc.reset_distance()
-                retracted = 0.0
-                while retracted < retract_target:
-                    motion.drive_move(-owner.feed_step_size)
-                    retracted += owner.feed_step_size
-                    owner.reactor.pause(owner.reactor.monotonic() + owner.sensor_delay)
+                # Retract 95% fast, then slow-pulse until encoder goes quiet
+                # Stops before overshooting drive gears — no fixed overshoot distance
+                _retract_to_clear(length * 0.95)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-                motion.servo_disengage()
-                owner.reactor.pause(owner.reactor.monotonic() + 0.5)
+            motion.servo_disengage()
 
             trials     = data['trials']
             avg_length = sum(trials) / len(trials)
