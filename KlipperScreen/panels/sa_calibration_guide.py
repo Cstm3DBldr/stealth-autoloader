@@ -164,7 +164,9 @@ class Panel(ScreenPanel):
         row.attach(b2, 1, 0, 1, 1)
         box.pack_start(row, False, False, 0)
         box.pack_start(self._expect(
-            "Motor clicks/buzzes and moves slightly back and forth."),
+            "Drive: first move pushes filament toward the toolhead (forward).\n"
+            "Selector: first move travels away from the endstop toward higher path numbers.\n"
+            "Both motors click/buzz and return to starting position."),
             False, False, 0)
         box.pack_start(self._warn(
             "No movement \u2192 check motor wiring and driver power.\n"
