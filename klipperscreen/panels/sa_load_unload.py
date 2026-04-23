@@ -303,15 +303,16 @@ class Panel(ScreenPanel):
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_valign(Gtk.Align.CENTER)
-        box.set_halign(Gtk.Align.CENTER)
+        # Horizontal: T0  |  swatch  |  Material
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        row.set_valign(Gtk.Align.CENTER)
+        row.set_halign(Gtk.Align.CENTER)
 
         t_lbl = Gtk.Label()
         t_lbl.set_markup('<b>T%d</b>' % i)
 
-        # Fixed-size Cairo swatch — no font-size-based height expansion
-        sw = 44
+        # Fixed-size Cairo swatch
+        sw = 36
         if _swatch is not None:
             if hex_c:
                 hexes = [hex_c]
@@ -321,7 +322,6 @@ class Panel(ScreenPanel):
             else:
                 swatch = _swatch.make_state_da(sw, state)
         else:
-            # Fallback: plain label if cairo module unavailable
             swatch = Gtk.Label()
             swatch.set_size_request(sw, sw)
             if hex_c:
@@ -332,12 +332,12 @@ class Panel(ScreenPanel):
 
         mat_lbl = Gtk.Label()
         mat_lbl.set_markup(
-            '<span font_size="small">%s</span>' % (mat[:6] if mat else "---"))
+            '<span font_size="small">%s</span>' % (mat[:10] if mat else "---"))
 
-        box.pack_start(t_lbl,   False, False, 0)
-        box.pack_start(swatch,  False, False, 2)
-        box.pack_start(mat_lbl, False, False, 0)
-        btn.add(box)
+        row.pack_start(t_lbl,   False, False, 0)
+        row.pack_start(swatch,  False, False, 0)
+        row.pack_start(mat_lbl, False, False, 0)
+        btn.add(row)
         btn.connect("clicked", self._select_path, i)
         return btn
 
