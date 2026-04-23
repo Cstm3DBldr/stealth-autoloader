@@ -60,9 +60,11 @@ class Panel(ScreenPanel):
         self._step_boxes = []
         for i in range(_NUM_STEPS):
             scroll = Gtk.ScrolledWindow()
-            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
             scroll.set_overlay_scrolling(False)
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=12)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10,
+                          margin_top=12, margin_start=12, margin_end=12,
+                          margin_bottom=20)
             scroll.add(box)
             self._step_boxes.append(box)
             self._page_stack.add_named(scroll, "step%d" % i)
