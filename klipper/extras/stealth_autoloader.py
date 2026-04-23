@@ -424,6 +424,9 @@ class StealthAutoloader:
              "Store filament profile for a path. TOOL=N MATERIAL=PLA BRAND=x "
              "LINE=x COLOR_NAME=x COLOR_HEX=#rrggbb "
              "LOAD_TEMP=200 UNLOAD_TEMP=185 PURGE_SPEED=5 PURGE_LENGTH=30"),
+            ('SA_SET_CONFIG',
+             self._cmd_set_config,
+             "Stage a config value for SAVE_CONFIG. PARAM=name VALUE=val"),
             ('SA_PARK',
              self._cmd_park,
              "Park filament at drive encoder (phases 0-2 only). TOOL=N"),
@@ -709,6 +712,22 @@ class StealthAutoloader:
                color_name, color_hex,
                load_temp, unload_temp, purge_length))
 
+    def _cmd_set_config(self, gcmd):
+        """SA_SET_CONFIG PARAM=name VALUE=val — stage a config value for SAVE_CONFIG."""
+        param = gcmd.get('PARAM', '').strip()
+        value = gcmd.get('VALUE', '').strip()
+        if not param or value == '':
+            gcmd.respond_info(
+                "Usage: SA_SET_CONFIG PARAM=config_key VALUE=number\n"
+                "Example: SA_SET_CONFIG PARAM=feed_speed VALUE=60\n"
+                "Then run SAVE_CONFIG to persist and restart.")
+            return
+        configfile = self.printer.lookup_object('configfile')
+        configfile.set('stealth_autoloader', param, value)
+        gcmd.respond_info(
+            "SA_SET_CONFIG: staged stealth_autoloader.%s = %s  "
+            "(run SAVE_CONFIG to persist and restart)" % (param, value))
+
     def _cmd_respond(self, gcmd):
         """SA_RESPOND VALUE=x — deliver a console response to a waiting calibration routine."""
         value = gcmd.get('VALUE')
@@ -762,6 +781,12 @@ class StealthAutoloader:
             'purge_length'            : self.purge_length,
             'nozzle_distance'         : self.nozzle_distance,
             'nozzle_to_sensor_dist'   : self.nozzle_to_sensor_dist,
+            'tube_length'             : self.tube_length,
+            'load_temperature'        : self.load_temperature,
+            'engage_max_distance'     : self.engage_max_distance,
+            'servo_engaged_angle'     : self.servo_engaged_angle,
+            'servo_disengaged_angle'  : self.servo_disengaged_angle,
+            'tip_form_temp'           : self.tip_form_temp,
             'encoder_max_speed'       : self._get_encoder_max_speed(),
             'bowden_lengths'          : list(self._bowden_lengths),
             'selector_positions'      : list(self._selector_positions),
