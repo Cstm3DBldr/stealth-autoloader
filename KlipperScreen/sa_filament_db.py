@@ -81,7 +81,9 @@ def load_brand(filepath):
                 'bed_temp':     float,
                 'notes':        str,
                 'colors': [
-                    {'id': str, 'name': str, 'hex': str},
+                    {'id': str, 'name': str, 'hex': str,
+                     'color_type': str (single/dual/tri/gradient),
+                     'hex_2': str, 'hex_3': str},
                     ...
                 ]
             },
@@ -127,9 +129,12 @@ def load_brand(filepath):
             color_hex  = cp.get(section, 'color_hex',  fallback='#808080')
             if line_id in product_lines:
                 product_lines[line_id]['colors'].append({
-                    'id':   color_id,
-                    'name': color_name,
-                    'hex':  color_hex,
+                    'id':         color_id,
+                    'name':       color_name,
+                    'hex':        color_hex,
+                    'color_type': cp.get(section, 'color_type', fallback='single'),
+                    'hex_2':      cp.get(section, 'color_hex_2', fallback=''),
+                    'hex_3':      cp.get(section, 'color_hex_3', fallback=''),
                 })
 
     return {
@@ -165,6 +170,16 @@ def get_colors(brand_data, line_id):
     if pl is None:
         return []
     return pl['colors']
+
+
+def get_color_hexes(color):
+    """Return list of hex strings for a color entry (1-3 depending on color_type)."""
+    hexes = [color.get('hex', '#808080')]
+    if color.get('hex_2'):
+        hexes.append(color['hex_2'])
+    if color.get('hex_3'):
+        hexes.append(color['hex_3'])
+    return hexes
 
 
 def _getfloat(cp, section, key, default):
