@@ -309,10 +309,10 @@ class Panel(ScreenPanel):
         row.set_halign(Gtk.Align.CENTER)
 
         t_lbl = Gtk.Label()
-        t_lbl.set_markup('<b>T%d</b>' % i)
+        t_lbl.set_markup('<span font_size="x-large"><b>T%d</b></span>' % i)
 
         # Fixed-size Cairo swatch
-        sw = 36
+        sw = 54
         if _swatch is not None:
             if hex_c:
                 hexes = [hex_c]
@@ -332,7 +332,7 @@ class Panel(ScreenPanel):
 
         mat_lbl = Gtk.Label()
         mat_lbl.set_markup(
-            '<span font_size="small">%s</span>' % (mat[:10] if mat else "---"))
+            '<span font_size="large">%s</span>' % (mat[:10] if mat else "---"))
 
         row.pack_start(t_lbl,   False, False, 0)
         row.pack_start(swatch,  False, False, 0)
