@@ -303,17 +303,22 @@ class Panel(ScreenPanel):
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
 
-        # Full-width row: [T# centered in left half] [swatch] [mat centered in right half]
+        # Full-width row: [T# centred in left half] [swatch] [mat centred in right half]
+        # SizeGroup ensures both halves are always identical width so the swatch
+        # sits at the exact geometric centre of the button regardless of label text.
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
 
-        # Left section — T# centered in its share of the button width
+        sg = Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL)
+
+        # Left section
         t_lbl = Gtk.Label()
         t_lbl.set_markup('<span font_size="x-large"><b>T%d</b></span>' % i)
         t_lbl.set_hexpand(True)
         t_lbl.set_halign(Gtk.Align.CENTER)
         t_lbl.set_valign(Gtk.Align.CENTER)
+        sg.add_widget(t_lbl)
 
-        # Centre — fixed-size Cairo swatch, pinned to button vertical centre
+        # Centre — fixed-size Cairo swatch
         sw = 54
         if _swatch is not None:
             if hex_c:
@@ -334,13 +339,14 @@ class Panel(ScreenPanel):
         swatch.set_valign(Gtk.Align.CENTER)
         swatch.set_halign(Gtk.Align.CENTER)
 
-        # Right section — material centered in its share of the button width
+        # Right section
         mat_lbl = Gtk.Label()
         mat_lbl.set_markup(
             '<span font_size="large">%s</span>' % (mat[:10] if mat else "---"))
         mat_lbl.set_hexpand(True)
         mat_lbl.set_halign(Gtk.Align.CENTER)
         mat_lbl.set_valign(Gtk.Align.CENTER)
+        sg.add_widget(mat_lbl)
 
         row.pack_start(t_lbl,   True,  True,  0)
         row.pack_start(swatch,  False, False, 6)
