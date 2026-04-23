@@ -311,7 +311,7 @@ class Panel(ScreenPanel):
         t_lbl.set_markup('<b>T%d</b>' % i)
 
         # Fixed-size Cairo swatch — no font-size-based height expansion
-        sw = 36
+        sw = 44
         if _swatch is not None:
             if hex_c:
                 hexes = [hex_c]
@@ -469,33 +469,45 @@ class Panel(ScreenPanel):
         flowbox.show_all()
 
     def _make_color_button(self, c):
-        hex_c = c.get('hex', '')
-        name  = c.get('name', '?')
+        hex_c      = c.get('hex',        '')
+        name       = c.get('name',       '?')
+        color_type = c.get('color_type', 'single')
+        hex2       = c.get('hex_2',      '')
+        hex3       = c.get('hex_3',      '')
 
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
         btn.set_size_request(72, 82)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        vbox.set_valign(Gtk.Align.CENTER)
 
-        # Colored swatch fills top portion via DrawingArea
-        da = Gtk.DrawingArea()
-        da.set_size_request(-1, 52)
+        # Circular multi-color swatch
+        if _swatch is not None:
+            hexes = [hex_c]
+            if hex2: hexes.append(hex2)
+            if hex3: hexes.append(hex3)
+            da = _swatch.make_swatch_da(52, hexes, color_type or 'single')
+        else:
+            # Fallback rounded rect if cairo unavailable
+            da = Gtk.DrawingArea()
+            da.set_size_request(-1, 52)
+            r, g, b = _hex_to_rgb01(hex_c)
+            da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
+
+        # Name label
         r, g, b = _hex_to_rgb01(hex_c)
-        da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
-
-        # Name label — choose text color for contrast
         lum = _luminance(r, g, b)
         fg  = "#FFFFFF" if lum < 0.45 else "#212121"
         name_lbl = Gtk.Label()
         name_lbl.set_ellipsize(3)
         name_lbl.set_max_width_chars(9)
         name_lbl.set_markup(
-            '<span font_size="x-small" foreground="%s">%s</span>' % (fg, name))
+            '<span font_size="x-small">%s</span>' % name)
         name_lbl.set_halign(Gtk.Align.CENTER)
 
-        vbox.pack_start(da,       True,  True,  0)
-        vbox.pack_start(name_lbl, False, False, 3)
+        vbox.pack_start(da,       False, False, 2)
+        vbox.pack_start(name_lbl, False, False, 2)
         btn.add(vbox)
         btn.connect("clicked", self._select_color, c)
         return btn
