@@ -23,9 +23,9 @@ def draw_swatch(cr, cx, cy, radius, hex_list, color_type='single'):
     if ct == 'gradient' and len(hex_list) >= 2:
         _draw_gradient(cr, cx, cy, radius, hex_list[0], hex_list[1])
     elif ct == 'dual' and len(hex_list) >= 2:
-        _draw_pie(cr, cx, cy, radius, hex_list[:2])
+        _draw_dual(cr, cx, cy, radius, hex_list[0], hex_list[1])
     elif ct == 'tri' and len(hex_list) >= 3:
-        _draw_pie(cr, cx, cy, radius, hex_list[:3])
+        _draw_tri(cr, cx, cy, radius, hex_list[0], hex_list[1], hex_list[2])
     else:
         r, g, b = _hex_to_rgb(hex_list[0])
         cr.set_source_rgb(r, g, b)
@@ -75,17 +75,56 @@ def draw_state_swatch(cr, cx, cy, radius, state):
     cr.stroke()
 
 
-def _draw_pie(cr, cx, cy, radius, hex_colors):
-    n = len(hex_colors)
-    step  = 2 * math.pi / n
+def _draw_dual(cr, cx, cy, radius, hex1, hex2):
+    """Left-half = hex1, right-half = hex2  (clean vertical split via clip+rect)."""
+    r1, g1, b1 = _hex_to_rgb(hex1)
+    r2, g2, b2 = _hex_to_rgb(hex2)
+    cr.save()
+    cr.arc(cx, cy, radius, 0, 2 * math.pi)
+    cr.clip()
+    # Left half
+    cr.set_source_rgb(r1, g1, b1)
+    cr.rectangle(cx - radius, cy - radius, radius, radius * 2)
+    cr.fill()
+    # Right half
+    cr.set_source_rgb(r2, g2, b2)
+    cr.rectangle(cx, cy - radius, radius, radius * 2)
+    cr.fill()
+    # Thin dividing line at center
+    cr.set_source_rgba(0, 0, 0, 0.25)
+    cr.set_line_width(1.0)
+    cr.move_to(cx, cy - radius)
+    cr.line_to(cx, cy + radius)
+    cr.stroke()
+    cr.restore()
+
+
+def _draw_tri(cr, cx, cy, radius, hex1, hex2, hex3):
+    """Three equal 120° pie sectors starting from top (12 o'clock)."""
+    colors = [hex1, hex2, hex3]
+    step  = 2 * math.pi / 3
     start = -math.pi / 2
-    for i, hx in enumerate(hex_colors):
+    cr.save()
+    cr.arc(cx, cy, radius, 0, 2 * math.pi)
+    cr.clip()
+    for i, hx in enumerate(colors):
         r, g, b = _hex_to_rgb(hx)
         cr.set_source_rgb(r, g, b)
         cr.move_to(cx, cy)
-        cr.arc(cx, cy, radius, start + i * step, start + (i + 1) * step)
+        a1 = start + i * step
+        a2 = start + (i + 1) * step
+        cr.arc(cx, cy, radius, a1, a2)
         cr.close_path()
         cr.fill()
+    # Sector dividers
+    cr.set_source_rgba(0, 0, 0, 0.25)
+    cr.set_line_width(1.0)
+    for i in range(3):
+        a = start + i * step
+        cr.move_to(cx, cy)
+        cr.line_to(cx + radius * math.cos(a), cy + radius * math.sin(a))
+        cr.stroke()
+    cr.restore()
 
 
 def _draw_gradient(cr, cx, cy, radius, hex_start, hex_end):

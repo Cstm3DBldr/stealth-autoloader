@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stealth Autoloader</title>
+<style>
+/* Mainsail-inspired dark theme */
+:root {
+  --bg:      #12151a;
+  --surface: #1e2228;
+  --card:    #252930;
+  --border:  #3a3f4a;
+  --text:    #e0e0e0;
+  --muted:   #7a8090;
+  --blue:    #2196f3;
+  --blue-dk: #1565c0;
+  --green:   #4caf50;
+  --orange:  #ff9800;
+  --amber:   #ffc107;
+  --red:     #f44336;
+  --grey:    #555;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: Roboto, 'Segoe UI', sans-serif;
+  font-size: 14px; line-height: 1.5;
+}
+.container { max-width: 960px; margin: 0 auto; padding: 12px; }
+
+/* Cards */
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 12px; overflow: hidden;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; user-select: none;
+}
+.card-header h2 {
+  font-size: 13px; font-weight: 600; letter-spacing: 0.8px;
+  text-transform: uppercase; color: var(--blue);
+  display: flex; align-items: center; gap: 8px;
+}
+.card-header .caret { color: var(--muted); font-size: 16px; line-height: 1; }
+
+/* Status bar */
+.status-bar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 7px 14px; font-size: 12px; color: var(--muted);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.pill {
+  display: inline-block; padding: 1px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+.pill-ok   { background: rgba(76,175,80,0.15);  color: var(--green);  }
+.pill-warn { background: rgba(255,152,0,0.15);  color: var(--orange); }
+.pill-off  { background: rgba(85,85,85,0.15);   color: var(--muted);  }
+.pill-err  { background: rgba(244,67,54,0.15);  color: var(--red);    }
+
+/* Toolbar */
+.toolbar {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 9px 14px; border-bottom: 1px solid var(--border);
+}
+.btn {
+  padding: 5px 13px; border: none; border-radius: 4px;
+  background: var(--blue); color: #fff; cursor: pointer;
+  font-size: 12px; font-weight: 500; letter-spacing: 0.2px;
+  transition: background 0.15s;
+}
+.btn:hover    { background: var(--blue-dk); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn-outline  { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn-outline:hover { background: rgba(255,255,255,0.06); }
+.btn-danger   { background: var(--red); }
+.btn-danger:hover { background: #c62828; }
+.btn-success  { background: var(--green); }
+.btn-success:hover { background: #2e7d32; }
+.btn-sm { padding: 3px 10px; font-size: 11px; }
+.flex-spacer { flex: 1; }
+
+/* Table */
+table { width: 100%; border-collapse: collapse; }
+th {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+  color: var(--muted); padding: 6px 8px; text-align: left; font-weight: 400;
+}
+td { padding: 7px 8px; border-top: 1px solid var(--border); vertical-align: middle; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.active-row td { background: rgba(33,150,243,0.05) !important; }
+.active-row td:first-child { border-left: 3px solid var(--blue); padding-left: 5px; }
+
+/* State badges */
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.b-loaded  { background: rgba(76,175,80,0.15);  color: var(--green);  }
+.b-empty   { background: rgba(85,85,85,0.15);   color: var(--muted);  }
+.b-partial { background: rgba(255,152,0,0.15);  color: var(--orange); }
+.b-unknown { background: rgba(255,193,7,0.1);   color: var(--amber);  }
+
+/* Sensor dots */
+.dot { font-size: 11px; }
+.dot-on  { color: var(--green); }
+.dot-off { color: var(--grey);  }
+
+/* Color swatch */
+.swatch {
+  display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+  vertical-align: middle; margin-right: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+
+/* Row action buttons */
+.row-actions { display: flex; gap: 4px; }
+
+/* Collapsible */
+.collapsible { max-height: 0; overflow: hidden; transition: max-height 0.2s ease-out; }
+.collapsible.open { max-height: 2000px; }
+
+/* Encoder monospace values */
+.mono { font-family: monospace; font-size: 12px; color: var(--muted); }
+
+/* ── Dialog / Overlay ────────────────────────────────────────────────── */
+.overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.78); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.overlay.open { display: flex; }
+.dialog {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px;
+  max-width: 580px; width: 92%; max-height: 88vh; overflow-y: auto;
+}
+.dialog-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.dialog-hdr h3 { font-size: 16px; color: var(--blue); }
+.x-btn {
+  background: none; border: none; color: var(--muted);
+  font-size: 20px; cursor: pointer; line-height: 1; padding: 2px 6px;
+}
+.x-btn:hover { color: var(--text); }
+
+/* Wizard step bar */
+.step-bar { display: flex; gap: 4px; margin-bottom: 6px; }
+.step-seg {
+  flex: 1; height: 3px; border-radius: 2px; background: var(--border);
+  transition: background 0.2s;
+}
+.step-seg.done   { background: var(--blue-dk); }
+.step-seg.active { background: var(--blue); }
+.step-lbl { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+
+/* Chips */
+.chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.chip {
+  padding: 6px 14px; border-radius: 20px; background: var(--surface);
+  border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; font-size: 13px; transition: border-color 0.15s;
+}
+.chip:hover { border-color: var(--blue); color: var(--blue); }
+.chip.sel   { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+.line-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.line-chip {
+  width: 100%; padding: 8px 14px; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; font-size: 13px; text-align: left; transition: border-color 0.15s;
+}
+.line-chip:hover { border-color: var(--blue); }
+.line-chip.sel   { border-color: var(--blue); background: rgba(33,150,243,0.1); }
+.line-chip small { color: var(--muted); font-size: 11px; }
+
+/* Color grid */
+.color-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px; margin-bottom: 12px;
+}
+.color-chip {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 6px 4px; border-radius: 6px; background: var(--surface);
+  border: 2px solid transparent; cursor: pointer; transition: border-color 0.15s;
+}
+.color-chip:hover { border-color: rgba(33,150,243,0.5); }
+.color-chip.sel   { border-color: var(--blue); }
+.color-cs  { width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.15); }
+.color-cn  { font-size: 10px; text-align: center; margin-top: 4px; color: var(--muted); line-height: 1.2; }
+
+/* Info box */
+.info-box {
+  background: rgba(33,150,243,0.07); border: 1px solid rgba(33,150,243,0.25);
+  border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px;
+  line-height: 1.7;
+}
+.info-box-warn {
+  background: rgba(255,152,0,0.07); border: 1px solid rgba(255,152,0,0.25);
+  border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px;
+}
+
+/* Dialog footer */
+.dialog-ftr {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+/* Connection badge */
+.conn {
+  position: fixed; top: 10px; right: 12px;
+  padding: 3px 10px; border-radius: 10px;
+  font-size: 11px; font-weight: 600; z-index: 300; pointer-events: none;
+}
+.conn-ok  { background: rgba(76,175,80,0.2);  color: var(--green); }
+.conn-err { background: rgba(244,67,54,0.2);  color: var(--red);   }
+
+/* Responsive: hide TH/EX columns on narrow screens */
+@media (max-width: 560px) {
+  .col-th, .col-ex { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="conn conn-err" id="conn">Connecting…</div>
+
+<!-- ── Main Panel ─────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header" style="cursor:default">
+    <h2>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="opacity:.8">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
+      </svg>
+      Stealth Autoloader
+    </h2>
+    <span id="sa-summary" style="font-size:12px;color:var(--muted)">—</span>
+  </div>
+
+  <div class="status-bar">
+    <span>Selector: <strong id="sel-pos">—</strong></span>
+    <span>Drive: <strong id="drive-st">—</strong></span>
+    <span class="flex-spacer"></span>
+    <span id="last-upd" style="font-size:11px;color:var(--muted)">—</span>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn btn-sm" onclick="cmd('SA_HOME')">⌂ Home</button>
+    <button class="btn btn-sm btn-outline" onclick="cmd('SA_ENGAGE')">▲ Engage</button>
+    <button class="btn btn-sm btn-outline" onclick="cmd('SA_DISENGAGE')">▼ Disengage</button>
+    <button class="btn btn-sm btn-outline" onclick="cmd('SA_STATUS')">⊙ Status</button>
+    <span class="flex-spacer"></span>
+    <button class="btn btn-sm btn-outline" onclick="refresh()">↻ Refresh</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:34px">#</th>
+        <th>State</th>
+        <th title="Entry sensor">EN</th>
+        <th class="col-th" title="Toolhead sensor">TH</th>
+        <th class="col-ex" title="Extruder sensor">EX</th>
+        <th>Material</th>
+        <th>Color</th>
+        <th style="width:130px">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="tbl-body">
+      <tr><td colspan="8" style="color:var(--muted);padding:18px;text-align:center">Connecting to printer…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Encoders & Diagnostics ─────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header" onclick="toggleSection('enc')">
+    <h2>Encoders &amp; Diagnostics</h2>
+    <span class="caret" id="enc-caret">▸</span>
+  </div>
+  <div class="collapsible" id="enc-body-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:34px">#</th>
+          <th>Encoder dist</th>
+          <th>Bowden target</th>
+          <th>Load temp</th>
+          <th>Entry</th>
+          <th>Toolhead</th>
+          <th>Extruder</th>
+        </tr>
+      </thead>
+      <tbody id="enc-body">
+        <tr><td colspan="7" style="color:var(--muted);padding:12px;text-align:center">—</td></tr>
+      </tbody>
+    </table>
+    <div class="toolbar" style="border-top:1px solid var(--border);border-bottom:none">
+      <button class="btn btn-sm btn-outline" onclick="cmd('SA_BUZZ_DRIVE')">Buzz Drive</button>
+      <button class="btn btn-sm btn-outline" onclick="cmd('SA_BUZZ_SELECTOR')">Buzz Selector</button>
+      <button class="btn btn-sm btn-outline" onclick="cmd('SA_CALIBRATE_SELECTOR')">Cal Selector</button>
+      <button class="btn btn-sm btn-outline" onclick="cmd('SA_CALIBRATE_DRIVE')">Cal Drive</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<!-- ── Load / Unload Wizard ───────────────────────────────────────────── -->
+<div class="overlay" id="overlay">
+  <div class="dialog">
+    <div class="dialog-hdr">
+      <h3 id="dlg-title">Load T0</h3>
+      <button class="x-btn" onclick="closeDialog()">✕</button>
+    </div>
+    <div class="step-bar" id="dlg-steps"></div>
+    <div class="step-lbl" id="dlg-lbl"></div>
+    <div id="dlg-body"></div>
+    <div class="dialog-ftr">
+      <button class="btn btn-outline btn-sm" onclick="closeDialog()">Cancel</button>
+      <button class="btn btn-outline btn-sm" id="btn-back"    onclick="stepBack()"    style="display:none">← Back</button>
+      <button class="btn btn-outline btn-sm" id="btn-no-db"   onclick="doDirectCmd()" style="display:none">Load without material</button>
+      <button class="btn btn-success  btn-sm" id="btn-load"   onclick="doLoad()"      style="display:none">LOAD</button>
+      <button class="btn btn-danger   btn-sm" id="btn-unload" onclick="doUnload()"    style="display:none">UNLOAD</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────
+// Works same-origin when the file is served by Moonraker (port 7125).
+// If you open the file from a different origin, hard-code HOST below:
+//   const HOST = '192.168.1.214:7125';
+const HOST = location.host.includes(':') ? location.host : location.hostname + ':7125';
+const API  = location.protocol + '//' + HOST;
+const WS   = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + HOST + '/websocket';
+
+// ── Runtime state ──────────────────────────────────────────────────────────
+let _st        = null;   // stealth_autoloader status dict
+let _wsOk      = false;
+let _hasBrands = false;  // true if custom Moonraker component is installed
+let _brands    = [];
+let _lines     = [];     // product lines for selected brand
+let _materials = [];     // unique materials in _lines
+
+// Wizard
+let _wz   = {};          // accumulated wizard selections
+let _step = 0;
+let _mode = 'load';      // 'load' | 'unload'
+
+// ── WebSocket (live updates) ───────────────────────────────────────────────
+let _ws, _wsId = 1;
+
+function connectWS() {
+  try {
+    _ws = new WebSocket(WS);
+    _ws.onopen = () => {
+      _wsOk = true;
+      setBadge(true);
+      _ws.send(JSON.stringify({
+        jsonrpc: '2.0', method: 'printer.objects.subscribe',
+        params: { objects: { stealth_autoloader: null } }, id: _wsId++
+      }));
+    };
+    _ws.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      // Initial subscription response contains full status
+      if (msg.id && msg.result && msg.result.status) {
+        const sa = msg.result.status.stealth_autoloader;
+        if (sa) { _st = Object.assign(_st || {}, sa); render(); }
+      }
+      // Incremental updates (only changed fields)
+      if (msg.method === 'notify_status_update') {
+        const sa = msg.params[0].stealth_autoloader;
+        if (sa) { _st = Object.assign(_st || {}, sa); render(); }
+      }
+    };
+    _ws.onerror = () => {};
+    _ws.onclose = () => { _wsOk = false; setBadge(false); setTimeout(connectWS, 3000); };
+  } catch (e) { setTimeout(connectWS, 3000); }
+}
+
+function setBadge(ok) {
+  const el = document.getElementById('conn');
+  el.textContent = ok ? 'Live' : 'Offline';
+  el.className   = 'conn ' + (ok ? 'conn-ok' : 'conn-err');
+}
+
+// ── REST polling fallback (when WebSocket not available) ──────────────────
+async function pollStatus() {
+  if (_wsOk) return;
+  try {
+    const r = await fetch(API + '/printer/objects/query?stealth_autoloader');
+    if (!r.ok) return;
+    const d = await r.json();
+    const sa = d.result?.status?.stealth_autoloader;
+    if (sa) { _st = Object.assign(_st || {}, sa); render(); setBadge(true); }
+  } catch (e) { setBadge(false); }
+}
+setInterval(pollStatus, 2000);
+
+// ── GCode ─────────────────────────────────────────────────────────────────
+async function cmd(gcode) {
+  try {
+    await fetch(API + '/printer/gcode/script', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script: gcode })
+    });
+  } catch (e) {}
+}
+
+// ── Filament brand check ───────────────────────────────────────────────────
+async function checkBrands() {
+  try {
+    const r = await fetch(API + '/machine/stealth_autoloader/brands');
+    if (!r.ok) { _hasBrands = false; return; }
+    const d = await r.json();
+    _brands    = (d.brands || []);
+    _hasBrands = _brands.length > 0;
+  } catch (e) { _hasBrands = false; }
+}
+
+async function refresh() { await pollStatus(); await checkBrands(); }
+
+// ── Render: main table ────────────────────────────────────────────────────
+function render() {
+  renderTable();
+  renderEncoders();
+}
+
+function renderTable() {
+  if (!_st) return;
+  const s  = _st;
+  const n  = s.num_paths || 0;
+  const cp = s.current_path ?? -1;
+
+  // Header / status bar
+  document.getElementById('sel-pos').textContent =
+    cp >= 0 ? `Path ${cp}` : 'Unhomed';
+  const eng = s.servo_engaged;
+  document.getElementById('drive-st').innerHTML =
+    eng ? '<span style="color:var(--orange)">ENGAGED</span>'
+        : '<span style="color:var(--muted)">neutral</span>';
+  const loaded = (s.path_states || []).filter(x => x === 'loaded').length;
+  document.getElementById('sa-summary').textContent =
+    n ? `${loaded} / ${n} loaded` : '';
+  document.getElementById('last-upd').textContent =
+    new Date().toLocaleTimeString();
+
+  // Table rows
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const state = (s.path_states       || [])[i] || 'unknown';
+    const mat   = (s.path_materials    || [])[i] || '';
+    const brand = (s.path_brands       || [])[i] || '';
+    const line  = (s.path_product_lines|| [])[i] || '';
+    const cname = (s.path_color_names  || [])[i] || '';
+    const chex  = (s.path_color_hexes  || [])[i] || '';
+    const entry = (s.entry_filament    || [])[i];
+    const th    = (s.toolhead_filament || [])[i];
+    const ext   = (s.extruder_filament || [])[i];
+    const active = i === cp;
+
+    const matParts = [brand, line, mat].filter(Boolean);
+    const matLabel = matParts.length
+      ? matParts.join(' · ')
+      : '<span style="color:var(--muted)">—</span>';
+
+    const swatch = chex
+      ? `<span class="swatch" style="background:${chex}"></span>`
+      : '';
+    const colorLabel = cname || (chex ? chex : '<span style="color:var(--muted)">—</span>');
+
+    rows.push(`
+      <tr class="${active ? 'active-row' : ''}">
+        <td><b style="color:${active ? 'var(--blue)' : 'inherit'}">T${i}</b></td>
+        <td><span class="badge b-${state}">${stLbl(state)}</span></td>
+        <td><span class="dot dot-${entry ? 'on' : 'off'}" title="Entry sensor">●</span></td>
+        <td class="col-th"><span class="dot dot-${th  ? 'on' : 'off'}" title="Toolhead sensor">●</span></td>
+        <td class="col-ex"><span class="dot dot-${ext ? 'on' : 'off'}" title="Extruder sensor">●</span></td>
+        <td style="font-size:12px">${matLabel}</td>
+        <td style="font-size:12px">${swatch}${colorLabel}</td>
+        <td>
+          <div class="row-actions">
+            <button class="btn btn-sm btn-success" onclick="openWizard(${i},'load')">Load</button>
+            <button class="btn btn-sm btn-danger"  onclick="openWizard(${i},'unload')">Unload</button>
+          </div>
+        </td>
+      </tr>`);
+  }
+
+  document.getElementById('tbl-body').innerHTML =
+    rows.join('') ||
+    '<tr><td colspan="8" style="color:var(--muted);padding:18px;text-align:center">No paths configured</td></tr>';
+}
+
+function stLbl(s) {
+  return { loaded:'● Loaded', empty:'○ Empty', partial:'≈ Partial', unknown:'? Unknown' }[s] || s;
+}
+
+// ── Render: encoder table ─────────────────────────────────────────────────
+function renderEncoders() {
+  if (!_st) return;
+  const s = _st;
+  const n = s.num_paths || 0;
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const dist   = (s.encoder_dist     || [])[i];
+    const bowden = (s.bowden_lengths   || [])[i];
+    const ltemp  = (s.path_load_temps  || [])[i];
+    const entry  = (s.entry_filament   || [])[i];
+    const th     = (s.toolhead_filament|| [])[i];
+    const ext    = (s.extruder_filament|| [])[i];
+    rows.push(`
+      <tr>
+        <td><b>T${i}</b></td>
+        <td class="mono">${dist != null && dist >= 0 ? dist.toFixed(2) + ' mm' : '—'}</td>
+        <td class="mono">${bowden != null ? bowden.toFixed(0) + ' mm' : '—'}</td>
+        <td class="mono">${ltemp  != null ? ltemp.toFixed(0)  + ' °C' : '—'}</td>
+        <td><span class="dot dot-${entry ? 'on' : 'off'}">●</span></td>
+        <td><span class="dot dot-${th    ? 'on' : 'off'}">●</span></td>
+        <td><span class="dot dot-${ext   ? 'on' : 'off'}">●</span></td>
+      </tr>`);
+  }
+  document.getElementById('enc-body').innerHTML =
+    rows.join('') ||
+    '<tr><td colspan="7" style="color:var(--muted);padding:12px;text-align:center">No data</td></tr>';
+}
+
+// ── Collapsible sections ───────────────────────────────────────────────────
+function toggleSection(id) {
+  const wrap  = document.getElementById(id + '-body-wrap');
+  const caret = document.getElementById(id + '-caret');
+  wrap.classList.toggle('open');
+  caret.textContent = wrap.classList.contains('open') ? '▾' : '▸';
+}
+
+// ── Wizard ────────────────────────────────────────────────────────────────
+const LOAD_STEPS = ['Brand', 'Material', 'Product Line', 'Color'];
+
+function openWizard(path, mode) {
+  _wz   = { path };
+  _mode = mode;
+  _step = 0;
+  document.getElementById('dlg-title').textContent =
+    (mode === 'load' ? 'Load' : 'Unload') + ' T' + path;
+  document.getElementById('overlay').classList.add('open');
+  drawWizard();
+}
+
+function closeDialog() {
+  document.getElementById('overlay').classList.remove('open');
+}
+
+function stepBack() {
+  if (_step > 0) { _step--; drawWizard(); }
+}
+
+function drawWizard() {
+  const body = document.getElementById('dlg-body');
+  // Reset button visibility
+  show('btn-back',   false);
+  show('btn-no-db',  false);
+  show('btn-load',   false);
+  show('btn-unload', false);
+
+  if (_mode === 'unload') {
+    drawUnloadConfirm(body);
+    return;
+  }
+
+  // Load wizard
+  setStepBar(LOAD_STEPS, _step);
+  show('btn-back', _step > 0);
+
+  if (!_hasBrands) {
+    drawNoDB(body);
+    return;
+  }
+  if (_step === 0) drawBrands(body);
+  else if (_step === 1) drawMaterials(body);
+  else if (_step === 2) drawLines(body);
+  else drawColors(body);
+}
+
+function setStepBar(steps, cur) {
+  document.getElementById('dlg-steps').innerHTML =
+    steps.map((_, i) =>
+      `<div class="step-seg ${i < cur ? 'done' : i === cur ? 'active' : ''}"></div>`
+    ).join('');
+  document.getElementById('dlg-lbl').textContent = steps[cur] || '';
+}
+
+function show(id, visible) {
+  document.getElementById(id).style.display = visible ? '' : 'none';
+}
+
+// ── No filament DB ────────────────────────────────────────────────────────
+function drawNoDB(body) {
+  setStepBar(['Direct Load'], 0);
+  show('btn-no-db', true);
+  body.innerHTML = `<div class="info-box-warn">
+    The filament database component is not installed or has no brands.<br>
+    You can load directly without setting a material profile,<br>
+    or install <code>sa_moonraker.py</code> to enable the full wizard.
+  </div>`;
+}
+
+// ── Brand step ────────────────────────────────────────────────────────────
+function drawBrands(body) {
+  body.innerHTML = `<div class="chip-grid">${
+    _brands.map(b =>
+      `<div class="chip ${_wz.brandPath === b.filepath ? 'sel' : ''}"
+        onclick='pickBrand(${JSON.stringify(b)})'>${b.display_name}</div>`
+    ).join('')
+  }</div>`;
+}
+
+async function pickBrand(b) {
+  _wz.brandPath = b.filepath;
+  _wz.brandName = b.display_name;
+  try {
+    const r = await fetch(API + '/machine/stealth_autoloader/filaments?brand=' +
+      encodeURIComponent(b.filepath));
+    if (!r.ok) throw new Error('fetch failed');
+    const d = await r.json();
+    _lines = d.product_lines || [];
+    const seen = new Set();
+    _materials = _lines.map(pl => pl.material)
+      .filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
+    _step = 1;
+    drawWizard();
+  } catch (e) {}
+}
+
+// ── Material step ─────────────────────────────────────────────────────────
+function drawMaterials(body) {
+  body.innerHTML = `<div class="chip-grid">${
+    _materials.map(m =>
+      `<div class="chip ${_wz.material === m ? 'sel' : ''}"
+        onclick="pickMaterial('${m}')">${m}</div>`
+    ).join('')
+  }</div>`;
+}
+
+function pickMaterial(m) {
+  _wz.material = m;
+  _step = 2;
+  drawWizard();
+}
+
+// ── Product line step ─────────────────────────────────────────────────────
+function drawLines(body) {
+  const filtered = _lines.filter(pl => pl.material === _wz.material);
+  body.innerHTML = `<div class="line-list">${
+    filtered.map(pl =>
+      `<button class="line-chip ${_wz.lineId === pl.line_id ? 'sel' : ''}"
+        onclick='pickLine(${JSON.stringify(pl)})'>
+        <div style="font-weight:500">${pl.display_name}</div>
+        <small>Load: ${pl.load_temp}°C &nbsp;·&nbsp; Unload: ${pl.unload_temp}°C &nbsp;·&nbsp; Bed: ${pl.bed_temp}°C</small>
+      </button>`
+    ).join('')
+  }</div>`;
+}
+
+function pickLine(pl) {
+  Object.assign(_wz, {
+    lineId:      pl.line_id,
+    lineName:    pl.display_name,
+    loadTemp:    pl.load_temp,
+    unloadTemp:  pl.unload_temp,
+    purgeSpeed:  pl.purge_speed,
+    purgeLength: pl.purge_length,
+    _colors:     pl.colors || [],
+  });
+  _wz.colorHex = '';
+  _step = 3;
+  drawWizard();
+}
+
+// ── Color swatch CSS helper ────────────────────────────────────────────────
+// Returns a CSS background value for single/dual/tri/gradient color entries.
+// dual    → hard-stop linear-gradient left=c1, right=c2  (50/50 split)
+// tri     → three equal hard-stop sections left→right
+// gradient→ smooth linear-gradient left→right (Bambu style)
+// single  → plain hex color
+function swatchCSS(hex, hex2, hex3, colorType) {
+  const ct = (colorType || 'single').toLowerCase();
+  if (ct === 'gradient' && hex2) {
+    return `linear-gradient(to right, ${hex}, ${hex2})`;
+  }
+  if (ct === 'dual' && hex2) {
+    return `linear-gradient(to right, ${hex} 50%, ${hex2} 50%)`;
+  }
+  if (ct === 'tri' && hex2 && hex3) {
+    return `linear-gradient(to right, ${hex} 33.33%, ${hex2} 33.33% 66.66%, ${hex3} 66.66%)`;
+  }
+  return hex || '#808080';
+}
+
+// ── Color step ────────────────────────────────────────────────────────────
+function drawColors(body) {
+  const chips = (_wz._colors || []).map(c =>
+    `<div class="color-chip ${_wz.colorHex === c.hex ? 'sel' : ''}"
+      onclick='pickColor(${JSON.stringify(c)})'>
+      <div class="color-cs" style="background:${swatchCSS(c.hex, c.hex_2, c.hex_3, c.color_type)}"></div>
+      <div class="color-cn">${c.name}</div>
+    </div>`
+  ).join('');
+
+  const selBg = _wz.colorHex
+    ? swatchCSS(_wz.colorHex, _wz.colorHex2, _wz.colorHex3, _wz.colorType)
+    : '';
+
+  const info = _wz.colorHex
+    ? `<div class="info-box">
+        <span style="display:inline-block;width:16px;height:16px;border-radius:50%;
+          background:${selBg};border:1px solid rgba(255,255,255,0.2);
+          vertical-align:middle;margin-right:4px"></span>
+        <strong>${_wz.colorName}</strong>
+        &nbsp;<code style="font-size:11px;color:var(--muted)">${_wz.colorHex}</code><br>
+        <span style="color:var(--muted);font-size:12px">
+          ${_wz.brandName} · ${_wz.lineName} · ${_wz.material}<br>
+          Load: ${_wz.loadTemp}°C &nbsp;·&nbsp;
+          Purge: ${_wz.purgeSpeed} mm/s × ${_wz.purgeLength} mm
+        </span>
+      </div>`
+    : `<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Select a color to continue</div>`;
+
+  body.innerHTML = `<div class="color-grid">${chips}</div>${info}`;
+  show('btn-load', !!_wz.colorHex);
+}
+
+function pickColor(c) {
+  Object.assign(_wz, {
+    colorId:    c.id,
+    colorName:  c.name,
+    colorHex:   c.hex,
+    colorType:  c.color_type  || 'single',
+    colorHex2:  c.hex_2       || '',
+    colorHex3:  c.hex_3       || '',
+  });
+  drawWizard();
+}
+
+// ── Unload confirm ────────────────────────────────────────────────────────
+function drawUnloadConfirm(body) {
+  setStepBar(['Confirm'], 0);
+  document.getElementById('dlg-lbl').textContent = 'Confirm unload';
+  show('btn-unload', true);
+
+  const state  = (_st?.path_states       || [])[_wz.path] || 'unknown';
+  const mat    = (_st?.path_materials    || [])[_wz.path] || '';
+  const cname  = (_st?.path_color_names  || [])[_wz.path] || '';
+  const chex   = (_st?.path_color_hexes  || [])[_wz.path] || '';
+  const swatch = chex ? `<span class="swatch" style="background:${chex};width:14px;height:14px;display:inline-block;vertical-align:middle"></span> ` : '';
+
+  body.innerHTML = `<div class="info-box">
+    <span class="badge b-${state}">${stLbl(state)}</span>
+    ${mat   ? ' &nbsp;<strong>' + mat   + '</strong>' : ''}
+    ${cname ? ' &nbsp;' + swatch + cname : ''}<br>
+    <span style="color:var(--muted);font-size:12px">
+      Retract T${_wz.path} filament back to the entry sensor.
+    </span>
+  </div>`;
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────
+async function doLoad() {
+  const wz = _wz;
+  // Set material profile if we have one
+  if (_hasBrands && wz.colorHex) {
+    try {
+      await fetch(API + '/machine/stealth_autoloader/set_material', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: wz.path, material: wz.material, brand: wz.brandName,
+          line: wz.lineId, color_name: wz.colorName, color_hex: wz.colorHex,
+          load_temp: wz.loadTemp, unload_temp: wz.unloadTemp,
+          purge_speed: wz.purgeSpeed, purge_length: wz.purgeLength,
+        })
+      });
+    } catch (e) {}
+  }
+  await cmd('SA_LOAD TOOL=' + wz.path);
+  closeDialog();
+}
+
+async function doDirectCmd() {
+  await cmd('SA_LOAD TOOL=' + _wz.path);
+  closeDialog();
+}
+
+async function doUnload() {
+  await cmd('SA_UNLOAD TOOL=' + _wz.path);
+  closeDialog();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+connectWS();
+checkBrands();
+</script>
+</body>
+</html>
