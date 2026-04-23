@@ -44,11 +44,15 @@ class Panel(ScreenPanel):
         self._stack.add_named(self._build_main_page(), "main")
         self._stack.add_named(self._build_tool_page(), "tool")
 
-        self.content.add(self._stack)
+        self.content.pack_start(self._stack, True, True, 0)
 
     # ── Main macros page ──────────────────────────────────────────────────────
 
     def _build_main_page(self):
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+        scroll.set_overlay_scrolling(False)
+
         grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
                         row_spacing=6, column_spacing=6, margin=8)
 
@@ -60,7 +64,8 @@ class Panel(ScreenPanel):
                 btn.connect("clicked", self._send, gcode)
             grid.attach(btn, i % 2, i // 2, 1, 1)
 
-        return grid
+        scroll.add(grid)
+        return scroll
 
     # ── Tool picker page ──────────────────────────────────────────────────────
 

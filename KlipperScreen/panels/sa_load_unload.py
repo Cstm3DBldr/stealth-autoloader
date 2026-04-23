@@ -17,6 +17,12 @@ from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_load_unload')
 
+try:
+    import sa_color_swatch as _cs
+except ImportError:
+    _cs = None
+    logger.error("sa_load_unload: could not import sa_color_swatch")
+
 _BRANDS_DIR = os.path.expanduser("~/printer_data/config/stealth-autoloader/filament_profiles")
 
 try:
@@ -78,10 +84,13 @@ class Panel(ScreenPanel):
 
         self._op             = 'load'
         self._wz             = {}
-        self._path_states    = []
-        self._path_hexes     = []
-        self._path_mats      = []
-        self._path_entry     = []
+        self._path_states      = []
+        self._path_hexes       = []
+        self._path_mats        = []
+        self._path_color_types = []
+        self._path_hex2s       = []
+        self._path_hex3s       = []
+        self._path_entry       = []
         self._path_th        = []
         self._path_ex        = []
         self._sel_path       = None
@@ -262,11 +271,14 @@ class Panel(ScreenPanel):
         btn_h = self._path_btn_h()
 
         for i in range(num):
-            state = self._path_states[i] if i < num else 'unknown'
-            hex_c = self._path_hexes[i]  if i < len(self._path_hexes) else ''
-            mat   = self._path_mats[i]   if i < len(self._path_mats)  else ''
+            state      = self._path_states[i]      if i < num                          else 'unknown'
+            hex_c      = self._path_hexes[i]        if i < len(self._path_hexes)       else ''
+            mat        = self._path_mats[i]         if i < len(self._path_mats)        else ''
+            color_type = self._path_color_types[i]  if i < len(self._path_color_types) else 'single'
+            hex_2      = self._path_hex2s[i]        if i < len(self._path_hex2s)       else ''
+            hex_3      = self._path_hex3s[i]        if i < len(self._path_hex3s)       else ''
 
-            btn = self._make_path_btn(i, state, hex_c, mat)
+            btn = self._make_path_btn(i, state, hex_c, mat, color_type, hex_2, hex_3)
             btn.set_size_request(-1, btn_h)
             if i == self._sel_path:
                 btn.get_style_context().add_class('path-selected')
@@ -286,43 +298,55 @@ class Panel(ScreenPanel):
             self._conf_btn.set_sensitive(False)
             self._conf_btn.set_visible(False)
 
-    def _make_path_btn(self, i, state, hex_c, mat):
+    def _make_path_btn(self, i, state, hex_c, mat,
+                       color_type='single', hex_2='', hex_3=''):
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        box.set_valign(Gtk.Align.CENTER)
-        box.set_halign(Gtk.Align.CENTER)
+        btn_h   = self._path_btn_h()
+        sw_size = max(44, btn_h - 12)
 
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row.set_valign(Gtk.Align.CENTER)
+        row.set_halign(Gtk.Align.CENTER)
+
+        # Tool number
         t_lbl = Gtk.Label()
-        t_lbl.set_markup('<b>T%d</b>' % i)
+        t_lbl.set_markup('<b><span font_size="large">T%d</span></b>' % i)
+        t_lbl.set_size_request(30, -1)
+        t_lbl.set_halign(Gtk.Align.CENTER)
 
-        swatch = Gtk.Label()
-        if hex_c:
-            h = hex_c if hex_c.startswith('#') else '#' + hex_c
-            swatch.set_markup(
-                '<span font_size="xx-large" foreground="%s">%s</span>' % (h, COLOR_SWATCH))
-        elif state == 'empty':
-            swatch.set_markup(
-                '<span font_size="xx-large" foreground="#666666">%s</span>' % EMPTY_SWATCH)
-        elif state == 'partial':
-            swatch.set_markup(
-                '<span font_size="xx-large" foreground="#E65100">%s</span>' % PARTIAL_SWATCH)
-        elif state == 'loaded':
-            swatch.set_markup(
-                '<span font_size="xx-large" foreground="#888888">%s</span>' % COLOR_SWATCH)
+        # Color swatch DrawingArea
+        if _cs is not None:
+            if hex_c:
+                hexes = [hex_c]
+                if hex_2: hexes.append(hex_2)
+                if hex_3: hexes.append(hex_3)
+                swatch_w = _cs.make_swatch_da(sw_size, hexes, color_type)
+            elif state == 'empty':
+                swatch_w = _cs.make_state_da(sw_size, 'empty')
+            elif state == 'partial':
+                swatch_w = _cs.make_state_da(sw_size, 'partial')
+            elif state == 'loaded':
+                swatch_w = _cs.make_state_da(sw_size, 'loaded_no_color')
+            else:
+                swatch_w = _cs.make_state_da(sw_size, 'unknown')
         else:
-            swatch.set_markup(
-                '<span font_size="xx-large" foreground="#F9A825">%s</span>' % UNKNOWN_SWATCH)
+            # Fallback: unicode character
+            swatch_w = Gtk.Label()
+            h = hex_c if (hex_c and hex_c.startswith('#')) else ('#' + hex_c if hex_c else '#888888')
+            swatch_w.set_markup('<span font_size="xx-large" foreground="%s">%s</span>' % (h, COLOR_SWATCH))
 
+        # Material label
         mat_lbl = Gtk.Label()
-        mat_lbl.set_markup(
-            '<span font_size="small">%s</span>' % (mat[:6] if mat else "---"))
+        mat_lbl.set_markup('<span font_size="small">%s</span>' % (mat[:8] if mat else '---'))
+        mat_lbl.set_size_request(52, -1)
+        mat_lbl.set_halign(Gtk.Align.CENTER)
 
-        box.pack_start(t_lbl,   False, False, 0)
-        box.pack_start(swatch,  False, False, 0)
-        box.pack_start(mat_lbl, False, False, 0)
-        btn.add(box)
+        row.pack_start(t_lbl,    False, False, 0)
+        row.pack_start(swatch_w, False, False, 0)
+        row.pack_start(mat_lbl,  False, False, 0)
+        btn.add(row)
         btn.connect("clicked", self._select_path, i)
         return btn
 
@@ -454,8 +478,10 @@ class Panel(ScreenPanel):
         flowbox.show_all()
 
     def _make_color_button(self, c):
-        hex_c = c.get('hex', '')
-        name  = c.get('name', '?')
+        hex_c      = c.get('hex', '')
+        name       = c.get('name', '?')
+        color_type = c.get('color_type', 'single')
+        hex_list   = _db.get_color_hexes(c) if _db else [hex_c]
 
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
@@ -463,20 +489,22 @@ class Panel(ScreenPanel):
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Colored swatch fills top portion via DrawingArea
-        da = Gtk.DrawingArea()
-        da.set_size_request(-1, 52)
-        r, g, b = _hex_to_rgb01(hex_c)
-        da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
+        if _cs is not None:
+            # Cairo swatch — supports pie/gradient for multi-color
+            da = _cs.make_swatch_da(52, hex_list, color_type)
+        else:
+            da = Gtk.DrawingArea()
+            da.set_size_request(-1, 52)
+            r, g, b = _hex_to_rgb01(hex_c)
+            da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
 
-        # Name label — choose text color for contrast
+        r, g, b = _hex_to_rgb01(hex_c)
         lum = _luminance(r, g, b)
         fg  = "#FFFFFF" if lum < 0.45 else "#212121"
         name_lbl = Gtk.Label()
         name_lbl.set_ellipsize(3)
         name_lbl.set_max_width_chars(9)
-        name_lbl.set_markup(
-            '<span font_size="x-small" foreground="%s">%s</span>' % (fg, name))
+        name_lbl.set_markup('<span font_size="x-small" foreground="%s">%s</span>' % (fg, name))
         name_lbl.set_halign(Gtk.Align.CENTER)
 
         vbox.pack_start(da,       True,  True,  0)
@@ -486,9 +514,12 @@ class Panel(ScreenPanel):
         return btn
 
     def _select_color(self, widget, c):
-        self._wz['color_name'] = c.get('name', '')
-        self._wz['color_hex']  = c.get('hex',  '')
-        self._wz['color_id']   = c.get('id',   '')
+        self._wz['color_name']  = c.get('name', '')
+        self._wz['color_hex']   = c.get('hex',  '')
+        self._wz['color_id']    = c.get('id',   '')
+        self._wz['color_type']  = c.get('color_type', 'single')
+        self._wz['color_hex_2'] = c.get('hex_2', '')
+        self._wz['color_hex_3'] = c.get('hex_3', '')
         page = self._pages['color']
         hex_c = self._wz['color_hex']
         h = hex_c if hex_c.startswith('#') else '#' + hex_c if hex_c else '#808080'
@@ -690,12 +721,15 @@ class Panel(ScreenPanel):
 
     def _apply_sa(self, sa):
         num = sa.get("num_paths", 0)
-        self._path_states = sa.get("path_states",      ['unknown'] * num)
-        self._path_hexes  = sa.get("path_color_hexes", [''] * num)
-        self._path_mats   = sa.get("path_materials",   [''] * num)
-        self._path_entry  = sa.get("entry_filament",   [False] * num)
-        self._path_th     = sa.get("toolhead_filament",[False] * num)
-        self._path_ex     = sa.get("extruder_filament",[False] * num)
+        self._path_states      = sa.get("path_states",      ['unknown'] * num)
+        self._path_hexes       = sa.get("path_color_hexes", [''] * num)
+        self._path_mats        = sa.get("path_materials",   [''] * num)
+        self._path_color_types = [sa.get('color_type_%d' % i, 'single') for i in range(num)]
+        self._path_hex2s       = [sa.get('color_hex_2_%d' % i, '')      for i in range(num)]
+        self._path_hex3s       = [sa.get('color_hex_3_%d' % i, '')      for i in range(num)]
+        self._path_entry       = sa.get("entry_filament",   [False] * num)
+        self._path_th          = sa.get("toolhead_filament",[False] * num)
+        self._path_ex          = sa.get("extruder_filament",[False] * num)
         self._populate_path_page()
 
     def process_update(self, action, data):
@@ -711,6 +745,16 @@ class Panel(ScreenPanel):
         new_states = sa.get("path_states",        self._path_states)
         new_hexes  = sa.get("path_color_hexes",   self._path_hexes)
         new_mats   = sa.get("path_materials",     self._path_mats)
+        num        = len(new_states)
+        new_ctypes = [sa.get('color_type_%d' % i, self._path_color_types[i]
+                             if i < len(self._path_color_types) else 'single')
+                      for i in range(num)]
+        new_hex2s  = [sa.get('color_hex_2_%d' % i, self._path_hex2s[i]
+                             if i < len(self._path_hex2s) else '')
+                      for i in range(num)]
+        new_hex3s  = [sa.get('color_hex_3_%d' % i, self._path_hex3s[i]
+                             if i < len(self._path_hex3s) else '')
+                      for i in range(num)]
 
         for i in range(len(new_entry)):
             old_entry = self._path_entry[i] if i < len(self._path_entry) else False
@@ -730,16 +774,22 @@ class Panel(ScreenPanel):
         changed = (new_states != self._path_states or
                    new_hexes  != self._path_hexes  or
                    new_mats   != self._path_mats   or
+                   new_ctypes != self._path_color_types or
+                   new_hex2s  != self._path_hex2s  or
+                   new_hex3s  != self._path_hex3s  or
                    new_entry  != self._path_entry  or
                    new_th     != self._path_th     or
                    new_ex     != self._path_ex)
         if changed:
-            self._path_states = new_states
-            self._path_hexes  = new_hexes
-            self._path_mats   = new_mats
-            self._path_entry  = new_entry
-            self._path_th     = new_th
-            self._path_ex     = new_ex
+            self._path_states      = new_states
+            self._path_hexes       = new_hexes
+            self._path_mats        = new_mats
+            self._path_color_types = new_ctypes
+            self._path_hex2s       = new_hex2s
+            self._path_hex3s       = new_hex3s
+            self._path_entry       = new_entry
+            self._path_th          = new_th
+            self._path_ex          = new_ex
             GLib.idle_add(self._populate_path_page)
             if self._sel_path is not None:
                 GLib.idle_add(self._update_path_status)
