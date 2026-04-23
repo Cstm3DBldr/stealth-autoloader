@@ -173,6 +173,9 @@ class StealthAutoloader:
         self.path_product_lines = [''] * self.num_paths
         self.path_color_names   = [''] * self.num_paths
         self.path_color_hexes   = [''] * self.num_paths
+        self.path_color_types   = ['single'] * self.num_paths
+        self.path_color_hex2s   = [''] * self.num_paths
+        self.path_color_hex3s   = [''] * self.num_paths
         self.path_load_temps    = [self.load_temperature]       * self.num_paths
         self.path_unload_temps  = [self.load_temperature - 15.] * self.num_paths
         self.path_purge_speeds  = [5.0]                         * self.num_paths
@@ -232,6 +235,9 @@ class StealthAutoloader:
             self.path_product_lines[i] = svars.get('sa_product_line_%d'  % i, '')
             self.path_color_names[i]   = svars.get('sa_color_name_%d'    % i, '')
             self.path_color_hexes[i]   = svars.get('sa_color_hex_%d'     % i, '')
+            self.path_color_types[i]   = svars.get('sa_color_type_%d'    % i, 'single')
+            self.path_color_hex2s[i]   = svars.get('sa_color_hex2_%d'    % i, '')
+            self.path_color_hex3s[i]   = svars.get('sa_color_hex3_%d'    % i, '')
             self.path_load_temps[i]    = float(svars.get(
                 'sa_load_temp_%d'   % i, self.load_temperature))
             self.path_unload_temps[i]  = float(svars.get(
@@ -675,6 +681,9 @@ class StealthAutoloader:
         product_line = gcmd.get('LINE',        '')
         color_name   = gcmd.get('COLOR_NAME',  '')
         color_hex    = gcmd.get('COLOR_HEX',   '')
+        color_type   = gcmd.get('COLOR_TYPE',  'single')
+        color_hex2   = gcmd.get('COLOR_HEX_2', '')
+        color_hex3   = gcmd.get('COLOR_HEX_3', '')
         load_temp    = gcmd.get_float('LOAD_TEMP',    self.load_temperature)
         unload_temp  = gcmd.get_float('UNLOAD_TEMP',  load_temp - 15.)
         purge_speed  = gcmd.get_float('PURGE_SPEED',  5.0)
@@ -685,6 +694,9 @@ class StealthAutoloader:
         self.path_product_lines[path] = product_line
         self.path_color_names[path]   = color_name
         self.path_color_hexes[path]   = color_hex
+        self.path_color_types[path]   = color_type
+        self.path_color_hex2s[path]   = color_hex2
+        self.path_color_hex3s[path]   = color_hex3
         self.path_load_temps[path]    = load_temp
         self.path_unload_temps[path]  = unload_temp
         self.path_purge_speeds[path]  = purge_speed
@@ -700,6 +712,9 @@ class StealthAutoloader:
             _save('sa_product_line_%d'  % path, product_line)
             _save('sa_color_name_%d'    % path, color_name)
             _save('sa_color_hex_%d'     % path, color_hex)
+            _save('sa_color_type_%d'    % path, color_type)
+            _save('sa_color_hex2_%d'    % path, color_hex2)
+            _save('sa_color_hex3_%d'    % path, color_hex3)
             _save('sa_load_temp_%d'     % path, load_temp)
             _save('sa_unload_temp_%d'   % path, unload_temp)
             _save('sa_purge_speed_%d'   % path, purge_speed)
@@ -774,6 +789,9 @@ class StealthAutoloader:
             'path_product_lines' : list(self.path_product_lines),
             'path_color_names'   : list(self.path_color_names),
             'path_color_hexes'   : list(self.path_color_hexes),
+            'path_color_types'   : list(self.path_color_types),
+            'path_color_hex2s'   : list(self.path_color_hex2s),
+            'path_color_hex3s'   : list(self.path_color_hex3s),
             'path_load_temps'    : list(self.path_load_temps),
             'path_unload_temps'  : list(self.path_unload_temps),
             'feed_speed'              : self.feed_speed,
