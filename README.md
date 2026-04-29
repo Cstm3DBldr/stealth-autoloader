@@ -40,8 +40,8 @@ rm -rf ~/stealth-autoloader
 | Engage servo | BTT servo header | Latching servo, PWM cut after move |
 | Path encoders | 6x fixed optical | Never move; one per path |
 | Entry sensors | 6x switch sensors | At roll end of each path |
-| Toolhead sensors | 6x EBB36 PB5 | Nozzle end of each Bowden tube |
-| Extruder sensors | 6x EBB36 PB8 | At extruder gears, used for load targeting |
+| Toolhead sensors | 6x EBB36 PB8 | Past extruder gears, entering hotend (final load confirmation) |
+| Extruder sensors | 6x EBB36 PB5 | At toolhead entry, before extruder gears (Bowden calibration endpoint) |
 
 ---
 
@@ -50,12 +50,30 @@ rm -rf ~/stealth-autoloader
 ```
 klipper/extras/
     stealth_autoloader.py   Main controller, config parsing, GCode registration
-    sa_motion.py            All motion primitives (servo, selector, drive, timeouts)
+    sa_motion.py            Motion primitives (servo, selector, drive, idle timeouts)
     sa_sequences.py         Load and unload sequences
-    sa_calibration.py       All calibration routines
+    sa_calibration.py       Calibration routines (drive, encoder, selector, bowden)
+    sa_encoder.py           Encoder driver — pulse counting via Klipper buttons module
 
 stealth-autoloader/
-    hardware.cfg            MCU, stepper, servo, encoder, sensor, and controller config
+    stealth-autoloader.cfg  Aggregator (printer.cfg pulls in via wildcard include)
+    pin_aliases.cfg         All real pin → alias mappings (one [board_pins] per MCU)
+    hardware.cfg            MCU, stepper, servo, encoder, sensor, [stealth_autoloader] config
+    macros.cfg              Thin gcode wrappers around the Python backend
+
+moonraker/
+    sa_moonraker.py         Moonraker component — REST endpoints + status broadcast
+
+web/
+    mainsail/AutoloaderPanel.vue   Mainsail UI panel
+    fluidd/AutoloaderPanel.vue     Fluidd UI panel
+
+KlipperScreen/
+    panels/sa_*.py          Touchscreen panels (sa_main, sa_load_unload, sa_macros, etc.)
+    sa_filament_db.py       Filament profile DB loader (shared with Moonraker)
+    sa_klipperscreen.conf   Menu registration
+
+filaments/brands/           Per-brand filament profile .cfg files (color/material/temps)
 ```
 
 ---
@@ -452,11 +470,11 @@ Set `clean_nozzle_enabled: False` in `hardware.cfg` to skip nozzle wiping entire
 ### Entry sensors (`^!autoloader:SA_ENTRY_N`)
 Pull-up + invert — sensors read HIGH (active) when empty on this hardware. If your sensors read the opposite, remove the `!` from `switch_pin`.
 
-### Toolhead sensors (`^etN:PB5`)
-One per BTT EBB36 toolhead board. Pull-up only (not inverted). Detects filament at nozzle end of Bowden tube.
+### Toolhead sensors (`^etN:PB8`)
+One per BTT EBB36 toolhead board. Pull-up only (not inverted). Detects filament past the extruder gears, entering the hotend. Used as final load confirmation.
 
-### Extruder entry sensors (`^etN:PB8`)
-One per BTT EBB36 toolhead board. Detects filament arriving at extruder gears. Enables sensor-based load targeting (more reliable than a fixed tube length). Required for `SA_CALIBRATE_BOWDEN`.
+### Extruder entry sensors (`^etN:PB5`)
+One per BTT EBB36 toolhead board. Detects filament arriving at the extruder gears (toolhead entry, before the gears). Enables sensor-based load targeting (more reliable than a fixed tube length). Required for `SA_CALIBRATE_BOWDEN`.
 
 ---
 

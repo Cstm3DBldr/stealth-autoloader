@@ -44,18 +44,33 @@ before deploying or pushing — just do it and report the result.
 
 | File | Purpose |
 |---|---|
-| `stealth-autoloader/stealth-autoloader.cfg` | Main entry point — only file included in printer.cfg |
+| `stealth-autoloader/stealth-autoloader.cfg` | Aggregator. printer.cfg includes via `[include stealth-autoloader/*.cfg]` (wildcard) |
 | `stealth-autoloader/pin_aliases.cfg` | ONLY place real pin names are entered. One [board_pins] per MCU |
 | `stealth-autoloader/hardware.cfg` | MCU + all hardware sections + [stealth_autoloader] config |
 | `stealth-autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
-| `klipper/extras/stealth_autoloader.py` | **Main controller** — all sequences, state, commands |
+| `klipper/extras/stealth_autoloader.py` | Main controller — config parsing, GCode registration, status object |
+| `klipper/extras/sa_motion.py` | Motion primitives (servo, selector, drive, idle timeouts) |
+| `klipper/extras/sa_sequences.py` | Load and unload sequences |
+| `klipper/extras/sa_calibration.py` | All calibration routines (drive, encoder, selector, bowden) |
 | `klipper/extras/sa_encoder.py` | Encoder driver — pulse counting via Klipper buttons module |
+| `moonraker/sa_moonraker.py` | Moonraker component — REST endpoints + status broadcast |
+| `web/mainsail/AutoloaderPanel.vue` | Mainsail UI panel |
+| `web/fluidd/AutoloaderPanel.vue` | Fluidd UI panel |
+| `KlipperScreen/panels/sa_*.py` | KlipperScreen touchscreen panels |
+| `KlipperScreen/sa_filament_db.py` | Filament profile DB loader (shared with Moonraker) |
+| `filaments/brands/*.cfg` | Per-brand filament profile files |
 | `References/hardware_pinouts/` | Board pinout images — local + GitHub only, NOT on printer |
 | `CLAUDE.md` | This file |
 
-On the printer, Python extras are symlinked:
+On the printer, Python extras and the Moonraker component are symlinked from the repo:
 - `~/klipper/klippy/extras/stealth_autoloader.py` → `~/stealth-autoloader/klipper/extras/stealth_autoloader.py`
+- `~/klipper/klippy/extras/sa_motion.py` → `~/stealth-autoloader/klipper/extras/sa_motion.py`
+- `~/klipper/klippy/extras/sa_sequences.py` → `~/stealth-autoloader/klipper/extras/sa_sequences.py`
+- `~/klipper/klippy/extras/sa_calibration.py` → `~/stealth-autoloader/klipper/extras/sa_calibration.py`
 - `~/klipper/klippy/extras/sa_encoder.py` → `~/stealth-autoloader/klipper/extras/sa_encoder.py`
+- `~/moonraker/moonraker/components/sa_moonraker.py` → `~/stealth-autoloader/moonraker/sa_moonraker.py`
+
+KlipperScreen panels are NOT symlinked — copy directly to `~/KlipperScreen/panels/` and `~/KlipperScreen/`.
 
 ---
 
@@ -122,6 +137,8 @@ ERCF V2 mechanical concept, adapted for fixed multi-toolhead use:
 | SA_SERVO | PA1 | Engage servo PWM signal |
 | SA_ENCODER_0..5 | PC7,PA9,PB12,PB10,PB1,PC5 | Per-path encoders (2x7 high pins) |
 | SA_ENTRY_0..5 | PC6,PA8,PB11,PB2,PB0,PC4 | Entry sensors (2x7 low pins) |
+| SA_SELECTOR_DIAG | PB9 | TMC5160 stallguard DIAG (M1 selector) — required for SA_CALIBRATE_SELECTOR via `[gcode_button selector_stall]` |
+| SA_DRIVE_DIAG | PB7 | TMC5160 stallguard DIAG (M3 drive) — reserved |
 
 **TMC5160 SPI bus** (shared M1+M2): software SPI — MISO=PB14, MOSI=PB15, SCK=PB13
 `sense_resistor: 0.075` — hardware SPI (spi_bus: spi1/spi2) fails on this MCU; software SPI required.
@@ -156,27 +173,40 @@ Single `[stealth_autoloader]` config section, single class instance, controls ev
 
 | Parameter | Default | Description |
 |---|---|---|
-| `drive_stepper` | — | manual_stepper name for drive motor |
-| `selector_stepper` | — | manual_stepper name for selector |
-| `servo` | — | servo object name for engage/disengage |
-| `encoder` | — | sa_encoder object name |
+| `drive_stepper` | required | manual_stepper name for drive motor |
+| `selector_stepper` | required | manual_stepper name for selector |
+| `servo` | required | servo object name for engage/disengage |
+| `encoder_N` | `sa_encoder N` | Per-path encoder section name |
 | `num_paths` | 6 | Number of filament paths (1–32) |
-| `entry_sensor_N` | — | filament_switch_sensor name for path N |
-| `selector_position_N` | N×21mm | Selector position in mm from home for path N |
+| `entry_sensor_N` | none | filament_switch_sensor name for entry sensor on path N |
+| `extruder_sensor_N` | none | filament_switch_sensor at extruder gear entry on path N (required for SA_CALIBRATE_BOWDEN, sensor-terminated load) |
+| `toolhead_sensor_N` | none | filament_switch_sensor past gears, before nozzle on path N (final load confirmation) |
+| `selector_position_N` | N×21mm | Selector position in mm from home for path N (set by SA_CALIBRATE_SELECTOR) |
 | `extruder_N` | extruder / extruderN | Extruder name for heating during load |
+| `bowden_length_N` | 800.0 | Per-path Bowden tube length (mm); set by SA_CALIBRATE_BOWDEN. Replaces global `tube_length`. |
 | `servo_engaged_angle` | 30 | Servo angle when drive gear grips filament |
 | `servo_disengaged_angle` | 160 | Servo angle when path is neutral |
-| `tube_length` | 800 | Encoder target for "filament reached extruder" |
+| `tube_length` | 800 | Legacy fallback Bowden length used if `bowden_length_N` not set |
 | `nozzle_distance` | 50 | Extruder gears → nozzle tip (mm) |
 | `purge_length` | 30 | Extra extrusion after nozzle loaded (mm) |
-| `load_temperature` | 200 | Min hotend temp before extruding |
-| `engage_max_distance` | 60 | Max drive travel before expecting encoder motion |
+| `load_temperature` | 200 | Min hotend temp before extruding (°C) |
+| `load_park_z` | 50.0 | Z height held throughout load/unload + park (mm) |
+| `engage_max_distance` | 60 | Max drive travel before expecting encoder motion (mm) |
 | `slip_tolerance` | 15 | Warn if encoder vs stepper differ by > this % |
 | `feed_speed` | 50 | Drive motor speed (mm/s) |
 | `selector_speed` | 200 | Selector motor speed (mm/s) |
 | `feed_step_size` | 10 | Drive motor step per loop iteration (mm) |
 | `sensor_polling_delay` | 0.2 | Seconds between sensor checks in loops |
 | `servo_move_delay` | 0.3 | Seconds to wait after servo command |
+| `stepper_timeout` | 120 | Idle stepper auto-disable seconds; 0 disables auto-disable |
+| `cooling_pad_enabled` | True | Call `PARK_ON_COOLING_PAD` after load/unload |
+| `clean_nozzle_enabled` | True | Call `SA_CLEAN_NOZZLE` before parking |
+| `selector_max_travel` | 200.0 | Max sweep distance (mm) for SA_CALIBRATE_SELECTOR auto-cal |
+| `selector_homing_speed` | 50.0 | Selector home approach speed (mm/s) |
+| `selector_homing_backoff` | 5.0 | Back-off mm before slow re-approach in double-touch home |
+| `selector_stall_current` | 0.4 | Reduced motor current (A) during stallguard sweep — bumping hard stop is harmless |
+| `selector_stall_threshold` | 3 | TMC5160 SGT value for stallguard sensitivity (raise to reduce false triggers) |
+| `selector_stall_speed` | 50.0 | Sweep speed (mm/s) during stallguard cal |
 
 ### GCode Commands (all registered by Python)
 
@@ -195,10 +225,11 @@ Single `[stealth_autoloader]` config section, single class instance, controls ev
 | `SA_CALIBRATE_DRIVE` | Interactive drive motor rotation_distance calibration |
 | `SA_CALIBRATE_ENCODER TOOL=N` | Measure mm_per_pulse for encoder N |
 | `SA_CALIBRATE_BOWDEN TOOL=N` | Measure Bowden tube length for path N |
-| `SA_ENCODER_QUERY [TOOL RESET]` | Snapshot encoder distances |
-| `SA_ENCODER_WATCH [TOOL DURATION INTERVAL]` | Live encoder delta stream |
+| `SA_ENCODER_QUERY [TOOL=N] [RESET=1]` | Snapshot encoder distances |
+| `SA_ENCODER_WATCH [TOOL=N] [DURATION=30] [INTERVAL=0.5]` | Live encoder delta stream |
 | `SA_RESPOND VALUE=x` | Advance active calibration to next phase |
 | `SA_SET_STATE TOOL=N STATE=<state>` | Override path state (loaded/empty/partial/unknown) |
+| `SA_SET_MATERIAL TOOL=N MATERIAL=… BRAND=… LINE=… COLOR_NAME=… COLOR_HEX=… LOAD_TEMP=… UNLOAD_TEMP=… PURGE_SPEED=… PURGE_LENGTH=…` | Store filament profile for a path; consumed by load sequence and exposed via web/touchscreen UIs |
 
 ### Load Sequence
 
@@ -236,42 +267,66 @@ SA_UNLOAD TOOL=N
 ## Deploy Workflow
 
 ```bash
-# 1. Push config files to printer
-scp stealth-autoloader/hardware.cfg      pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/pin_aliases.cfg   pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/macros.cfg        pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/stealth-autoloader.cfg  pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+# 1. Klipper config files
+scp stealth-autoloader/hardware.cfg               pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/pin_aliases.cfg            pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/macros.cfg                 pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/stealth-autoloader.cfg     pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 
-# 2. Push Python extras (to repo copy — symlinks pick it up)
+# 2. Klipper Python extras (to repo copy — symlinks pick it up)
 scp klipper/extras/stealth_autoloader.py  pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
+scp klipper/extras/sa_motion.py           pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
+scp klipper/extras/sa_sequences.py        pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
+scp klipper/extras/sa_calibration.py      pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
 scp klipper/extras/sa_encoder.py          pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
 
-# 3. Restart Klipper
-ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart klipper"
+# 3. Moonraker component (to repo copy — symlink picks it up)
+scp moonraker/sa_moonraker.py  pi@192.168.1.214:~/stealth-autoloader/moonraker/
 
-# 4. Commit and push
+# 4. KlipperScreen panels (NOT symlinked — direct copy to KS install)
+scp KlipperScreen/panels/sa_*.py        pi@192.168.1.214:~/KlipperScreen/panels/
+scp KlipperScreen/sa_*.py               pi@192.168.1.214:~/KlipperScreen/
+scp KlipperScreen/sa_klipperscreen.conf pi@192.168.1.214:~/printer_data/config/
+
+# 5. Web UI panels (Mainsail/Fluidd) — install path depends on host setup; user-managed.
+#    web/mainsail/AutoloaderPanel.vue
+#    web/fluidd/AutoloaderPanel.vue
+
+# 6. Restart services (Moonraker only if sa_moonraker.py changed)
+ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart klipper"
+ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart moonraker"
+
+# 7. Commit and push
 git add -A && git commit -m "..." && git push origin main
 ```
 
-**Important:** Always SCP Python extras to `~/stealth-autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks.
+**Important:** Always SCP Python extras to `~/stealth-autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks. Same for the Moonraker component.
 
 On first install, create symlinks:
 ```bash
-ln -sf ~/stealth-autoloader/klipper/extras/stealth_autoloader.py ~/klipper/klippy/extras/stealth_autoloader.py
-ln -sf ~/stealth-autoloader/klipper/extras/sa_encoder.py           ~/klipper/klippy/extras/sa_encoder.py
+ln -sf ~/stealth-autoloader/klipper/extras/stealth_autoloader.py  ~/klipper/klippy/extras/stealth_autoloader.py
+ln -sf ~/stealth-autoloader/klipper/extras/sa_motion.py           ~/klipper/klippy/extras/sa_motion.py
+ln -sf ~/stealth-autoloader/klipper/extras/sa_sequences.py        ~/klipper/klippy/extras/sa_sequences.py
+ln -sf ~/stealth-autoloader/klipper/extras/sa_calibration.py      ~/klipper/klippy/extras/sa_calibration.py
+ln -sf ~/stealth-autoloader/klipper/extras/sa_encoder.py          ~/klipper/klippy/extras/sa_encoder.py
+ln -sf ~/stealth-autoloader/moonraker/sa_moonraker.py             ~/moonraker/moonraker/components/sa_moonraker.py
 ```
 
 ---
 
 ## Calibration Sequence (first-time setup)
 
-1. **`SA_BUZZ_DRIVE`** — confirm drive motor wires are correct (motor should move)
-2. **`SA_BUZZ_SELECTOR`** — confirm selector motor wires are correct
-3. **`SA_HOME`** — home selector to endstop
-4. **`SA_SELECT TOOL=0`** then `SA_ENGAGE` — manually position to path 0, adjust `selector_position_0`
-5. Repeat step 4 for each path, recording selector positions
-6. **`SA_CALIBRATE_ENCODER DISTANCE=100`** — with filament loaded past drive gear
-7. Update `mm_per_pulse` in `[sa_encoder]` and `selector_position_N` values in `[stealth_autoloader]`
+1. **Flash and connect** the BTT MMB CAN V2.0 board.
+2. **Update `canbus_uuid`** in `hardware.cfg`.
+3. **Test motors:** `SA_BUZZ_DRIVE` then `SA_BUZZ_SELECTOR` — confirm both move.
+4. **Test servo:** `SA_ENGAGE` then `SA_DISENGAGE` — confirm servo moves.
+5. **Home selector:** `SA_HOME` — confirm endstop triggers and carriage returns.
+6. **Calibrate selector:** `SA_CALIBRATE_SELECTOR` — auto-calculates path positions via stallguard sweep.
+7. **Load filament** on path 0 past the drive gear.
+8. **Calibrate drive motor:** `SA_CALIBRATE_DRIVE` — sets `rotation_distance`.
+9. **Calibrate encoders:** `SA_CALIBRATE_ENCODER TOOL=N` for each path.
+10. **Calibrate Bowden lengths:** `SA_CALIBRATE_BOWDEN TOOL=N` for each path (requires extruder sensors).
+11. **Test full load:** `SA_LOAD TOOL=0` — verify complete sequence.
 
 ---
 
