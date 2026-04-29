@@ -281,7 +281,7 @@ export default {
       this.wizard.loadTemp   = pl.load_temp
       this.wizard.unloadTemp = pl.unload_temp
       this.wizard.purgeSpeed = pl.purge_speed
-      this.wizard.purge_length = pl.purge_length
+      this.wizard.purgeLength = pl.purge_length
       this.colors = pl.colors ?? []
       this.step = 4
     },
@@ -308,7 +308,7 @@ export default {
           load_temp:    wz.loadTemp,
           unload_temp:  wz.unloadTemp,
           purge_speed:  wz.purgeSpeed,
-          purge_length: wz.purge_length,
+          purge_length: wz.purgeLength,
         }),
       })
       // 2. Start load

@@ -40,7 +40,7 @@ except ImportError:
     logger.warning("sa_moonraker: sa_filament_db not found — brand endpoints unavailable")
 
 
-class SteathAutoloaderComponent:
+class StealthAutoloaderComponent:
     def __init__(self, config):
         self.server  = config.get_server()
         self.klippy  = self.server.lookup_component('klippy_connection')
@@ -198,4 +198,4 @@ class SteathAutoloaderComponent:
 
 
 def load_component(config):
-    return SteathAutoloaderComponent(config)
+    return StealthAutoloaderComponent(config)
