@@ -44,9 +44,10 @@ before deploying or pushing — just do it and report the result.
 
 | File | Purpose |
 |---|---|
-| `stealth-autoloader/stealth-autoloader.cfg` | Aggregator. printer.cfg includes via `[include stealth-autoloader/*.cfg]` (wildcard) |
-| `stealth-autoloader/pin_aliases.cfg` | ONLY place real pin names are entered. One [board_pins] per MCU |
-| `stealth-autoloader/hardware.cfg` | MCU + all hardware sections + [stealth_autoloader] config |
+| `stealth-autoloader/stealth-autoloader.cfg` | Aggregator. printer.cfg pulls only this file: `[include stealth-autoloader/stealth-autoloader.cfg]`. Pulls in the others below |
+| `stealth-autoloader/pin_aliases.cfg` | ONLY physical hardware pins and aliases. One [board_pins] per MCU. No polarity, no hardware config |
+| `stealth-autoloader/hardware.cfg` | ONLY hardware sections: [mcu], [tmc5160], [manual_stepper], [servo], [sa_encoder], [filament_switch_sensor], [gcode_button selector_stall] |
+| `stealth-autoloader/parameters.cfg` | The single `[stealth_autoloader]` section — all user-tunable values (servo angles, speeds, tip-form, park, selector cal, bowden lengths, sensor/encoder/extruder/stepper references). Klipper requires the section in one file |
 | `stealth-autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
 | `klipper/extras/stealth_autoloader.py` | Main controller — config parsing, GCode registration, status object |
 | `klipper/extras/sa_motion.py` | Motion primitives (servo, selector, drive, idle timeouts) |
@@ -158,7 +159,7 @@ Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when emp
 1. `[board_pins]` block name MUST exactly match the `[mcu name]`. Wrong name → "Unknown pin chip name" error.
 2. Pin polarity (`^` pull-up, `!` invert) goes in hardware.cfg on the USE line — never in pin_aliases.cfg.
 3. Last alias entry in a `[board_pins]` block has NO trailing comma.
-4. Include order is fixed: pin_aliases.cfg → hardware.cfg → macros.cfg.
+4. Include order is fixed: pin_aliases.cfg → hardware.cfg → parameters.cfg → macros.cfg. (parameters.cfg references hardware sections so it must come after hardware.cfg.)
 5. Never duplicate an `[mcu]` section — main `[mcu]` lives in printer.cfg only.
 6. Step pins on secondary MCU: do NOT use `^` prefix — step pins are outputs. `^chip:pin` fails; `chip:pin` works.
 7. Input pins (sensors, endstops): `^!autoloader:SA_ENTRY_0` works — `^` and `!` are stripped before chip name lookup.
@@ -270,6 +271,7 @@ SA_UNLOAD TOOL=N
 # 1. Klipper config files
 scp stealth-autoloader/hardware.cfg               pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 scp stealth-autoloader/pin_aliases.cfg            pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp stealth-autoloader/parameters.cfg             pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 scp stealth-autoloader/macros.cfg                 pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 scp stealth-autoloader/stealth-autoloader.cfg     pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
 

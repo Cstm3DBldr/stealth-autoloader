@@ -15,8 +15,10 @@ wget -O - https://raw.githubusercontent.com/Cstm3DBldr/stealth-autoloader/main/i
 After the command finishes, add this line to `printer.cfg`:
 
 ```
-[include stealth-autoloader/*.cfg]
+[include stealth-autoloader/stealth-autoloader.cfg]
 ```
+
+This single include pulls in the rest (pin_aliases, hardware, parameters, macros) in the correct order.
 
 Then save and restart Klipper.
 
@@ -56,9 +58,10 @@ klipper/extras/
     sa_encoder.py           Encoder driver — pulse counting via Klipper buttons module
 
 stealth-autoloader/
-    stealth-autoloader.cfg  Aggregator (printer.cfg pulls in via wildcard include)
-    pin_aliases.cfg         All real pin → alias mappings (one [board_pins] per MCU)
-    hardware.cfg            MCU, stepper, servo, encoder, sensor, [stealth_autoloader] config
+    stealth-autoloader.cfg  Aggregator (printer.cfg pulls only this file)
+    pin_aliases.cfg         Physical pins → aliases (one [board_pins] per MCU)
+    hardware.cfg            Hardware sections only (MCU, drivers, steppers, servo, encoders, sensors)
+    parameters.cfg          The [stealth_autoloader] section — all user-tunable values
     macros.cfg              Thin gcode wrappers around the Python backend
 
 moonraker/
