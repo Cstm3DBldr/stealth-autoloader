@@ -162,6 +162,43 @@ class Autoloader:
         self.tip_form_slow_speed     = config.getfloat('tip_form_slow_speed',      15.0)
         self.tip_form_dwell          = config.getfloat('tip_form_dwell',            0.5)
 
+        # ── Parking sequence ──────────────────────────────────────────────────
+        # Common: where the filament tip ends up + the speed of the final move.
+        self.park_offset                 = config.getfloat('park_offset',                  5.0)
+        self.park_offset_speed           = config.getfloat('park_offset_speed',           20.0)
+
+        # Load-path (called on fresh insert and during load Branch C).
+        # Step 1 — initial feed forward to engage drive gear and push past encoder.
+        self.park_load_initial_extra     = config.getfloat('park_load_initial_extra',     20.0)
+        self.park_load_initial_speed     = config.getfloat('park_load_initial_speed',     20.0)
+        # Step 2 — retract until encoder is quiet (filament cleared encoder).
+        self.park_load_retract_chunk     = config.getfloat('park_load_retract_chunk',      5.0)
+        self.park_load_retract_speed     = config.getfloat('park_load_retract_speed',     25.0)
+        self.park_load_retract_pause     = config.getfloat('park_load_retract_pause',      0.15)
+        self.park_load_retract_max       = config.getfloat('park_load_retract_max',      300.0)
+        # Step 3 — Pass 1 (and Step 5 — Pass 2): feed forward to find encoder.
+        self.park_load_find_chunk        = config.getfloat('park_load_find_chunk',         5.0)
+        self.park_load_find_speed        = config.getfloat('park_load_find_speed',        15.0)
+        self.park_load_find_pause        = config.getfloat('park_load_find_pause',         0.10)
+        self.park_load_find_max          = config.getfloat('park_load_find_max',         200.0)
+        # Step 4 — back-off retract before Pass 2.
+        self.park_load_backoff_extra     = config.getfloat('park_load_backoff_extra',      6.0)
+        # Step 6 — final retract uses park_offset and park_offset_speed (above).
+
+        # Unload-path (called after long Bowden blast retract).
+        # Phase 1 — retract while encoder shows motion (debounced).
+        self.park_unload_chunk           = config.getfloat('park_unload_chunk',           10.0)
+        self.park_unload_speed           = config.getfloat('park_unload_speed',           25.0)
+        self.park_unload_pause           = config.getfloat('park_unload_pause',            0.20)
+        self.park_unload_quiet_iters     = config.getint  ('park_unload_quiet_iters',      2)
+        self.park_unload_max             = config.getfloat('park_unload_max',            800.0)
+        # Phase 2 — feed forward to re-find the tip.
+        self.park_unload_find_chunk      = config.getfloat('park_unload_find_chunk',       2.0)
+        self.park_unload_find_speed      = config.getfloat('park_unload_find_speed',      15.0)
+        self.park_unload_find_pause      = config.getfloat('park_unload_find_pause',       0.10)
+        self.park_unload_find_max        = config.getfloat('park_unload_find_max',       120.0)
+        # Phase 3 — final retract uses park_offset and park_offset_speed (above).
+
         # ── Runtime state ─────────────────────────────────────────────────────
         self.current_path      = -1
         self._servo_is_engaged = False

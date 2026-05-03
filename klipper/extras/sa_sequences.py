@@ -290,131 +290,130 @@ class SASequences:
         motion = owner.motion
         enc    = owner._encoder(path)
         mpp    = enc.mm_per_pulse or 1.5
-        park_retract = owner.encoder_to_gear_distance * 0.25
 
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
         if from_load:
-            # ── Load / insert path (4-step, with reliable encoder detection) ─
-            # Feed forward first to pull filament into the drive gear and past
-            # the encoder. Without this, a retract on barely-inserted filament
-            # pushes it back out.
+            # ── Load-path park (6 steps; see PARKING SEQUENCE in parameters.cfg) ─
+
+            # Step 1 — feed forward to engage drive gear and push past encoder.
             enc.set_direction(forward=True)
             enc.reset_distance()
-            motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
+            motion.drive_move(
+                owner.encoder_to_gear_distance + owner.park_load_initial_extra,
+                speed=owner.park_load_initial_speed)
             owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-            # Retract until encoder goes quiet (filament tip cleared encoder).
-            # Threshold is mm_per_pulse (1 pulse) — anything less means the
-            # wheel didn't rotate during the chunk, so filament is no longer
-            # in encoder contact.
+            # Step 2 — retract until encoder is quiet (filament cleared).
+            # One pulse = mm_per_pulse; less than that in a chunk = wheel
+            # didn't rotate = filament no longer in encoder contact.
             enc.set_direction(forward=False)
-            for _ in range(60):                 # 300mm max
+            max_chunks = int(owner.park_load_retract_max / owner.park_load_retract_chunk)
+            for _ in range(max_chunks):
                 enc.reset_distance()
-                motion.drive_move(-5.0, speed=25.0)
-                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                motion.drive_move(-owner.park_load_retract_chunk,
+                                  speed=owner.park_load_retract_speed)
+                owner.reactor.pause(
+                    owner.reactor.monotonic() + owner.park_load_retract_pause)
                 if abs(enc.get_distance()) < mpp:
                     break
 
-            # Pass 1 — feed until encoder detects (find encoder entry point).
-            # Use 5mm chunks (~2.6 pulses expected per chunk at mpp≈1.88) so a
-            # single missed pulse doesn't end the search; accumulate distance
-            # across the whole pass so that any cumulative motion triggers the
-            # find — not a per-chunk threshold that misses sub-pulse motions.
+            # Step 3 — Pass 1: feed forward until encoder detects.
+            # Cumulative distance (no per-chunk reset) so sub-pulse motion
+            # across iterations still trips the threshold.
             enc.set_direction(forward=True)
             enc.reset_distance()
+            max_chunks = int(owner.park_load_find_max / owner.park_load_find_chunk)
             found = False
-            for _ in range(40):                 # 200mm search ceiling
-                motion.drive_move(5.0, speed=15.0)
-                owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+            for _ in range(max_chunks):
+                motion.drive_move(owner.park_load_find_chunk,
+                                  speed=owner.park_load_find_speed)
+                owner.reactor.pause(
+                    owner.reactor.monotonic() + owner.park_load_find_pause)
                 if abs(enc.get_distance()) >= mpp:
                     found = True
                     break
             if not found:
                 gcmd.respond_info(
-                    "SA: WARNING — Pass 1 fed 200mm without encoder detection "
-                    "on path %d." % path)
+                    "SA: WARNING — Pass 1 fed %.0fmm without encoder detection "
+                    "on path %d." % (owner.park_load_find_max, path))
 
-            # Pull back past encoder
-            motion.drive_move(-(park_retract + 6.0), speed=20.0)
+            # Step 4 — back off so Pass 2 has room to re-detect.
+            motion.drive_move(
+                -(owner.park_offset + owner.park_load_backoff_extra),
+                speed=owner.park_offset_speed)
             owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
-            # Pass 2 — feed until encoder detects again (confirm position).
-            # Same robust 5mm-chunks-with-accumulation as Pass 1.
+            # Step 5 — Pass 2: same logic as Pass 1, confirm position.
             enc.set_direction(forward=True)
             enc.reset_distance()
             found = False
-            for _ in range(40):                 # 200mm search ceiling
-                motion.drive_move(5.0, speed=15.0)
-                owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+            for _ in range(max_chunks):
+                motion.drive_move(owner.park_load_find_chunk,
+                                  speed=owner.park_load_find_speed)
+                owner.reactor.pause(
+                    owner.reactor.monotonic() + owner.park_load_find_pause)
                 if abs(enc.get_distance()) >= mpp:
                     found = True
                     break
             if not found:
                 gcmd.respond_info(
-                    "SA: WARNING — Pass 2 fed 200mm without encoder detection "
-                    "on path %d. Parking anyway." % path)
+                    "SA: WARNING — Pass 2 fed %.0fmm without encoder detection "
+                    "on path %d. Parking anyway." % (owner.park_load_find_max, path))
 
-            # Final park retract (always runs, even if Pass 2 didn't find)
-            motion.drive_move(-park_retract, speed=20.0)
+            # Step 6 — final retract to park_offset (always runs).
+            motion.drive_move(-owner.park_offset, speed=owner.park_offset_speed)
             owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
             gcmd.respond_info(
                 "SA: Filament parked %.1fmm before encoder (path %d)."
-                % (park_retract, path))
+                % (owner.park_offset, path))
             return
 
-        # ── Unload path (new 3-phase debounced) ──────────────────────────────
+        # ── Unload-path park (3 phases; see PARKING SEQUENCE in parameters.cfg) ─
 
-        # Phase 1: retract in chunks while the encoder is registering motion.
-        # Threshold = mm_per_pulse (one pulse); break only after MAX_QUIET
-        # consecutive iterations of <1 pulse seen — debounces a dropped pulse
-        # so a momentary hiccup can't end the retract early.
-        CHUNK_MM      = 10.0
-        CHUNK_SPEED   = 25.0
-        CHUNK_PAUSE_S = 0.20
-        MAX_QUIET     = 2
-        MAX_CHUNKS    = 80                  # 800mm safety ceiling
+        # Phase 1 — retract while encoder shows motion (debounced).
+        # Break only after park_unload_quiet_iters consecutive sub-pulse
+        # chunks; a single dropped pulse can't end the retract early.
         enc.set_direction(forward=False)
+        max_chunks = int(owner.park_unload_max / owner.park_unload_chunk)
         quiet_iters  = 0
         retracted_mm = 0.0
-        for i in range(MAX_CHUNKS):
+        for _ in range(max_chunks):
             enc.reset_distance()
-            motion.drive_move(-CHUNK_MM, speed=CHUNK_SPEED)
-            owner.reactor.pause(owner.reactor.monotonic() + CHUNK_PAUSE_S)
-            retracted_mm += CHUNK_MM
-            seen = abs(enc.get_distance())
-            if seen < mpp:
+            motion.drive_move(-owner.park_unload_chunk,
+                              speed=owner.park_unload_speed)
+            owner.reactor.pause(
+                owner.reactor.monotonic() + owner.park_unload_pause)
+            retracted_mm += owner.park_unload_chunk
+            if abs(enc.get_distance()) < mpp:
                 quiet_iters += 1
-                if quiet_iters >= MAX_QUIET:
+                if quiet_iters >= owner.park_unload_quiet_iters:
                     gcmd.respond_info(
                         "SA: Encoder quiet %d× after %.0fmm retract — "
                         "filament cleared (path %d)."
-                        % (MAX_QUIET, retracted_mm, path))
+                        % (owner.park_unload_quiet_iters, retracted_mm, path))
                     break
             else:
                 quiet_iters = 0
         else:
             gcmd.respond_info(
                 "SA: WARNING — retract limit (%.0fmm) reached on path %d "
-                "without encoder going quiet." % (CHUNK_MM * MAX_CHUNKS, path))
+                "without encoder going quiet." % (owner.park_unload_max, path))
 
-        # Phase 2: feed forward in small steps until the encoder picks the
-        # tip back up. 120mm search ceiling. If not found, log a warning and
-        # still proceed to Phase 3 — never leave the filament in an
-        # unparked / unknown position.
-        FEED_STEP_MM   = 2.0
-        FEED_SPEED     = 15.0
-        FEED_PAUSE_S   = 0.10
-        MAX_FEED_STEPS = 60                 # 120mm search ceiling
+        # Phase 2 — feed forward to re-find tip. If not found, still proceed
+        # to Phase 3 so filament always ends at a defined offset.
         enc.set_direction(forward=True)
+        max_chunks = int(owner.park_unload_find_max / owner.park_unload_find_chunk)
         found   = False
         feed_mm = 0.0
-        for _ in range(MAX_FEED_STEPS):
+        for _ in range(max_chunks):
             enc.reset_distance()
-            motion.drive_move(FEED_STEP_MM, speed=FEED_SPEED)
-            owner.reactor.pause(owner.reactor.monotonic() + FEED_PAUSE_S)
-            feed_mm += FEED_STEP_MM
+            motion.drive_move(owner.park_unload_find_chunk,
+                              speed=owner.park_unload_find_speed)
+            owner.reactor.pause(
+                owner.reactor.monotonic() + owner.park_unload_find_pause)
+            feed_mm += owner.park_unload_find_chunk
             if enc.get_distance() >= mpp:
                 found = True
                 break
@@ -427,15 +426,13 @@ class SASequences:
                 "SA: WARNING — fed %.0fmm forward without encoder triggering "
                 "on path %d. Continuing with park anyway." % (feed_mm, path))
 
-        # Phase 3: retract calibrated park distance (always — even if Phase 2
-        # didn't find the encoder, this leaves the filament at a defined
-        # offset rather than wherever Phase 1 happened to stop).
-        motion.drive_move(-park_retract, speed=20.0)
+        # Phase 3 — final retract to park_offset (always runs).
+        motion.drive_move(-owner.park_offset, speed=owner.park_offset_speed)
         owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
         gcmd.respond_info(
             "SA: Filament parked %.1fmm before encoder (path %d)."
-            % (park_retract, path))
+            % (owner.park_offset, path))
 
     def park_filament(self, gcmd, path):
         """Public: park filament on *path* — selects path, parks, disengages.
