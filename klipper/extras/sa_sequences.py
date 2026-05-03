@@ -265,22 +265,26 @@ class SASequences:
     def _park_filament_at_encoder(self, gcmd, path, from_load=True):
         """Park filament tip at a consistent position just before the encoder.
 
-        Three-phase algorithm:
-          Phase 1 — retract in chunks while the encoder is registering motion.
-                    Break only after MAX_QUIET consecutive iterations where the
-                    encoder saw less than one pulse of motion (debounced — a
-                    single dropped pulse won't end the retract early).
-          Phase 2 — feed forward in small steps until the encoder picks the
-                    filament tip back up (this finds the exact tip position).
-          Phase 3 — retract park_retract mm to position the tip a known
-                    distance before the encoder.
+        Two paths because the call sites have different starting conditions:
+
+        from_load=True (default — fresh-insert / load Branch C):
+            Filament is barely inserted at the entry sensor; we don't yet know
+            if the drive gear has gripped it. Original 4-step logic
+            (feed-forward → retract-quiet → Pass 1 find → back-off → Pass 2 find
+            → final retract) is well-tested for this case and handles
+            barely-gripped filament gracefully. DO NOT change this path
+            without testing all load + auto-insert flows.
+
+        from_load=False (unload):
+            Filament tip is somewhere inside the bowden after a long blast
+            retract; servo is engaged with confirmed grip. Use the 3-phase
+            algorithm (debounced retract-while-motion → feed-find →
+            calibrated park retract). Removed the early-return on Phase 2
+            failure: even if the find phase doesn't see the encoder, still
+            do the calibrated park retract so the function never leaves the
+            filament in an unknown position.
 
         Servo must already be engaged before calling this.
-
-        from_load=True  (default): feed forward first to pull barely-inserted
-                                   filament into the drive gear before parking.
-        from_load=False (unload):  filament tip is already inside the tube —
-                                   skip the feed-forward, go straight to Phase 1.
         """
         owner  = self.owner
         motion = owner.motion
@@ -291,6 +295,7 @@ class SASequences:
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
         if from_load:
+            # ── Load / insert path (original 4-step, unchanged) ──────────────
             # Feed forward first to pull filament into the drive gear and past
             # the encoder. Without this, a retract on barely-inserted filament
             # pushes it back out.
@@ -299,17 +304,59 @@ class SASequences:
             motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
             owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # ── Phase 1: retract while encoder shows motion ──────────────────────
-        # The threshold is mm_per_pulse (one pulse). A single missed pulse
-        # during a chunk would otherwise look like "no motion" — debounce by
-        # requiring MAX_QUIET consecutive low readings to end the loop.
+            # Retract until encoder goes quiet (filament tip cleared encoder)
+            enc.set_direction(forward=False)
+            for _ in range(60):                 # 300mm max
+                enc.reset_distance()
+                motion.drive_move(-5.0, speed=25.0)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.15)
+                if abs(enc.get_distance()) < 0.5:
+                    break
+
+            # Pass 1 — feed until encoder detects (find encoder entry point)
+            enc.set_direction(forward=True)
+            for _ in range(30):                 # 60mm max
+                enc.reset_distance()
+                motion.drive_move(2.0, speed=15.0)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+                if enc.get_distance() >= mpp:
+                    break
+
+            # Pull back past encoder
+            motion.drive_move(-(park_retract + 6.0), speed=20.0)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.2)
+
+            # Pass 2 — feed until encoder detects again (confirm consistent position)
+            enc.set_direction(forward=True)
+            for _ in range(20):
+                enc.reset_distance()
+                motion.drive_move(2.0, speed=15.0)
+                owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+                if enc.get_distance() >= mpp:
+                    break
+
+            # Final park retract
+            motion.drive_move(-park_retract, speed=20.0)
+            owner.reactor.pause(owner.reactor.monotonic() + 0.2)
+
+            gcmd.respond_info(
+                "SA: Filament parked %.1fmm before encoder (path %d)."
+                % (park_retract, path))
+            return
+
+        # ── Unload path (new 3-phase debounced) ──────────────────────────────
+
+        # Phase 1: retract in chunks while the encoder is registering motion.
+        # Threshold = mm_per_pulse (one pulse); break only after MAX_QUIET
+        # consecutive iterations of <1 pulse seen — debounces a dropped pulse
+        # so a momentary hiccup can't end the retract early.
         CHUNK_MM      = 10.0
         CHUNK_SPEED   = 25.0
         CHUNK_PAUSE_S = 0.20
         MAX_QUIET     = 2
         MAX_CHUNKS    = 80                  # 800mm safety ceiling
         enc.set_direction(forward=False)
-        quiet_iters = 0
+        quiet_iters  = 0
         retracted_mm = 0.0
         for i in range(MAX_CHUNKS):
             enc.reset_distance()
@@ -321,8 +368,8 @@ class SASequences:
                 quiet_iters += 1
                 if quiet_iters >= MAX_QUIET:
                     gcmd.respond_info(
-                        "SA: Encoder quiet %d× — filament cleared encoder "
-                        "after %.0fmm retract (path %d)."
+                        "SA: Encoder quiet %d× after %.0fmm retract — "
+                        "filament cleared (path %d)."
                         % (MAX_QUIET, retracted_mm, path))
                     break
             else:
@@ -332,13 +379,16 @@ class SASequences:
                 "SA: WARNING — retract limit (%.0fmm) reached on path %d "
                 "without encoder going quiet." % (CHUNK_MM * MAX_CHUNKS, path))
 
-        # ── Phase 2: feed forward in small steps until encoder picks back up ─
-        FEED_STEP_MM    = 2.0
-        FEED_SPEED      = 15.0
-        FEED_PAUSE_S    = 0.10
-        MAX_FEED_STEPS  = 40                # 80mm search ceiling
+        # Phase 2: feed forward in small steps until the encoder picks the
+        # tip back up. 120mm search ceiling. If not found, log a warning and
+        # still proceed to Phase 3 — never leave the filament in an
+        # unparked / unknown position.
+        FEED_STEP_MM   = 2.0
+        FEED_SPEED     = 15.0
+        FEED_PAUSE_S   = 0.10
+        MAX_FEED_STEPS = 60                 # 120mm search ceiling
         enc.set_direction(forward=True)
-        found = False
+        found   = False
         feed_mm = 0.0
         for _ in range(MAX_FEED_STEPS):
             enc.reset_distance()
@@ -348,16 +398,18 @@ class SASequences:
             if enc.get_distance() >= mpp:
                 found = True
                 break
-        if not found:
+        if found:
+            gcmd.respond_info(
+                "SA: Encoder re-acquired filament after %.1fmm feed (path %d)."
+                % (feed_mm, path))
+        else:
             gcmd.respond_info(
                 "SA: WARNING — fed %.0fmm forward without encoder triggering "
-                "on path %d. Cannot complete park." % (feed_mm, path))
-            return
-        gcmd.respond_info(
-            "SA: Encoder re-acquired filament after %.1fmm feed (path %d)."
-            % (feed_mm, path))
+                "on path %d. Continuing with park anyway." % (feed_mm, path))
 
-        # ── Phase 3: retract the calibrated park distance ────────────────────
+        # Phase 3: retract calibrated park distance (always — even if Phase 2
+        # didn't find the encoder, this leaves the filament at a defined
+        # offset rather than wherever Phase 1 happened to stop).
         motion.drive_move(-park_retract, speed=20.0)
         owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
