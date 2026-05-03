@@ -10,7 +10,7 @@ from ks_includes.screen_panel import ScreenPanel
 logger = logging.getLogger('klipperscreen.sa_config')
 
 # (section_label, param_key, display_label, unit, decimal_places)
-# param_key must match [stealth_autoloader] config key and get_status() key
+# param_key must match [autoloader] config key and get_status() key
 _PARAMS = [
     ("SPEEDS",        "feed_speed",              "Feed Speed",          "mm/s", 1),
     ("SPEEDS",        "selector_speed",           "Selector Speed",      "mm/s", 1),
@@ -283,9 +283,9 @@ class Panel(ScreenPanel):
     def _query_sa(self):
         try:
             resp = self._screen.apiclient.send_request(
-                "printer/objects/query?stealth_autoloader")
+                "printer/objects/query?autoloader")
             if resp and 'status' in resp:
-                return resp['status'].get('stealth_autoloader', {})
+                return resp['status'].get('autoloader', {})
         except Exception as e:
             logger.warning("sa_config: query failed: %s", e)
         return {}

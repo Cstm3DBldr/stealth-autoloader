@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stealth Autoloader</title>
+<title>Autoloader</title>
 <style>
 /* Mainsail-inspired dark theme */
 :root {
@@ -240,7 +240,7 @@ tr:hover td { background: rgba(255,255,255,0.02); }
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="opacity:.8">
         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
       </svg>
-      Stealth Autoloader
+      Autoloader
     </h2>
     <span id="sa-summary" style="font-size:12px;color:var(--muted)">—</span>
   </div>
@@ -344,7 +344,7 @@ const API  = location.protocol + '//' + HOST;
 const WS   = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + HOST + '/websocket';
 
 // ── Runtime state ──────────────────────────────────────────────────────────
-let _st        = null;   // stealth_autoloader status dict
+let _st        = null;   // autoloader status dict
 let _wsOk      = false;
 let _hasBrands = false;  // true if custom Moonraker component is installed
 let _brands    = [];
@@ -367,19 +367,19 @@ function connectWS() {
       setBadge(true);
       _ws.send(JSON.stringify({
         jsonrpc: '2.0', method: 'printer.objects.subscribe',
-        params: { objects: { stealth_autoloader: null } }, id: _wsId++
+        params: { objects: { autoloader: null } }, id: _wsId++
       }));
     };
     _ws.onmessage = e => {
       const msg = JSON.parse(e.data);
       // Initial subscription response contains full status
       if (msg.id && msg.result && msg.result.status) {
-        const sa = msg.result.status.stealth_autoloader;
+        const sa = msg.result.status.autoloader;
         if (sa) { _st = Object.assign(_st || {}, sa); render(); }
       }
       // Incremental updates (only changed fields)
       if (msg.method === 'notify_status_update') {
-        const sa = msg.params[0].stealth_autoloader;
+        const sa = msg.params[0].autoloader;
         if (sa) { _st = Object.assign(_st || {}, sa); render(); }
       }
     };
@@ -398,10 +398,10 @@ function setBadge(ok) {
 async function pollStatus() {
   if (_wsOk) return;
   try {
-    const r = await fetch(API + '/printer/objects/query?stealth_autoloader');
+    const r = await fetch(API + '/printer/objects/query?autoloader');
     if (!r.ok) return;
     const d = await r.json();
-    const sa = d.result?.status?.stealth_autoloader;
+    const sa = d.result?.status?.autoloader;
     if (sa) { _st = Object.assign(_st || {}, sa); render(); setBadge(true); }
   } catch (e) { setBadge(false); }
 }
@@ -420,7 +420,7 @@ async function cmd(gcode) {
 // ── Filament brand check ───────────────────────────────────────────────────
 async function checkBrands() {
   try {
-    const r = await fetch(API + '/machine/stealth_autoloader/brands');
+    const r = await fetch(API + '/machine/autoloader/brands');
     if (!r.ok) { _hasBrands = false; return; }
     const d = await r.json();
     _brands    = (d.brands || []);
@@ -628,7 +628,7 @@ async function pickBrand(b) {
   _wz.brandPath = b.filepath;
   _wz.brandName = b.display_name;
   try {
-    const r = await fetch(API + '/machine/stealth_autoloader/filaments?brand=' +
+    const r = await fetch(API + '/machine/autoloader/filaments?brand=' +
       encodeURIComponent(b.filepath));
     if (!r.ok) throw new Error('fetch failed');
     const d = await r.json();
@@ -779,7 +779,7 @@ async function doLoad() {
   // Set material profile if we have one
   if (_hasBrands && wz.colorHex) {
     try {
-      await fetch(API + '/machine/stealth_autoloader/set_material', {
+      await fetch(API + '/machine/autoloader/set_material', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool: wz.path, material: wz.material, brand: wz.brandName,

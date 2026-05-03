@@ -1,4 +1,4 @@
-# sa_filament_db.py — Filament brand database loader for Stealth Autoloader
+# sa_filament_db.py — Filament brand database loader for Autoloader
 #
 # Scans a directory of .cfg files, each describing one brand's product lines
 # and colors.  No code changes needed to add a new brand — drop a .cfg file

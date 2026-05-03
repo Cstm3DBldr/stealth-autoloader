@@ -1,6 +1,6 @@
 <template>
   <collapsable-card
-    :title="$t('AutoloaderPanel.title', 'Stealth Autoloader')"
+    :title="$t('AutoloaderPanel.title', 'Autoloader')"
     icon="$printer3dNozzle"
   >
     <template #menu>
@@ -217,14 +217,14 @@ export default {
 
     async fetchStatus() {
       try {
-        const r = await fetch(`${this.apiBase()}/machine/stealth_autoloader/status`)
+        const r = await fetch(`${this.apiBase()}/machine/autoloader/status`)
         if (r.ok) this.status = await r.json()
       } catch (e) {}
     },
 
     async fetchBrands() {
       try {
-        const r = await fetch(`${this.apiBase()}/machine/stealth_autoloader/brands`)
+        const r = await fetch(`${this.apiBase()}/machine/autoloader/brands`)
         if (r.ok) {
           const d = await r.json()
           this.brands = d.brands ?? []
@@ -242,7 +242,7 @@ export default {
       this.wizard.brandPath = b.filepath
       this.wizard.brandName = b.display_name
       const r = await fetch(
-        `${this.apiBase()}/machine/stealth_autoloader/filaments?brand=${encodeURIComponent(b.filepath)}`)
+        `${this.apiBase()}/machine/autoloader/filaments?brand=${encodeURIComponent(b.filepath)}`)
       if (r.ok) {
         const d = await r.json()
         this.productLines = d.product_lines ?? []
@@ -279,7 +279,7 @@ export default {
 
     async confirmLoad() {
       const wz = this.wizard
-      await fetch(`${this.apiBase()}/machine/stealth_autoloader/set_material`, {
+      await fetch(`${this.apiBase()}/machine/autoloader/set_material`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -295,7 +295,7 @@ export default {
           purge_length: wz.purgeLength,
         }),
       })
-      await fetch(`${this.apiBase()}/machine/stealth_autoloader/load`, {
+      await fetch(`${this.apiBase()}/machine/autoloader/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: wz.path }),

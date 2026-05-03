@@ -436,7 +436,7 @@ class Panel(ScreenPanel):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def activate(self):
-        sa = self._printer.data.get("stealth_autoloader", {})
+        sa = self._printer.data.get("autoloader", {})
         self._last_sa   = dict(sa)
         self._num_paths = sa.get("num_paths", 6)
         self._stack.set_visible_child_name("pages")
@@ -445,7 +445,7 @@ class Panel(ScreenPanel):
     def process_update(self, action, data):
         if action != "notify_status_update":
             return
-        sa = data.get("stealth_autoloader")
+        sa = data.get("autoloader")
         if sa is not None:
             self._last_sa.update(sa)
             n = sa.get("num_paths")

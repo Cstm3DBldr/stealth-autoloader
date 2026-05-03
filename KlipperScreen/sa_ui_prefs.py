@@ -1,12 +1,12 @@
-# sa_ui_prefs.py — persist UI preferences for Stealth Autoloader KlipperScreen panels
+# sa_ui_prefs.py — persist UI preferences for Autoloader KlipperScreen panels
 #
-# Stores prefs in ~/stealth-autoloader/klipperscreen/sa_ui_prefs.json
+# Stores prefs in ~/autoloader/klipperscreen/sa_ui_prefs.json
 
 import json
 import os
 
 _PREFS_PATH = os.path.expanduser(
-    "~/stealth-autoloader/klipperscreen/sa_ui_prefs.json")
+    "~/autoloader/klipperscreen/sa_ui_prefs.json")
 
 _DEFAULTS = {
     "accent_color":  "#1565C0",   # button background

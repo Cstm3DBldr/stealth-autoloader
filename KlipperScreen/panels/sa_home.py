@@ -30,7 +30,7 @@ _BOT_ROW = [
 
 
 class Panel(ScreenPanel):
-    """Stealth Autoloader home — 2 wide top + 3 equal mid + 1 full-width bottom."""
+    """Autoloader home — 2 wide top + 3 equal mid + 1 full-width bottom."""
 
     def __init__(self, screen, title):
         super().__init__(screen, title or "Autoloader")

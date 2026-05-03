@@ -1,6 +1,6 @@
-# stealth_autoloader.py — Stealth Autoloader main controller
+# autoloader.py — Autoloader main controller
 #
-# Single [stealth_autoloader] Klipper config section that instantiates and
+# Single [autoloader] Klipper config section that instantiates and
 # wires together all subsystems:
 #   sa_motion.py        — motion primitives (servo, selector, drive)
 #   sa_sequences.py     — load / unload sequences
@@ -52,10 +52,10 @@ from sa_sequences   import SASequences
 from sa_calibration import SACalibration
 
 # ══════════════════════════════════════════════════════════════════════════════
-# StealthAutoloader
+# Autoloader
 # ══════════════════════════════════════════════════════════════════════════════
 
-class StealthAutoloader:
+class Autoloader:
 
     # ── Path states ───────────────────────────────────────────────────────────
     STATE_UNKNOWN = 'unknown'
@@ -196,7 +196,7 @@ class StealthAutoloader:
         # ── Startup ───────────────────────────────────────────────────────────
         self._register_commands()
         self.printer.register_event_handler('klippy:ready', self._on_ready)
-        logging.info("StealthAutoloader: initialized — %d paths", self.num_paths)
+        logging.info("Autoloader: initialized — %d paths", self.num_paths)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Klipper lifecycle
@@ -264,17 +264,17 @@ class StealthAutoloader:
                         self.drive_stepper_name, 'rotation_distance', '%.4f' % saved_rd)
                     if ok:
                         logging.warning(
-                            "StealthAutoloader: hardware.cfg rotation_distance updated "
+                            "Autoloader: hardware.cfg rotation_distance updated "
                             "to %.4f from save_variables — restart Klipper to apply.",
                             saved_rd)
                     else:
                         logging.warning(
-                            "StealthAutoloader: rotation_distance mismatch "
+                            "Autoloader: rotation_distance mismatch "
                             "(cfg=%.4f saved=%.4f) — could not patch: %s",
                             current_rd, saved_rd, result)
             except Exception as e:
-                logging.warning("StealthAutoloader: rotation_distance sync failed: %s", e)
-        logging.info("StealthAutoloader: calibrations restored from save_variables")
+                logging.warning("Autoloader: rotation_distance sync failed: %s", e)
+        logging.info("Autoloader: calibrations restored from save_variables")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Hardware name helpers
@@ -487,7 +487,7 @@ class StealthAutoloader:
         sel_str = ("path %d" % self.current_path
                    if self.current_path >= 0 else "none / unhomed")
         lines = [
-            "╔══ Stealth Autoloader Status ══════════════════════════════╗",
+            "╔══ Autoloader Status ══════════════════════════════╗",
             "  Paths    : %d configured" % self.num_paths,
             "  Selector : %s" % sel_str,
             "  Drive    : %s" % ("ENGAGED" if self._servo_is_engaged else "neutral"),
@@ -738,9 +738,9 @@ class StealthAutoloader:
                 "Then run SAVE_CONFIG to persist and restart.")
             return
         configfile = self.printer.lookup_object('configfile')
-        configfile.set('stealth_autoloader', param, value)
+        configfile.set('autoloader', param, value)
         gcmd.respond_info(
-            "SA_SET_CONFIG: staged stealth_autoloader.%s = %s  "
+            "SA_SET_CONFIG: staged autoloader.%s = %s  "
             "(run SAVE_CONFIG to persist and restart)" % (param, value))
 
     def _cmd_respond(self, gcmd):
@@ -752,7 +752,7 @@ class StealthAutoloader:
         self.calibration.respond(gcmd, value)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Klipper status — readable in macros as printer['stealth_autoloader']
+    # Klipper status — readable in macros as printer['autoloader']
     # ══════════════════════════════════════════════════════════════════════════
 
     def get_status(self, eventtime):
@@ -822,7 +822,7 @@ class StealthAutoloader:
 
     @staticmethod
     def load_config(config):
-        return StealthAutoloader(config)
+        return Autoloader(config)
 
 def load_config(config):
-    return StealthAutoloader(config)
+    return Autoloader(config)

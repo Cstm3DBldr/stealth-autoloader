@@ -1,4 +1,4 @@
-# sa_encoder.py - Stealth Autoloader Rotary Encoder (Binky-style single-pulse)
+# sa_encoder.py - Autoloader Rotary Encoder (Binky-style single-pulse)
 #
 # One instance per [sa_encoder toolX] section.
 # Each encoder tracks actual filament movement independently using hardware

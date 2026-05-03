@@ -154,9 +154,9 @@ class Panel(ScreenPanel):
     def _query_sa(self):
         try:
             resp = self._screen.apiclient.send_request(
-                "printer/objects/query?stealth_autoloader")
+                "printer/objects/query?autoloader")
             if resp and 'status' in resp:
-                return resp['status'].get('stealth_autoloader', {})
+                return resp['status'].get('autoloader', {})
         except Exception as e:
             logger.warning("sa_main: query failed: %s", e)
         return {}
@@ -188,7 +188,7 @@ class Panel(ScreenPanel):
             self._apply_encoders()
 
     def activate(self):
-        objs = {"stealth_autoloader": None}
+        objs = {"autoloader": None}
         num = self._num_paths or 6
         for i in range(num):
             objs["sa_encoder %d" % i] = None
@@ -219,7 +219,7 @@ class Panel(ScreenPanel):
                 except (ValueError, AttributeError):
                     pass
 
-        sa = data.get("stealth_autoloader")
+        sa = data.get("autoloader")
         if sa is None and not updated_enc:
             return
 
@@ -272,7 +272,7 @@ class Panel(ScreenPanel):
         num = sa.get("num_paths", 0)
         if num != self._num_paths:
             self._build_rows(num)
-            objs = {"stealth_autoloader": None}
+            objs = {"autoloader": None}
             for i in range(num):
                 objs["sa_encoder %d" % i] = None
             self._screen._ws.klippy.object_subscription({"objects": objs})

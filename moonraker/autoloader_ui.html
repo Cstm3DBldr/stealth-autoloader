@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stealth Autoloader</title>
+<title>Autoloader</title>
 <style>
   :root { --bg:#1e1e1e; --card:#2a2a2a; --border:#444; --text:#eee; --muted:#888;
           --green:#4caf50; --grey:#666; --orange:#ff9800; --amber:#ffc107;
@@ -70,7 +70,7 @@
 <body>
 
 <div class="card">
-  <h2>⚙ Stealth Autoloader</h2>
+  <h2>⚙ Autoloader</h2>
   <div class="bar">
     <button class="btn btn-sm" onclick="sendGcode('SA_HOME')">🏠 Home</button>
     <button class="btn btn-sm" onclick="sendGcode('SA_ENGAGE')">▲ Engage</button>
@@ -119,14 +119,14 @@ let _brands = [], _lines = [], _colors = [], _materials = [];
 // ── Polling ────────────────────────────────────────────────────────────────
 async function fetchStatus() {
   try {
-    const r = await fetch(API + '/machine/stealth_autoloader/status');
+    const r = await fetch(API + '/machine/autoloader/status');
     if (r.ok) { _status = await r.json(); renderTable(); }
   } catch(e) {}
 }
 
 async function fetchBrands() {
   try {
-    const r = await fetch(API + '/machine/stealth_autoloader/brands');
+    const r = await fetch(API + '/machine/autoloader/brands');
     if (r.ok) { const d = await r.json(); _brands = d.brands || []; }
   } catch(e) {}
 }
@@ -218,7 +218,7 @@ function stepBack() {
 function renderBrandStep(body) {
   body.innerHTML = '<div class="chip-grid" id="brand-grid">Loading brands…</div>';
   if (!_brands.length) {
-    fetch(API + '/machine/stealth_autoloader/brands').then(r=>r.json()).then(d=>{
+    fetch(API + '/machine/autoloader/brands').then(r=>r.json()).then(d=>{
       _brands = d.brands||[];
       _fillBrands();
     });
@@ -235,7 +235,7 @@ function _fillBrands() {
 async function selectBrand(b) {
   _wz.brandPath = b.filepath;
   _wz.brandName = b.display_name;
-  const r = await fetch(API + '/machine/stealth_autoloader/filaments?brand=' + encodeURIComponent(b.filepath));
+  const r = await fetch(API + '/machine/autoloader/filaments?brand=' + encodeURIComponent(b.filepath));
   const d = await r.json();
   _lines = d.product_lines || [];
   const seen = new Set();
@@ -304,7 +304,7 @@ function selectColor(c) {
 
 async function confirmLoad() {
   const wz = _wz;
-  await fetch(API + '/machine/stealth_autoloader/set_material', {
+  await fetch(API + '/machine/autoloader/set_material', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       tool: wz.path, material: wz.material, brand: wz.brandName,
@@ -313,7 +313,7 @@ async function confirmLoad() {
       purge_speed: wz.purgeSpeed, purge_length: wz.purgeLength
     })
   });
-  await fetch(API + '/machine/stealth_autoloader/load', {
+  await fetch(API + '/machine/autoloader/load', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({tool: wz.path})
   });

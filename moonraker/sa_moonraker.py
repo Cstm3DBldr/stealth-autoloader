@@ -1,18 +1,18 @@
-# sa_moonraker.py — Stealth Autoloader Moonraker component
+# sa_moonraker.py — Autoloader Moonraker component
 #
 # Registers REST endpoints and WebSocket events for the autoloader.
 # Symlink to activate:
-#   ln -sf ~/stealth-autoloader/moonraker/sa_moonraker.py \
+#   ln -sf ~/autoloader/moonraker/sa_moonraker.py \
 #           ~/moonraker/moonraker/components/sa_moonraker.py
 #
 # Endpoints:
-#   GET  /machine/stealth_autoloader/status
-#   GET  /machine/stealth_autoloader/brands
-#   GET  /machine/stealth_autoloader/filaments?brand=<path>&material=<type>
-#   POST /machine/stealth_autoloader/set_material
-#   POST /machine/stealth_autoloader/load
-#   POST /machine/stealth_autoloader/unload
-#   POST /machine/stealth_autoloader/home
+#   GET  /machine/autoloader/status
+#   GET  /machine/autoloader/brands
+#   GET  /machine/autoloader/filaments?brand=<path>&material=<type>
+#   POST /machine/autoloader/set_material
+#   POST /machine/autoloader/load
+#   POST /machine/autoloader/unload
+#   POST /machine/autoloader/home
 
 from __future__ import annotations
 import os
@@ -24,11 +24,11 @@ logger = logging.getLogger('moonraker.sa_moonraker')
 
 # ── Filament DB ───────────────────────────────────────────────────────────────
 _DB_SEARCH_PATHS = [
-    os.path.expanduser("~/stealth-autoloader/klipperscreen"),
-    os.path.expanduser("~/stealth-autoloader"),
+    os.path.expanduser("~/autoloader/klipperscreen"),
+    os.path.expanduser("~/autoloader"),
     os.path.dirname(os.path.abspath(__file__)),
 ]
-_BRANDS_DIR = os.path.expanduser("~/stealth-autoloader/filaments/brands")
+_BRANDS_DIR = os.path.expanduser("~/autoloader/filaments/brands")
 
 _db = None
 for _p in _DB_SEARCH_PATHS:
@@ -40,38 +40,38 @@ except ImportError:
     logger.warning("sa_moonraker: sa_filament_db not found — brand endpoints unavailable")
 
 
-class StealthAutoloaderComponent:
+class AutoloaderComponent:
     def __init__(self, config):
         self.server  = config.get_server()
         self.klippy  = self.server.lookup_component('klippy_connection')
 
         # Register REST endpoints
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/status",
+            "/machine/autoloader/status",
             ['GET'],
             self._handle_status)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/brands",
+            "/machine/autoloader/brands",
             ['GET'],
             self._handle_brands)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/filaments",
+            "/machine/autoloader/filaments",
             ['GET'],
             self._handle_filaments)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/set_material",
+            "/machine/autoloader/set_material",
             ['POST'],
             self._handle_set_material)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/load",
+            "/machine/autoloader/load",
             ['POST'],
             self._handle_load)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/unload",
+            "/machine/autoloader/unload",
             ['POST'],
             self._handle_unload)
         self.server.register_endpoint(
-            "/machine/stealth_autoloader/home",
+            "/machine/autoloader/home",
             ['POST'],
             self._handle_home)
 
@@ -82,7 +82,7 @@ class StealthAutoloaderComponent:
     async def _on_klippy_ready(self):
         try:
             kapi = self.server.lookup_component('klippy_apis')
-            await kapi.subscribe_objects({'stealth_autoloader': None})
+            await kapi.subscribe_objects({'autoloader': None})
         except Exception as e:
             logger.warning("sa_moonraker: subscribe failed: %s", e)
 
@@ -91,8 +91,8 @@ class StealthAutoloaderComponent:
     async def _handle_status(self, web_request):
         try:
             kapi = self.server.lookup_component('klippy_apis')
-            result = await kapi.query_objects({'stealth_autoloader': None})
-            return result.get('stealth_autoloader', {})
+            result = await kapi.query_objects({'autoloader': None})
+            return result.get('autoloader', {})
         except Exception as e:
             raise self.server.error("SA status query failed: %s" % e, 500)
 
@@ -198,4 +198,4 @@ class StealthAutoloaderComponent:
 
 
 def load_component(config):
-    return StealthAutoloaderComponent(config)
+    return AutoloaderComponent(config)

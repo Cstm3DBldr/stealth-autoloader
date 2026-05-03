@@ -23,7 +23,7 @@ except ImportError:
     _cs = None
     logger.error("sa_load_unload: could not import sa_color_swatch")
 
-_BRANDS_DIR = os.path.expanduser("~/printer_data/config/stealth-autoloader/filament_profiles")
+_BRANDS_DIR = os.path.expanduser("~/printer_data/config/autoloader/filament_profiles")
 
 try:
     import sa_filament_db as _db
@@ -705,16 +705,16 @@ class Panel(ScreenPanel):
     def _query_sa(self):
         try:
             resp = self._screen.apiclient.send_request(
-                "printer/objects/query?stealth_autoloader")
+                "printer/objects/query?autoloader")
             if resp and 'status' in resp:
-                return resp['status'].get('stealth_autoloader', {})
+                return resp['status'].get('autoloader', {})
         except Exception as e:
             logger.error("sa_load_unload: query failed: %s", e)
         return {}
 
     def activate(self):
         self._screen._ws.klippy.object_subscription(
-            {"objects": {"stealth_autoloader": None}})
+            {"objects": {"autoloader": None}})
         sa = self._query_sa()
         self._apply_sa(sa)
         self._reset()
@@ -735,7 +735,7 @@ class Panel(ScreenPanel):
     def process_update(self, action, data):
         if action != "notify_status_update":
             return
-        sa = data.get("stealth_autoloader")
+        sa = data.get("autoloader")
         if sa is None:
             return
 

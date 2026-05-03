@@ -1,7 +1,7 @@
-# sa_sequences.py — Stealth Autoloader load/unload sequences
+# sa_sequences.py — Autoloader load/unload sequences
 #
 # High-level filament feed sequences that orchestrate motion primitives
-# from sa_motion.py and sensor reads from stealth_autoloader.py.
+# from sa_motion.py and sensor reads from autoloader.py.
 
 import sys, os as _os
 _extras_dir = _os.path.dirname(_os.path.abspath(__file__))
@@ -19,7 +19,7 @@ _FILAMENT_AREA = math.pi * (1.75 / 2.0) ** 2   # ~2.405 mm²
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SASequences:
-    """Load and unload sequences for the Stealth Autoloader."""
+    """Load and unload sequences for the Autoloader."""
 
     def __init__(self, owner):
         self.owner = owner

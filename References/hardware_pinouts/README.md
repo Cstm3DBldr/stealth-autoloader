@@ -1,6 +1,6 @@
 # Hardware Pinout References
 
-This folder contains pinout sheets for every board used in the Stealth Autoloader project.
+This folder contains pinout sheets for every board used in the Autoloader project.
 Keep this folder updated as hardware is added.
 
 | File | Board | Used For |
@@ -20,7 +20,7 @@ Keep this folder updated as hardware is added.
 | M3 | PC15 | PC11 | PC10 | PB3 |
 | M4 | PC13 | PC12 | PC14 | PD6 |
 
-### 2×7 Header — Stealth Autoloader wiring (entry sensor + encoder per tool)
+### 2×7 Header — Autoloader wiring (entry sensor + encoder per tool)
 | Physical pair | Low pin | High pin | Assigned to |
 |---|---|---|---|
 | Col 0 | PC6 | PC7 | T0 entry / T0 encoder |

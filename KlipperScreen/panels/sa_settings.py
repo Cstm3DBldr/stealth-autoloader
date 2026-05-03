@@ -256,9 +256,9 @@ class Panel(ScreenPanel):
     def _query_sa(self):
         try:
             resp = self._screen.apiclient.send_request(
-                "printer/objects/query?stealth_autoloader")
+                "printer/objects/query?autoloader")
             if resp and 'status' in resp:
-                return resp['status'].get('stealth_autoloader', {})
+                return resp['status'].get('autoloader', {})
         except Exception as e:
             logger.warning("sa_settings: query failed: %s", e)
         return {}

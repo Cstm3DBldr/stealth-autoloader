@@ -1,4 +1,4 @@
-# sa_button_style.py — shared button CSS for all Stealth Autoloader panels
+# sa_button_style.py — shared button CSS for all Autoloader panels
 
 import gi
 gi.require_version("Gtk", "3.0")

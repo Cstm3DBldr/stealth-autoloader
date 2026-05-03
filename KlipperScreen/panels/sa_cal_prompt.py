@@ -234,9 +234,9 @@ class Panel(ScreenPanel):
     def _query_sa(self):
         try:
             resp = self._screen.apiclient.send_request(
-                "printer/objects/query?stealth_autoloader")
+                "printer/objects/query?autoloader")
             if resp and 'status' in resp:
-                return resp['status'].get('stealth_autoloader', {})
+                return resp['status'].get('autoloader', {})
         except Exception as e:
             logger.warning("sa_cal_prompt: query failed: %s", e)
         return {}
@@ -244,7 +244,7 @@ class Panel(ScreenPanel):
     def activate(self):
         self._active = True
         self._screen._ws.klippy.object_subscription(
-            {"objects": {"stealth_autoloader": None}})
+            {"objects": {"autoloader": None}})
         sa = self._query_sa()
         self._apply_state(
             sa.get("cal_state",  ""),
@@ -256,7 +256,7 @@ class Panel(ScreenPanel):
     def process_update(self, action, data):
         if action != "notify_status_update":
             return
-        sa = data.get("stealth_autoloader")
+        sa = data.get("autoloader")
         if sa is None:
             return
 

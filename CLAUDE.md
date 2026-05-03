@@ -1,4 +1,4 @@
-# Stealth Autoloader — Claude Code Project Instructions
+# Autoloader — Claude Code Project Instructions
 
 ## What This Project Is
 A filament auto-load and auto-unload system for a Voron StealthChanger 3D printer
@@ -19,11 +19,11 @@ selector that moves to filament. No color changes mid-print on a single toolhead
 
 ## Printer Access
 - SSH:         pi@192.168.1.214
-- Config path: ~/printer_data/config/stealth-autoloader/
-- Repo path:   ~/stealth-autoloader/
+- Config path: ~/printer_data/config/autoloader/
+- Repo path:   ~/autoloader/
 
 ## GitHub
-- Repo: https://github.com/Cstm3DBldr/stealth-autoloader.git
+- Repo: https://github.com/Cstm3DBldr/autoloader.git
 - Branch: main
 - Commit and push after any change that works on the printer
 
@@ -44,12 +44,12 @@ before deploying or pushing — just do it and report the result.
 
 | File | Purpose |
 |---|---|
-| `stealth-autoloader/stealth-autoloader.cfg` | Aggregator. printer.cfg pulls only this file: `[include stealth-autoloader/stealth-autoloader.cfg]`. Pulls in the others below |
-| `stealth-autoloader/pin_aliases.cfg` | ONLY physical hardware pins and aliases. One [board_pins] per MCU. No polarity, no hardware config |
-| `stealth-autoloader/hardware.cfg` | ONLY hardware sections: [mcu], [tmc5160], [manual_stepper], [servo], [sa_encoder], [filament_switch_sensor], [gcode_button selector_stall] |
-| `stealth-autoloader/parameters.cfg` | The single `[stealth_autoloader]` section — all user-tunable values (servo angles, speeds, tip-form, park, selector cal, bowden lengths, sensor/encoder/extruder/stepper references). Klipper requires the section in one file |
-| `stealth-autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
-| `klipper/extras/stealth_autoloader.py` | Main controller — config parsing, GCode registration, status object |
+| `autoloader/autoloader.cfg` | Aggregator. printer.cfg pulls only this file: `[include autoloader/autoloader.cfg]`. Pulls in the others below |
+| `autoloader/pin_aliases.cfg` | ONLY physical hardware pins and aliases. One [board_pins] per MCU. No polarity, no hardware config |
+| `autoloader/hardware.cfg` | ONLY hardware sections: [mcu], [tmc5160], [manual_stepper], [servo], [sa_encoder], [filament_switch_sensor], [gcode_button selector_stall] |
+| `autoloader/parameters.cfg` | The single `[autoloader]` section — all user-tunable values (servo angles, speeds, tip-form, park, selector cal, bowden lengths, sensor/encoder/extruder/stepper references). Klipper requires the section in one file |
+| `autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
+| `klipper/extras/autoloader.py` | Main controller — config parsing, GCode registration, status object |
 | `klipper/extras/sa_motion.py` | Motion primitives (servo, selector, drive, idle timeouts) |
 | `klipper/extras/sa_sequences.py` | Load and unload sequences |
 | `klipper/extras/sa_calibration.py` | All calibration routines (drive, encoder, selector, bowden) |
@@ -64,12 +64,12 @@ before deploying or pushing — just do it and report the result.
 | `CLAUDE.md` | This file |
 
 On the printer, Python extras and the Moonraker component are symlinked from the repo:
-- `~/klipper/klippy/extras/stealth_autoloader.py` → `~/stealth-autoloader/klipper/extras/stealth_autoloader.py`
-- `~/klipper/klippy/extras/sa_motion.py` → `~/stealth-autoloader/klipper/extras/sa_motion.py`
-- `~/klipper/klippy/extras/sa_sequences.py` → `~/stealth-autoloader/klipper/extras/sa_sequences.py`
-- `~/klipper/klippy/extras/sa_calibration.py` → `~/stealth-autoloader/klipper/extras/sa_calibration.py`
-- `~/klipper/klippy/extras/sa_encoder.py` → `~/stealth-autoloader/klipper/extras/sa_encoder.py`
-- `~/moonraker/moonraker/components/sa_moonraker.py` → `~/stealth-autoloader/moonraker/sa_moonraker.py`
+- `~/klipper/klippy/extras/autoloader.py` → `~/autoloader/klipper/extras/autoloader.py`
+- `~/klipper/klippy/extras/sa_motion.py` → `~/autoloader/klipper/extras/sa_motion.py`
+- `~/klipper/klippy/extras/sa_sequences.py` → `~/autoloader/klipper/extras/sa_sequences.py`
+- `~/klipper/klippy/extras/sa_calibration.py` → `~/autoloader/klipper/extras/sa_calibration.py`
+- `~/klipper/klippy/extras/sa_encoder.py` → `~/autoloader/klipper/extras/sa_encoder.py`
+- `~/moonraker/moonraker/components/sa_moonraker.py` → `~/autoloader/moonraker/sa_moonraker.py`
 
 KlipperScreen panels are NOT symlinked — copy directly to `~/KlipperScreen/panels/` and `~/KlipperScreen/`.
 
@@ -166,9 +166,9 @@ Entry sensors use `^!` (pull-up + invert) because the sensors read HIGH when emp
 
 ---
 
-## Python Backend — stealth_autoloader.py
+## Python Backend — autoloader.py
 
-Single `[stealth_autoloader]` config section, single class instance, controls everything.
+Single `[autoloader]` config section, single class instance, controls everything.
 
 ### Config Parameters
 
@@ -269,21 +269,21 @@ SA_UNLOAD TOOL=N
 
 ```bash
 # 1. Klipper config files
-scp stealth-autoloader/hardware.cfg               pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/pin_aliases.cfg            pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/parameters.cfg             pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/macros.cfg                 pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
-scp stealth-autoloader/stealth-autoloader.cfg     pi@192.168.1.214:~/printer_data/config/stealth-autoloader/
+scp autoloader/hardware.cfg               pi@192.168.1.214:~/printer_data/config/autoloader/
+scp autoloader/pin_aliases.cfg            pi@192.168.1.214:~/printer_data/config/autoloader/
+scp autoloader/parameters.cfg             pi@192.168.1.214:~/printer_data/config/autoloader/
+scp autoloader/macros.cfg                 pi@192.168.1.214:~/printer_data/config/autoloader/
+scp autoloader/autoloader.cfg     pi@192.168.1.214:~/printer_data/config/autoloader/
 
 # 2. Klipper Python extras (to repo copy — symlinks pick it up)
-scp klipper/extras/stealth_autoloader.py  pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
-scp klipper/extras/sa_motion.py           pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
-scp klipper/extras/sa_sequences.py        pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
-scp klipper/extras/sa_calibration.py      pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
-scp klipper/extras/sa_encoder.py          pi@192.168.1.214:~/stealth-autoloader/klipper/extras/
+scp klipper/extras/autoloader.py  pi@192.168.1.214:~/autoloader/klipper/extras/
+scp klipper/extras/sa_motion.py           pi@192.168.1.214:~/autoloader/klipper/extras/
+scp klipper/extras/sa_sequences.py        pi@192.168.1.214:~/autoloader/klipper/extras/
+scp klipper/extras/sa_calibration.py      pi@192.168.1.214:~/autoloader/klipper/extras/
+scp klipper/extras/sa_encoder.py          pi@192.168.1.214:~/autoloader/klipper/extras/
 
 # 3. Moonraker component (to repo copy — symlink picks it up)
-scp moonraker/sa_moonraker.py  pi@192.168.1.214:~/stealth-autoloader/moonraker/
+scp moonraker/sa_moonraker.py  pi@192.168.1.214:~/autoloader/moonraker/
 
 # 4. KlipperScreen panels (NOT symlinked — direct copy to KS install)
 scp KlipperScreen/panels/sa_*.py        pi@192.168.1.214:~/KlipperScreen/panels/
@@ -302,16 +302,16 @@ ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart moonraker"
 git add -A && git commit -m "..." && git push origin main
 ```
 
-**Important:** Always SCP Python extras to `~/stealth-autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks. Same for the Moonraker component.
+**Important:** Always SCP Python extras to `~/autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks. Same for the Moonraker component.
 
 On first install, create symlinks:
 ```bash
-ln -sf ~/stealth-autoloader/klipper/extras/stealth_autoloader.py  ~/klipper/klippy/extras/stealth_autoloader.py
-ln -sf ~/stealth-autoloader/klipper/extras/sa_motion.py           ~/klipper/klippy/extras/sa_motion.py
-ln -sf ~/stealth-autoloader/klipper/extras/sa_sequences.py        ~/klipper/klippy/extras/sa_sequences.py
-ln -sf ~/stealth-autoloader/klipper/extras/sa_calibration.py      ~/klipper/klippy/extras/sa_calibration.py
-ln -sf ~/stealth-autoloader/klipper/extras/sa_encoder.py          ~/klipper/klippy/extras/sa_encoder.py
-ln -sf ~/stealth-autoloader/moonraker/sa_moonraker.py             ~/moonraker/moonraker/components/sa_moonraker.py
+ln -sf ~/autoloader/klipper/extras/autoloader.py  ~/klipper/klippy/extras/autoloader.py
+ln -sf ~/autoloader/klipper/extras/sa_motion.py           ~/klipper/klippy/extras/sa_motion.py
+ln -sf ~/autoloader/klipper/extras/sa_sequences.py        ~/klipper/klippy/extras/sa_sequences.py
+ln -sf ~/autoloader/klipper/extras/sa_calibration.py      ~/klipper/klippy/extras/sa_calibration.py
+ln -sf ~/autoloader/klipper/extras/sa_encoder.py          ~/klipper/klippy/extras/sa_encoder.py
+ln -sf ~/autoloader/moonraker/sa_moonraker.py             ~/moonraker/moonraker/components/sa_moonraker.py
 ```
 
 ---
@@ -352,13 +352,13 @@ If code resembles Happy Hare too closely, simplify it for single-path-per-tool a
 ## What Not To Do
 
 - Do not modify printer.cfg, klipper-toolchanger, or core klipper files
-- Do not put load/unload sequences in macros — they live in stealth_autoloader.py
+- Do not put load/unload sequences in macros — they live in autoloader.py
 - Do not add per-path feed motors — there is ONE drive motor for all paths
 - Do not use `^` before a chip name on output pins (step pins) — only valid on input pins
 - Do not define `[mcu autoloader]` in printer.cfg — it's in hardware.cfg
 - Do not add trailing comma to last alias in `[board_pins]`
 - Do not SCP `References/` folder to printer
-- Do not create separate `[filament_feed toolN]` sections — replaced by `[stealth_autoloader]`
+- Do not create separate `[filament_feed toolN]` sections — replaced by `[autoloader]`
 - Do not use blocking `reactor.pause()` poll loops to wait for SA_RESPOND — the GCode mutex blocks it. Use the state machine in SACalibration instead.
 - Do not add "are you ready?" confirmation prompts — user initiated the command, that is confirmation enough.
 - Do not add sensorless/stallguard homing — homing is physical endstop only (SA_SELECTOR_STOP / PA15). The endstop pin is always `^!autoloader:SA_SELECTOR_STOP`.

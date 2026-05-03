@@ -1,4 +1,4 @@
-# sa_calibration.py — Stealth Autoloader calibration routines
+# sa_calibration.py — Autoloader calibration routines
 #
 # Phase-based state machine design:
 #   - Each calibration command kicks off phase 0 (automated work + prompt).
@@ -27,7 +27,7 @@ class SACalibration:
         self.owner = owner
 
     # ══════════════════════════════════════════════════════════════════════════
-    # SA_RESPOND dispatch  (called from StealthAutoloader._cmd_respond)
+    # SA_RESPOND dispatch  (called from Autoloader._cmd_respond)
     # ══════════════════════════════════════════════════════════════════════════
 
     def respond(self, gcmd, value):
@@ -118,7 +118,7 @@ class SACalibration:
             config_file = self.owner.printer.get_start_args().get('config_file', '')
             config_dir  = _os.path.dirname(config_file)
             hw_cfg      = _os.path.join(
-                config_dir, 'stealth-autoloader', 'hardware.cfg')
+                config_dir, 'autoloader', 'hardware.cfg')
             if not _os.path.exists(hw_cfg):
                 return False, "hardware.cfg not found at %s" % hw_cfg
 
@@ -763,7 +763,7 @@ class SACalibration:
         if not owner._extruder_sensor_names[path]:
             raise gcmd.error(
                 "SA CAL: No extruder_sensor_%d configured.\n"
-                "Add to [stealth_autoloader] in hardware.cfg:\n"
+                "Add to [autoloader] in hardware.cfg:\n"
                 "  extruder_sensor_%d : filament_switch_sensor extruder_sensor_%d"
                 % (path, path, path))
 

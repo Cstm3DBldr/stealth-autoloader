@@ -1,4 +1,4 @@
-# sa_motion.py — Stealth Autoloader motion primitives
+# sa_motion.py — Autoloader motion primitives
 #
 # Handles all low-level hardware movement:
 #   - Servo engage/disengage/off
@@ -19,9 +19,9 @@ import logging
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SAMotion:
-    """All motion primitives for the Stealth Autoloader.
+    """All motion primitives for the Autoloader.
 
-    ``owner`` is the StealthAutoloader instance.  All hardware names and
+    ``owner`` is the Autoloader instance.  All hardware names and
     motion parameters are read from owner attributes so this class has no
     separate config parsing.
     """
@@ -283,7 +283,7 @@ class SAMotion:
     # ══════════════════════════════════════════════════════════════════════════
 
     def on_ready(self):
-        """Called from StealthAutoloader._on_ready via reactor callback.
+        """Called from Autoloader._on_ready via reactor callback.
 
         - Unconditionally disengages the servo (safe boot state).
         - Attempts to restore last-known selector position from save_variables.

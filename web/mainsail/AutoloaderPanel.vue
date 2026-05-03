@@ -1,5 +1,5 @@
 <template>
-  <panel-card :title="$t('AutoloaderPanel.title', 'Stealth Autoloader')">
+  <panel-card :title="$t('AutoloaderPanel.title', 'Autoloader')">
     <template #buttons>
       <v-btn icon small @click="sendGcode('SA_HOME')" title="Home Selector">
         <v-icon>mdi-home</v-icon>
@@ -232,14 +232,14 @@ export default {
 
     async fetchStatus() {
       try {
-        const r = await fetch(`${this.apiBase()}/machine/stealth_autoloader/status`)
+        const r = await fetch(`${this.apiBase()}/machine/autoloader/status`)
         if (r.ok) this.status = await r.json()
       } catch (e) { /* printer offline */ }
     },
 
     async fetchBrands() {
       try {
-        const r = await fetch(`${this.apiBase()}/machine/stealth_autoloader/brands`)
+        const r = await fetch(`${this.apiBase()}/machine/autoloader/brands`)
         if (r.ok) {
           const d = await r.json()
           this.brands = d.brands ?? []
@@ -258,7 +258,7 @@ export default {
       this.wizard.brandName = b.display_name
       // Fetch all product lines for this brand
       const r = await fetch(
-        `${this.apiBase()}/machine/stealth_autoloader/filaments?brand=${encodeURIComponent(b.filepath)}`)
+        `${this.apiBase()}/machine/autoloader/filaments?brand=${encodeURIComponent(b.filepath)}`)
       if (r.ok) {
         const d = await r.json()
         this.productLines = d.product_lines ?? []
@@ -295,7 +295,7 @@ export default {
     async confirmLoad() {
       const wz = this.wizard
       // 1. Set material profile
-      await fetch(`${this.apiBase()}/machine/stealth_autoloader/set_material`, {
+      await fetch(`${this.apiBase()}/machine/autoloader/set_material`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -312,7 +312,7 @@ export default {
         }),
       })
       // 2. Start load
-      await fetch(`${this.apiBase()}/machine/stealth_autoloader/load`, {
+      await fetch(`${this.apiBase()}/machine/autoloader/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: wz.path }),

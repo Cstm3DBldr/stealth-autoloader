@@ -1,4 +1,4 @@
-# Stealth Autoloader
+# Autoloader
 
 A Klipper firmware extra for an automated multi-filament loader built around the BTT MMB CAN V2.0 board.
 
@@ -9,13 +9,13 @@ Supports up to 32 filament paths with a single shared drive motor, a carriage-st
 ## Installation
 
 ```bash
-wget -O - https://raw.githubusercontent.com/Cstm3DBldr/stealth-autoloader/main/install.sh | bash
+wget -O - https://raw.githubusercontent.com/Cstm3DBldr/autoloader/main/install.sh | bash
 ```
 
 After the command finishes, add this line to `printer.cfg`:
 
 ```
-[include stealth-autoloader/stealth-autoloader.cfg]
+[include autoloader/autoloader.cfg]
 ```
 
 This single include pulls in the rest (pin_aliases, hardware, parameters, macros) in the correct order.
@@ -25,9 +25,9 @@ Then save and restart Klipper.
 ### Uninstall
 
 ```bash
-cd ~/stealth-autoloader
+cd ~/autoloader
 ./install.sh --uninstall
-rm -rf ~/stealth-autoloader
+rm -rf ~/autoloader
 ```
 
 ---
@@ -51,17 +51,17 @@ rm -rf ~/stealth-autoloader
 
 ```
 klipper/extras/
-    stealth_autoloader.py   Main controller, config parsing, GCode registration
+    autoloader.py   Main controller, config parsing, GCode registration
     sa_motion.py            Motion primitives (servo, selector, drive, idle timeouts)
     sa_sequences.py         Load and unload sequences
     sa_calibration.py       Calibration routines (drive, encoder, selector, bowden)
     sa_encoder.py           Encoder driver — pulse counting via Klipper buttons module
 
-stealth-autoloader/
-    stealth-autoloader.cfg  Aggregator (printer.cfg pulls only this file)
+autoloader/
+    autoloader.cfg  Aggregator (printer.cfg pulls only this file)
     pin_aliases.cfg         Physical pins → aliases (one [board_pins] per MCU)
     hardware.cfg            Hardware sections only (MCU, drivers, steppers, servo, encoders, sensors)
-    parameters.cfg          The [stealth_autoloader] section — all user-tunable values
+    parameters.cfg          The [autoloader] section — all user-tunable values
     macros.cfg              Thin gcode wrappers around the Python backend
 
 moonraker/
@@ -295,7 +295,7 @@ Fully automated one-time calibration. The routine homes the carriage, sweeps to 
 - Raise `selector_stall_threshold` (less sensitive stallguard)
 - Raise `selector_stall_current` (more traversal torque)
 
-**Result:** Updates `selector_position_0` through `selector_position_N` in `[stealth_autoloader]` via `SAVE_CONFIG`.
+**Result:** Updates `selector_position_0` through `selector_position_N` in `[autoloader]` via `SAVE_CONFIG`.
 
 **Manual alternative:** Jog the selector manually with `MANUAL_STEPPER STEPPER=sa_selector ENABLE=1 MOVE=<mm> SPEED=30`, use `SA_ENCODER_WATCH` to watch while manually checking carriage alignment, and update `selector_position_N` values in `hardware.cfg` by hand.
 
@@ -314,7 +314,7 @@ Calibrates the exact Bowden tube length for one path by detecting when filament 
 4. Results are averaged.
 5. Confirm save and restart.
 
-**Result:** Updates `bowden_length_N` in `[stealth_autoloader]` via `SAVE_CONFIG`. The load sequence uses this value as the target for the Bowden feed phase.
+**Result:** Updates `bowden_length_N` in `[autoloader]` via `SAVE_CONFIG`. The load sequence uses this value as the target for the Bowden feed phase.
 
 ---
 
@@ -338,10 +338,10 @@ Recommended order for a new installation:
 
 ## Klipper status object
 
-The autoloader state is accessible in macros as `printer['stealth_autoloader']`:
+The autoloader state is accessible in macros as `printer['autoloader']`:
 
 ```jinja
-{% set sa = printer['stealth_autoloader'] %}
+{% set sa = printer['autoloader'] %}
 {% if sa.filament_loaded[0] %}
   { action_respond_info("Path 0 is loaded") }
 {% endif %}
@@ -366,7 +366,7 @@ Available keys:
 
 ## Configuration reference
 
-All parameters are set in the `[stealth_autoloader]` section of `hardware.cfg`.
+All parameters are set in the `[autoloader]` section of `hardware.cfg`.
 
 ### Hardware references
 
@@ -449,11 +449,11 @@ gcode:
 
 Wipes the nozzle on your brush or cleaning pad. Called after the heater is commanded off but while the nozzle is still hot. **Do not change Z** — keep all moves at the current height so the autoloader can maintain `load_park_z`.
 
-A starter template is included in `stealth-autoloader/macros.cfg`. Customize the X/Y coordinates for your brush position:
+A starter template is included in `autoloader/macros.cfg`. Customize the X/Y coordinates for your brush position:
 
 ```gcode
 [gcode_macro SA_CLEAN_NOZZLE]
-description: Wipe nozzle on brush pad. Called by stealth_autoloader after load/unload.
+description: Wipe nozzle on brush pad. Called by autoloader after load/unload.
 gcode:
     G90
     G0 X80 Y350 F5000   ; approach brush
