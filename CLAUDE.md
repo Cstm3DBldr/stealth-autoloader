@@ -37,6 +37,14 @@ before deploying or pushing — just do it and report the result.
 - **Update README.md** whenever commands, config parameters, or calibration procedures change.
 - **Update CLAUDE.md** whenever the user adds new rules, preferences, or project context.
 - **No confirmation prompts needed** for SCP, SSH restart, git commit, or git push.
+- **Printer's `parameters.cfg` is authoritative for defaults.** Before any
+  deploy, refactor, or task that touches `autoloader/parameters.cfg`, diff
+  `~/printer_data/config/autoloader/parameters.cfg` (printer) against
+  `autoloader/parameters.cfg` (repo). For any parameter that exists in both
+  but with different values, the printer's value wins — pull it into the
+  repo as the new default, commit, push. New parameters that exist only in
+  the repo (not yet on the printer) are kept as-is. `scripts/verify.sh`
+  performs this check automatically and exits non-zero on drift.
 
 ---
 
