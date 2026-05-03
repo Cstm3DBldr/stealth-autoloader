@@ -267,52 +267,91 @@ SA_UNLOAD TOOL=N
 
 ## Deploy Workflow
 
+**Routine deploys** (after committing + pushing to `origin/main`):
+
+The printer auto-syncs through Moonraker Update Manager. Click "Update" on
+the autoloader entry in Mainsail's Update Manager, OR run on the printer:
+
 ```bash
-# 1. Klipper config files
-scp autoloader/hardware.cfg               pi@192.168.1.214:~/printer_data/config/autoloader/
-scp autoloader/pin_aliases.cfg            pi@192.168.1.214:~/printer_data/config/autoloader/
-scp autoloader/parameters.cfg             pi@192.168.1.214:~/printer_data/config/autoloader/
-scp autoloader/macros.cfg                 pi@192.168.1.214:~/printer_data/config/autoloader/
-scp autoloader/autoloader.cfg     pi@192.168.1.214:~/printer_data/config/autoloader/
-
-# 2. Klipper Python extras (to repo copy — symlinks pick it up)
-scp klipper/extras/autoloader.py  pi@192.168.1.214:~/autoloader/klipper/extras/
-scp klipper/extras/sa_motion.py           pi@192.168.1.214:~/autoloader/klipper/extras/
-scp klipper/extras/sa_sequences.py        pi@192.168.1.214:~/autoloader/klipper/extras/
-scp klipper/extras/sa_calibration.py      pi@192.168.1.214:~/autoloader/klipper/extras/
-scp klipper/extras/sa_encoder.py          pi@192.168.1.214:~/autoloader/klipper/extras/
-
-# 3. Moonraker component (to repo copy — symlink picks it up)
-scp moonraker/sa_moonraker.py  pi@192.168.1.214:~/autoloader/moonraker/
-
-# 4. KlipperScreen panels (NOT symlinked — direct copy to KS install)
-scp KlipperScreen/panels/sa_*.py        pi@192.168.1.214:~/KlipperScreen/panels/
-scp KlipperScreen/sa_*.py               pi@192.168.1.214:~/KlipperScreen/
-scp KlipperScreen/sa_klipperscreen.conf pi@192.168.1.214:~/printer_data/config/
-
-# 5. Web UI panels (Mainsail/Fluidd) — install path depends on host setup; user-managed.
-#    web/mainsail/AutoloaderPanel.vue
-#    web/fluidd/AutoloaderPanel.vue
-
-# 6. Restart services (Moonraker only if sa_moonraker.py changed)
-ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart klipper"
-ssh pi@192.168.1.214 "echo pi | sudo -S systemctl restart moonraker"
-
-# 7. Commit and push
-git add -A && git commit -m "..." && git push origin main
+ssh pi@192.168.1.214 "cd ~/autoloader && git pull && ./post_update.sh && \
+    sudo systemctl restart klipper && sudo systemctl restart moonraker && \
+    sudo systemctl restart KlipperScreen"
 ```
 
-**Important:** Always SCP Python extras to `~/autoloader/klipper/extras/` (the repo copy), not to `~/klipper/klippy/extras/` directly — those should be symlinks. Same for the Moonraker component.
+`post_update.sh` is the canonical "sync everything that's not symlinked" step.
+It runs automatically after every Update Manager pull and copies the .cfg/.html,
+KlipperScreen panels, and `sa_klipperscreen.conf` into their live locations.
 
-On first install, create symlinks:
+**First-time install** on a new printer:
+
 ```bash
-ln -sf ~/autoloader/klipper/extras/autoloader.py  ~/klipper/klippy/extras/autoloader.py
-ln -sf ~/autoloader/klipper/extras/sa_motion.py           ~/klipper/klippy/extras/sa_motion.py
-ln -sf ~/autoloader/klipper/extras/sa_sequences.py        ~/klipper/klippy/extras/sa_sequences.py
-ln -sf ~/autoloader/klipper/extras/sa_calibration.py      ~/klipper/klippy/extras/sa_calibration.py
-ln -sf ~/autoloader/klipper/extras/sa_encoder.py          ~/klipper/klippy/extras/sa_encoder.py
-ln -sf ~/autoloader/moonraker/sa_moonraker.py             ~/moonraker/moonraker/components/sa_moonraker.py
+git clone https://github.com/Cstm3DBldr/autoloader.git ~/autoloader
+cd ~/autoloader && ./install.sh
 ```
+
+`install.sh` creates the 6 symlinks (5 Klipper extras + Moonraker component),
+runs `post_update.sh` for the initial file sync, registers the repo with the
+Update Manager, and restarts services.
+
+**Verification** (always run after a deploy or when something feels off):
+
+```bash
+./scripts/verify.sh
+```
+
+Checks symlink state, service health, recent log errors, and scans every
+on-printer location for forbidden patterns. Default scan looks for stale
+`stealth_autoloader` references; pass custom patterns as args after a future
+rename: `./scripts/verify.sh OLD_NAME OldName`.
+
+### Project Surface — every place code lives on the printer
+
+If you add a new file to the project, add its destination here AND update
+`post_update.sh` (if not symlinked) or `install.sh` (if symlinked).
+
+| Repo path | On-printer destination | Sync mechanism |
+|---|---|---|
+| `klipper/extras/autoloader.py` + 4 `sa_*.py` | `~/klipper/klippy/extras/` | symlink (install.sh) |
+| `moonraker/sa_moonraker.py` | `~/moonraker/moonraker/components/sa_moonraker.py` | symlink (install.sh) |
+| `autoloader/*.cfg` | `~/printer_data/config/autoloader/` | direct copy (post_update.sh) |
+| `autoloader/*.html` | `~/printer_data/config/autoloader/` | direct copy (post_update.sh) |
+| `KlipperScreen/panels/sa_*.py` | `~/KlipperScreen/panels/` | direct copy (post_update.sh) |
+| `KlipperScreen/sa_*.py` | `~/KlipperScreen/` | direct copy (post_update.sh) |
+| `KlipperScreen/sa_klipperscreen.conf` | `~/printer_data/config/sa_klipperscreen.conf` | direct copy (post_update.sh) |
+| `web/mainsail/AutoloaderPanel.vue` | compiled into `~/mainsail/assets/*.js` | manual rebuild from VS source — not auto-synced |
+| `web/fluidd/AutoloaderPanel.vue` | depends on Fluidd host setup | user-managed |
+
+### Rename-class changes — extra steps beyond the routine deploy
+
+A project-wide rename (like `stealth_autoloader` → `autoloader`) needs all of
+the routine sync PLUS these one-time fixups, because the routine deploy
+doesn't cover compiled bundles, persistent caches, or auto-generated config
+blocks:
+
+1. **Compiled Mainsail bundle** in `~/mainsail/assets/*.js` has the old
+   identifier baked in. Either rebuild from the VS source (proper) or
+   sed-rewrite in place (fast — make a backup first):
+   ```bash
+   ssh pi@192.168.1.214 "cp -r ~/mainsail/assets ~/mainsail/_pre_rename_$(date +%s)/ && \
+       for f in \$(grep -rlE 'OLD_PATTERN' ~/mainsail/assets/ ~/mainsail/index.html); do \
+           sed -i 's/OLD_PATTERN/NEW_PATTERN/g' \$f; done"
+   ```
+2. **Moonraker SQLite cache** (`~/printer_data/database/moonraker-sql.db`)
+   stores repo metadata under `namespace_store / update_manager / <name>`.
+   Renames need: stop moonraker → DELETE the cached row → start moonraker.
+3. **`printer.cfg` SAVE_CONFIG block** at the bottom (lines starting with
+   `#*#`) contains the old section name. Rename `#*# [OLD_SECTION]` →
+   `#*# [NEW_SECTION]` directly with sed.
+4. **`moonraker.conf` `[update_manager …]` block** has both a section name
+   and `path:` field referencing the old name — both need updating.
+5. **stale `__pycache__` directories** under `~/KlipperScreen/panels/` and
+   `~/KlipperScreen/`. `rm -rf` them; Python rebuilds on next start.
+6. **Browser cache** — hard-refresh (Ctrl+Shift+R) Mainsail/Fluidd. JS
+   bundle filenames don't change in a sed-rewrite, so the browser will keep
+   serving the cached old code without an explicit refresh.
+
+After all of the above, run `./scripts/verify.sh OLD_PATTERN` to confirm
+nothing was missed.
 
 ---
 
