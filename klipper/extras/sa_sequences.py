@@ -265,63 +265,99 @@ class SASequences:
     def _park_filament_at_encoder(self, gcmd, path, from_load=True):
         """Park filament tip at a consistent position just before the encoder.
 
-        Two-pass encoder detection gives a repeatable starting point for blast.
+        Three-phase algorithm:
+          Phase 1 — retract in chunks while the encoder is registering motion.
+                    Break only after MAX_QUIET consecutive iterations where the
+                    encoder saw less than one pulse of motion (debounced — a
+                    single dropped pulse won't end the retract early).
+          Phase 2 — feed forward in small steps until the encoder picks the
+                    filament tip back up (this finds the exact tip position).
+          Phase 3 — retract park_retract mm to position the tip a known
+                    distance before the encoder.
+
         Servo must already be engaged before calling this.
 
         from_load=True  (default): feed forward first to pull barely-inserted
                                    filament into the drive gear before parking.
         from_load=False (unload):  filament tip is already inside the tube —
-                                   skip the feed-forward, go straight to retract loop.
+                                   skip the feed-forward, go straight to Phase 1.
         """
-        owner = self.owner
+        owner  = self.owner
         motion = owner.motion
-        enc = owner._encoder(path)
-        mpp = enc.mm_per_pulse or 1.5
+        enc    = owner._encoder(path)
+        mpp    = enc.mm_per_pulse or 1.5
         park_retract = owner.encoder_to_gear_distance * 0.25
 
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
         if from_load:
             # Feed forward first to pull filament into the drive gear and past
-            # the encoder.  Without this, a retract on barely-inserted filament
+            # the encoder. Without this, a retract on barely-inserted filament
             # pushes it back out.
             enc.set_direction(forward=True)
             enc.reset_distance()
             motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
             owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-        # Retract until encoder goes quiet (filament tip cleared encoder)
+        # ── Phase 1: retract while encoder shows motion ──────────────────────
+        # The threshold is mm_per_pulse (one pulse). A single missed pulse
+        # during a chunk would otherwise look like "no motion" — debounce by
+        # requiring MAX_QUIET consecutive low readings to end the loop.
+        CHUNK_MM      = 10.0
+        CHUNK_SPEED   = 25.0
+        CHUNK_PAUSE_S = 0.20
+        MAX_QUIET     = 2
+        MAX_CHUNKS    = 80                  # 800mm safety ceiling
         enc.set_direction(forward=False)
-        for _ in range(60):                 # 300mm max
+        quiet_iters = 0
+        retracted_mm = 0.0
+        for i in range(MAX_CHUNKS):
             enc.reset_distance()
-            motion.drive_move(-5.0, speed=25.0)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.15)
-            if abs(enc.get_distance()) < 0.5:
-                break
+            motion.drive_move(-CHUNK_MM, speed=CHUNK_SPEED)
+            owner.reactor.pause(owner.reactor.monotonic() + CHUNK_PAUSE_S)
+            retracted_mm += CHUNK_MM
+            seen = abs(enc.get_distance())
+            if seen < mpp:
+                quiet_iters += 1
+                if quiet_iters >= MAX_QUIET:
+                    gcmd.respond_info(
+                        "SA: Encoder quiet %d× — filament cleared encoder "
+                        "after %.0fmm retract (path %d)."
+                        % (MAX_QUIET, retracted_mm, path))
+                    break
+            else:
+                quiet_iters = 0
+        else:
+            gcmd.respond_info(
+                "SA: WARNING — retract limit (%.0fmm) reached on path %d "
+                "without encoder going quiet." % (CHUNK_MM * MAX_CHUNKS, path))
 
-        # Pass 1 — feed until encoder detects (find encoder entry point)
+        # ── Phase 2: feed forward in small steps until encoder picks back up ─
+        FEED_STEP_MM    = 2.0
+        FEED_SPEED      = 15.0
+        FEED_PAUSE_S    = 0.10
+        MAX_FEED_STEPS  = 40                # 80mm search ceiling
         enc.set_direction(forward=True)
-        for _ in range(30):                 # 60mm max
+        found = False
+        feed_mm = 0.0
+        for _ in range(MAX_FEED_STEPS):
             enc.reset_distance()
-            motion.drive_move(2.0, speed=15.0)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
+            motion.drive_move(FEED_STEP_MM, speed=FEED_SPEED)
+            owner.reactor.pause(owner.reactor.monotonic() + FEED_PAUSE_S)
+            feed_mm += FEED_STEP_MM
             if enc.get_distance() >= mpp:
+                found = True
                 break
+        if not found:
+            gcmd.respond_info(
+                "SA: WARNING — fed %.0fmm forward without encoder triggering "
+                "on path %d. Cannot complete park." % (feed_mm, path))
+            return
+        gcmd.respond_info(
+            "SA: Encoder re-acquired filament after %.1fmm feed (path %d)."
+            % (feed_mm, path))
 
-        # Pull back past encoder
-        motion.drive_move(-(park_retract + 6.0), speed=20.0)
-        owner.reactor.pause(owner.reactor.monotonic() + 0.2)
-
-        # Pass 2 — feed until encoder detects again (confirm consistent position)
-        enc.set_direction(forward=True)
-        for _ in range(20):
-            enc.reset_distance()
-            motion.drive_move(2.0, speed=15.0)
-            owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-            if enc.get_distance() >= mpp:
-                break
-
-        # Final park retract — %.1f mm before encoder
+        # ── Phase 3: retract the calibrated park distance ────────────────────
         motion.drive_move(-park_retract, speed=20.0)
         owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
