@@ -295,7 +295,7 @@ class SASequences:
         gcmd.respond_info("SA: Parking filament at encoder — path %d..." % path)
 
         if from_load:
-            # ── Load / insert path (original 4-step, unchanged) ──────────────
+            # ── Load / insert path (4-step, with reliable encoder detection) ─
             # Feed forward first to pull filament into the drive gear and past
             # the encoder. Without this, a retract on barely-inserted filament
             # pushes it back out.
@@ -304,38 +304,58 @@ class SASequences:
             motion.drive_move(owner.encoder_to_gear_distance + 20.0, speed=20.0)
             owner.reactor.pause(owner.reactor.monotonic() + 0.3)
 
-            # Retract until encoder goes quiet (filament tip cleared encoder)
+            # Retract until encoder goes quiet (filament tip cleared encoder).
+            # Threshold is mm_per_pulse (1 pulse) — anything less means the
+            # wheel didn't rotate during the chunk, so filament is no longer
+            # in encoder contact.
             enc.set_direction(forward=False)
             for _ in range(60):                 # 300mm max
                 enc.reset_distance()
                 motion.drive_move(-5.0, speed=25.0)
                 owner.reactor.pause(owner.reactor.monotonic() + 0.15)
-                if abs(enc.get_distance()) < 0.5:
+                if abs(enc.get_distance()) < mpp:
                     break
 
-            # Pass 1 — feed until encoder detects (find encoder entry point)
+            # Pass 1 — feed until encoder detects (find encoder entry point).
+            # Use 5mm chunks (~2.6 pulses expected per chunk at mpp≈1.88) so a
+            # single missed pulse doesn't end the search; accumulate distance
+            # across the whole pass so that any cumulative motion triggers the
+            # find — not a per-chunk threshold that misses sub-pulse motions.
             enc.set_direction(forward=True)
-            for _ in range(30):                 # 60mm max
-                enc.reset_distance()
-                motion.drive_move(2.0, speed=15.0)
+            enc.reset_distance()
+            found = False
+            for _ in range(40):                 # 200mm search ceiling
+                motion.drive_move(5.0, speed=15.0)
                 owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-                if enc.get_distance() >= mpp:
+                if abs(enc.get_distance()) >= mpp:
+                    found = True
                     break
+            if not found:
+                gcmd.respond_info(
+                    "SA: WARNING — Pass 1 fed 200mm without encoder detection "
+                    "on path %d." % path)
 
             # Pull back past encoder
             motion.drive_move(-(park_retract + 6.0), speed=20.0)
             owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
-            # Pass 2 — feed until encoder detects again (confirm consistent position)
+            # Pass 2 — feed until encoder detects again (confirm position).
+            # Same robust 5mm-chunks-with-accumulation as Pass 1.
             enc.set_direction(forward=True)
-            for _ in range(20):
-                enc.reset_distance()
-                motion.drive_move(2.0, speed=15.0)
+            enc.reset_distance()
+            found = False
+            for _ in range(40):                 # 200mm search ceiling
+                motion.drive_move(5.0, speed=15.0)
                 owner.reactor.pause(owner.reactor.monotonic() + 0.1)
-                if enc.get_distance() >= mpp:
+                if abs(enc.get_distance()) >= mpp:
+                    found = True
                     break
+            if not found:
+                gcmd.respond_info(
+                    "SA: WARNING — Pass 2 fed 200mm without encoder detection "
+                    "on path %d. Parking anyway." % path)
 
-            # Final park retract
+            # Final park retract (always runs, even if Pass 2 didn't find)
             motion.drive_move(-park_retract, speed=20.0)
             owner.reactor.pause(owner.reactor.monotonic() + 0.2)
 
