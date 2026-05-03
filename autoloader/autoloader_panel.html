@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SA Panel Mock</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet" />
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #121212; color: #fff;
+  font-family: Roboto, sans-serif; font-size: 14px;
+  padding: 32px 24px; min-height: 100vh;
+}
+
+/* ── Layout ─────────────────────────────────── */
+.workspace { display: flex; gap: 20px; align-items: flex-start; max-width: 800px; margin: 0 auto; }
+@media (max-width: 680px) { .workspace { flex-direction: column; } }
+
+/* ── Shared card ────────────────────────────── */
+.card { background: #1e1e1e; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 24px #0009; }
+.card-header {
+  background: #2a2a2a; padding: 11px 16px;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 500; letter-spacing: .03em;
+  border-bottom: 1px solid #333;
+}
+.card-header svg { flex-shrink: 0; opacity: .75; }
+.spacer { flex: 1; }
+
+/* ── Panel ──────────────────────────────────── */
+.panel { flex: 0 0 430px; max-width: 100%; }
+
+/* calibration banner */
+.cal-banner {
+  background: #bf360c; color: #fff;
+  padding: 12px 16px; font-size: 13px; border-bottom: 1px solid #333;
+}
+.cal-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; opacity: .7; margin-bottom: 4px; }
+.cal-prompt { font-weight: 500; margin-bottom: 10px; line-height: 1.45; }
+.cal-respond { display: flex; gap: 8px; align-items: center; }
+.cal-respond input { flex: 1; padding: 6px 10px; border-radius: 4px; border: 1px solid #fff3; background: #fff1; color: #fff; font-size: 13px; }
+.cal-respond input::placeholder { color: #fff6; }
+.cal-respond button { padding: 6px 16px; border-radius: 4px; border: 1px solid #fff3; background: #fff2; color: #fff; cursor: pointer; font-size: 13px; font-weight: 500; }
+.cal-respond button:hover { background: #fff3; }
+
+/* column header */
+.col-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 3px;
+  font-size: 10px; color: #484848; text-transform: uppercase; letter-spacing: .07em;
+  border-bottom: 1px solid #272727; user-select: none;
+}
+.ch-tool  { width: 26px; flex-shrink: 0; }
+.ch-sw    { width: 18px; flex-shrink: 0; }
+.ch-mat   { flex: 1; }
+.ch-state { width: 62px; flex-shrink: 0; text-align: right; padding-right: 2px; }
+.ch-dots  { display: flex; gap: 5px; flex-shrink: 0; margin-left: 2px; }
+.ch-dots span { width: 9px; text-align: center; font-size: 9px; }
+
+/* path rows */
+.path-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; min-height: 44px;
+  border-left: 3px solid transparent;
+  cursor: pointer; transition: background .1s, border-color .15s;
+}
+.path-row:hover { background: #ffffff09; }
+.path-row + .path-row { border-top: 1px solid #252525; }
+.path-row.active   { border-left-color: #1565c0; background: #1565c013; }
+.path-row.selected { border-left-color: #e91e63; }
+.path-row.active.selected { border-left-color: #1565c0; }
+
+.tool-lbl { width: 26px; text-align: center; font-size: 11px; font-weight: 700; color: #999; flex-shrink: 0; }
+.swatch   { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
+.path-row.selected .swatch { box-shadow: 0 0 0 2px #e91e63; }
+.path-info { flex: 1; min-width: 0; }
+.mat-line  { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mat-brand { color: #666; }
+.color-lbl { font-size: 11px; color: #555; margin-top: 1px; }
+
+.badge {
+  font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 999px; text-transform: uppercase; letter-spacing: .04em;
+  flex-shrink: 0; user-select: none; white-space: nowrap;
+}
+.badge.loaded  { background: #1b5e20; color: #a5d6a7; }
+.badge.partial { background: #bf360c; color: #ffccbc; }
+.badge.empty   { background: #2a2a2a; color: #666; }
+.badge.unknown { background: #e65100; color: #ffe0b2; }
+
+/* sensor dots — display only, no pointer */
+.sensors { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid #444; background: transparent;
+  flex-shrink: 0; position: relative;
+}
+.dot.on { background: #43a047; border-color: #43a047; }
+.dot::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 170%; left: 50%; transform: translateX(-50%);
+  background: #111; color: #ccc; font-size: 10px; padding: 4px 7px;
+  border-radius: 4px; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity .12s; z-index: 30; border: 1px solid #333;
+}
+.dot:hover::after { opacity: 1; }
+
+/* actions */
+.divider { border: none; border-top: 1px solid #252525; }
+.actions { display: flex; align-items: center; gap: 8px; padding: 9px 14px; }
+.sel-lbl { font-size: 11px; color: #555; flex: 1; }
+.btn {
+  padding: 5px 20px; border-radius: 4px; border: none;
+  font-size: 12px; font-weight: 600; cursor: pointer; letter-spacing: .03em; transition: filter .1s;
+}
+.btn:disabled { opacity: .25; cursor: default; pointer-events: none; }
+.btn:not(:disabled):hover { filter: brightness(1.2); }
+.btn.load   { background: #1565c0; color: #fff; }
+.btn.unload { background: #b71c1c; color: #fff; }
+
+/* dev strip */
+.dev-strip {
+  padding: 7px 14px; border-top: 1px solid #252525; background: #181818;
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+}
+.dev-strip .lbl { font-size: 10px; color: #444; text-transform: uppercase; letter-spacing: .05em; }
+.dev-strip label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #666; cursor: pointer; }
+.dev-strip input[type=checkbox] { accent-color: #1976d2; }
+.dev-strip select { background: #252525; color: #bbb; border: 1px solid #3a3a3a; border-radius: 3px; padding: 2px 6px; font-size: 11px; }
+
+/* ── Editor ─────────────────────────────────── */
+.editor { flex: 1 1 280px; min-width: 240px; }
+
+.db-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  font-weight: 600; letter-spacing: .04em; flex-shrink: 0;
+}
+.db-badge.live    { background: #1b3a1b; color: #81c784; border: 1px solid #2e7d32; }
+.db-badge.error   { background: #3e1a1a; color: #ef9a9a; border: 1px solid #c62828; }
+.db-badge.loading { background: #2a2a2a; color: #777;    border: 1px solid #444; }
+
+.editor-body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+
+.section { display: flex; flex-direction: column; gap: 7px; }
+.sec-head {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .07em; color: #555; padding-bottom: 3px;
+  border-bottom: 1px solid #272727;
+}
+
+/* form fields */
+.field { display: flex; flex-direction: column; gap: 3px; }
+.field > label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: .05em; }
+.field input[type=text],
+.field input[type=number],
+.field select {
+  background: #252525; border: 1px solid #333; border-radius: 4px;
+  color: #ccc; padding: 6px 9px; font-size: 12px; font-family: inherit;
+  outline: none; transition: border-color .15s; width: 100%;
+}
+.field input:focus, .field select:focus { border-color: #1976d2; }
+.field select option { background: #252525; }
+.field select:disabled { opacity: .35; cursor: not-allowed; }
+.field input:read-only { opacity: .6; cursor: default; }
+
+/* color row */
+.color-row { display: flex; gap: 7px; align-items: flex-end; }
+.color-row input[type=color] { width: 38px; height: 32px; padding: 2px; border-radius: 4px; border: 1px solid #333; background: #252525; cursor: pointer; flex-shrink: 0; }
+.hex-wrap { flex: 1; display: flex; align-items: center; }
+.hex-pre  { font-size: 12px; color: #555; padding: 0 4px 0 8px; line-height: 32px; flex-shrink: 0; }
+.hex-wrap input { border-radius: 0 4px 4px 0; border-left: none; text-transform: uppercase; }
+
+/* temp row */
+.temp-row { display: flex; gap: 8px; }
+.temp-row .field { flex: 1; }
+
+/* sensor display (read-only) */
+.sensor-display { display: flex; gap: 6px; }
+.sen-chip {
+  flex: 1; padding: 7px 4px; border-radius: 6px;
+  border: 1px solid #2a2a2a; background: #212121;
+  text-align: center;
+}
+.sen-chip.on { background: #1a301a; border-color: #2e7d32; }
+.sen-chip .sc-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #444; background: transparent; margin: 0 auto 5px; }
+.sen-chip.on .sc-dot { background: #43a047; border-color: #43a047; }
+.sen-chip .sc-name { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: #666; }
+.sen-chip.on .sc-name { color: #81c784; }
+.sen-chip .sc-desc { font-size: 9px; color: #444; margin-top: 2px; line-height: 1.3; }
+.sen-chip.on .sc-desc { color: #558b5b; }
+
+/* color preview (read-only catalog selection) */
+.color-preview {
+  display: flex; align-items: center; gap: 10px;
+  background: #252525; border: 1px solid #333; border-radius: 4px;
+  padding: 8px 10px;
+}
+.cp-swatch { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; border: 1px solid #ffffff18; }
+.cp-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cp-name { font-size: 12px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-hex  { font-size: 11px; color: #555; font-family: monospace; }
+.cp-lock { font-size: 10px; color: #444; margin-left: auto; flex-shrink: 0; }
+
+/* custom color section */
+.custom-section {
+  background: #1a1a2e; border: 1px solid #283593;
+  border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.custom-label {
+  font-size: 10px; color: #7986cb; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .07em;
+}
+option.custom-opt { color: #7986cb; font-style: italic; }
+
+/* loading overlay */
+.loading-msg { padding: 20px 14px; text-align: center; font-size: 12px; color: #555; }
+.loading-msg .spin { display: inline-block; animation: spin 1s linear infinite; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Calibrate button in header ─────────────────── */
+.btn-cal {
+  padding: 4px 11px; border-radius: 4px; border: 1px solid #333;
+  background: #252525; color: #777; cursor: pointer; font-size: 11px;
+  font-weight: 600; letter-spacing: .02em; transition: all .15s; flex-shrink: 0;
+}
+.btn-cal:hover { border-color: #555; color: #ccc; background: #2d2d2d; }
+
+/* ── Calibration Wizard Modal ────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; background: #000000cc;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100; padding: 16px;
+}
+.modal {
+  background: #1e1e1e; border-radius: 10px; box-shadow: 0 8px 40px #000c;
+  width: 100%; max-width: 580px; max-height: 90vh;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-head {
+  background: #2a2a2a; padding: 13px 18px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid #333; flex-shrink: 0;
+}
+.modal-title { font-size: 14px; font-weight: 600; flex: 1; }
+.modal-close {
+  background: none; border: none; color: #555; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 2px 7px; border-radius: 3px;
+  transition: all .1s;
+}
+.modal-close:hover { background: #3a3a3a; color: #ccc; }
+
+/* step bar */
+.wiz-bar { display: flex; padding: 14px 18px 0; gap: 4px; flex-shrink: 0; }
+.wiz-seg {
+  flex: 1; height: 3px; border-radius: 2px; background: #333; transition: background .2s; margin-bottom: 12px;
+}
+.wiz-seg.done   { background: #388e3c; }
+.wiz-seg.active { background: #1565c0; }
+
+.wiz-step-label {
+  padding: 0 18px 11px; font-size: 11px; color: #444;
+  border-bottom: 1px solid #252525; flex-shrink: 0;
+}
+.wiz-step-label em { color: #666; font-style: normal; }
+
+/* body */
+.modal-body {
+  flex: 1; overflow-y: auto; padding: 18px;
+  display: flex; flex-direction: column; gap: 15px;
+}
+.wiz-title  { font-size: 16px; font-weight: 600; color: #e0e0e0; }
+.wiz-desc   { font-size: 13px; color: #777; line-height: 1.65; }
+.wiz-desc strong { color: #aaa; }
+
+/* callouts */
+.callout { border-radius: 6px; padding: 11px 14px; font-size: 12px; line-height: 1.6; }
+.callout.info    { background: #0d1b2a; border: 1px solid #1565c0; color: #90caf9; }
+.callout.warn    { background: #1e1400; border: 1px solid #f57f17; color: #ffe082; }
+.callout.success { background: #0d1f0d; border: 1px solid #2e7d32; color: #a5d6a7; }
+
+/* checklist */
+.check-list { display: flex; flex-direction: column; gap: 7px; }
+.check-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  font-size: 13px; color: #bbb; cursor: pointer;
+  padding: 8px 10px; border-radius: 6px;
+  border: 1px solid #2a2a2a; background: #1a1a1a;
+  transition: border-color .15s, background .15s;
+}
+.check-item.checked { border-color: #2e7d32; background: #0e1e0e; color: #a5d6a7; }
+.check-item input[type=checkbox] { accent-color: #388e3c; margin-top: 1px; flex-shrink: 0; }
+
+/* command blocks */
+.cmd-block {
+  background: #141414; border: 1px solid #252525; border-radius: 6px;
+  padding: 10px 14px; display: flex; align-items: center; gap: 12px;
+}
+.cmd-info { flex: 1; min-width: 0; }
+.cmd-code { font-family: 'Courier New', monospace; font-size: 12px; color: #80cbc4; letter-spacing: .03em; }
+.cmd-desc { font-size: 11px; color: #555; margin-top: 2px; }
+.btn-send {
+  padding: 6px 16px; border-radius: 4px; border: 1px solid #1565c0;
+  background: #0d2750; color: #90caf9; cursor: pointer; font-size: 12px;
+  font-weight: 600; white-space: nowrap; transition: all .1s; flex-shrink: 0;
+}
+.btn-send:hover { background: #1565c0; color: #fff; }
+.btn-send.sent  { border-color: #2e7d32; background: #0d2210; color: #81c784; }
+
+/* path pills */
+.path-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.path-pill {
+  padding: 5px 13px; border-radius: 20px;
+  border: 1px solid #2e2e2e; background: #222; color: #777;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: all .15s; display: flex; align-items: center; gap: 6px;
+}
+.path-pill:hover { border-color: #4a4a4a; color: #bbb; }
+.path-pill.active-path { border-color: #1565c0; background: #0d2750; color: #90caf9; }
+.path-pill .pp-sw { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* verify table */
+.verify-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.verify-table th {
+  text-align: left; font-size: 10px; color: #555;
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: 4px 8px; border-bottom: 1px solid #2a2a2a;
+}
+.verify-table td { padding: 7px 8px; border-bottom: 1px solid #1e1e1e; color: #888; }
+.verify-table tr:last-child td { border-bottom: none; }
+.verify-table .match { color: #81c784; }
+.verify-table .mismatch { color: #ef9a9a; }
+
+/* footer */
+.modal-foot {
+  padding: 11px 18px; border-top: 1px solid #252525;
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  background: #1a1a1a;
+}
+.btn-nav {
+  padding: 7px 22px; border-radius: 4px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: filter .1s; border: none;
+}
+.btn-nav:hover:not(:disabled) { filter: brightness(1.2); }
+.btn-nav.back   { background: #2a2a2a; color: #777; }
+.btn-nav.next   { background: #1565c0; color: #fff; }
+.btn-nav.finish { background: #2e7d32; color: #fff; }
+.btn-nav:disabled { opacity: .25; cursor: default; }
+
+/* ── Mainsail-style connected button group ───────── */
+.btn-group { display: flex; width: 100%; }
+.bg-btn {
+  flex: 1; height: 30px; padding: 0 6px;
+  background: #272727; color: rgba(255,255,255,.65);
+  border: 1px solid rgba(255,255,255,.12); border-radius: 0;
+  cursor: pointer; font-size: 12px; font-weight: 500;
+  transition: background .1s, color .1s; white-space: nowrap;
+}
+.bg-btn:first-child { border-radius: 4px 0 0 4px; }
+.bg-btn:last-child  { border-radius: 0 4px 4px 0; }
+.bg-btn:not(:first-child) { border-left-width: 0; }
+.bg-btn:hover { background: #333; color: #fff; }
+
+/* ── Drive section ───────────────────────────────── */
+.drive-section { display: flex; flex-direction: column; gap: 8px; }
+.dist-row { display: flex; align-items: center; gap: 8px; }
+.dist-input {
+  width: 70px; background: #272727; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 4px; color: #fff; padding: 5px 8px; font-size: 13px;
+  text-align: center; outline: none; font-family: inherit;
+}
+.dist-input:focus { border-color: #1976d2; }
+.dist-unit { font-size: 12px; color: #555; }
+.act-row { display: flex; gap: 8px; }
+.act-btn {
+  flex: 1; padding: 9px 10px; border-radius: 4px;
+  border: 1px solid rgba(255,255,255,.12); background: #272727;
+  color: rgba(255,255,255,.75); cursor: pointer; font-size: 13px;
+  font-weight: 500; display: flex; align-items: center;
+  justify-content: center; gap: 6px; transition: all .1s;
+}
+.act-btn:hover { background: #333; color: #fff; }
+.act-btn .arrow { font-size: 15px; line-height: 1; }
+
+/* ── Path controls modal ─────────────────────────── */
+.path-modal-actions { display: flex; gap: 8px; }
+.btn-pm {
+  flex: 1; padding: 10px; border-radius: 4px; border: none;
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: filter .1s;
+}
+.btn-pm:hover:not(:disabled) { filter: brightness(1.2); }
+.btn-pm:disabled { opacity: .25; cursor: default; }
+.btn-pm.load   { background: #1565c0; color: #fff; }
+.btn-pm.unload { background: #b71c1c; color: #fff; }
+.btn-profile-open {
+  width: 100%; padding: 10px 14px; border-radius: 4px;
+  border: 1px solid rgba(255,255,255,.1); background: #272727;
+  color: rgba(255,255,255,.65); cursor: pointer; font-size: 13px;
+  font-weight: 500; text-align: left; display: flex; align-items: center;
+  gap: 10px; transition: all .12s;
+}
+.btn-profile-open:hover { border-color: rgba(255,255,255,.25); color: #fff; background: #2f2f2f; }
+.bpo-swatch { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Connection badge ────────────────────────────── */
+.ws-badge { font-size: 10px; font-weight: 700; letter-spacing: .05em; flex-shrink: 0; }
+.ws-badge.live        { color: #81c784; }
+.ws-badge.connecting  { color: #ffd54f; }
+.ws-badge.offline     { color: #555; }
+
+/* ── Send button states ──────────────────────────── */
+.btn-send.send-err { border-color: #c62828; background: #3e1a1a; color: #ef9a9a; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="workspace">
+
+    <!-- ════════════ PANEL ════════════ -->
+    <div class="card panel">
+      <div class="card-header">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white">
+          <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+        </svg>
+        Autoloader
+        <div class="spacer"></div>
+        <span class="ws-badge" :class="wsStatus">{{ wsStatus === 'live' ? '● Live' : wsStatus === 'connecting' ? '◌ Connecting…' : '○ Offline' }}</span>
+        <button class="btn-cal" @click="openWizard">⚙ Calibrate</button>
+      </div>
+
+      <div class="cal-banner" v-if="calActive">
+        <div class="cal-label">Calibration in progress</div>
+        <div class="cal-prompt">{{ calPrompt }}</div>
+        <div class="cal-respond">
+          <input v-model="calInput" placeholder="Type response…" @keyup.enter="sendCalResponse" />
+          <button @click="sendCalResponse">Respond</button>
+        </div>
+      </div>
+
+      <div class="col-head">
+        <div class="ch-tool">T#</div>
+        <div class="ch-sw"></div>
+        <div class="ch-mat">Material</div>
+        <div class="ch-state">State</div>
+        <div class="ch-dots">
+          <span title="E — Entry sensor (roll-feed end of Bowden)">E</span>
+          <span title="X — Extruder sensor (drive gears at toolhead)">X</span>
+          <span title="T — Toolhead sensor (nozzle-end of Bowden)">T</span>
+        </div>
+      </div>
+
+      <div
+        v-for="(p, i) in paths" :key="i"
+        class="path-row"
+        :class="{ active: i===currentPath, selected: (pathModalOpen && i===pathModalIdx) || (profileOpen && i===selectedPath) }"
+        @click="openPathModal(i)">
+        <div class="tool-lbl">T{{ i }}</div>
+        <div class="swatch" :style="swatchStyle(p)"></div>
+        <div class="path-info">
+          <div class="mat-line">
+            <span v-if="p.mat">{{ p.mat }}<span class="mat-brand" v-if="p.brand"> · {{ p.brand }}</span></span>
+            <span v-else style="color:#333">—</span>
+          </div>
+          <div class="color-lbl" v-if="p.colorName">{{ p.colorName }}</div>
+        </div>
+        <span class="badge" :class="p.state">{{ p.state }}</span>
+        <div class="sensors">
+          <div class="dot" :class="{on:p.entry}"    data-tip="Entry — roll-feed end"></div>
+          <div class="dot" :class="{on:p.extruder}" data-tip="Extruder — drive gears"></div>
+          <div class="dot" :class="{on:p.toolhead}" data-tip="Toolhead — nozzle end"></div>
+        </div>
+      </div>
+
+
+      <div class="dev-strip">
+        <span class="lbl">Sim:</span>
+        <label><input type="checkbox" v-model="calActive" /> Cal banner</label>
+        <label>Active path:
+          <select v-model.number="currentPath">
+            <option v-for="(_,i) in paths" :key="i" :value="i">T{{ i }}</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ════════════ PROFILE MODAL ════════════ -->
+  <div class="modal-backdrop" v-if="profileOpen && selectedPath!==null" @click.self="profileOpen=false">
+    <div class="modal" style="max-width:500px">
+
+      <div class="modal-head">
+        <div class="swatch" :style="swatchStyle(paths[selectedPath])" style="width:20px;height:20px;border-radius:50%;flex-shrink:0"></div>
+        <span class="modal-title">T{{ selectedPath }} — Filament Profile</span>
+        <span class="spacer"></span>
+        <span class="db-badge" :class="dbBadgeClass" style="margin-right:8px">{{ dbBadgeText }}</span>
+        <button class="modal-close" @click="profileOpen=false">✕</button>
+      </div>
+
+      <div class="loading-msg" v-if="dbState==='loading'">
+        <span class="spin">⏳</span> Loading filament catalog from printer…
+      </div>
+
+      <div class="editor-body" v-else>
+
+        <!-- ── Filament catalog ── -->
+        <div class="section">
+          <div class="sec-head">Filament catalog</div>
+
+          <div class="field">
+            <label>Brand</label>
+            <select v-model="sel.vendor" @change="onVendorChange">
+              <option value="">— Select brand —</option>
+              <option v-for="v in vendors" :key="v" :value="v">{{ v }}</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Product line</label>
+            <select v-model="sel.line" @change="onLineChange" :disabled="!sel.vendor">
+              <option value="">— Select line —</option>
+              <option v-for="l in linesFor(sel.vendor)" :key="l" :value="l">{{ l }}</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Material</label>
+            <select v-model="sel.material" @change="onMaterialChange" :disabled="!sel.line">
+              <option value="">— Select material —</option>
+              <option v-for="m in materialsFor(sel.vendor,sel.line)" :key="m" :value="m">{{ m }}</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>Color</label>
+            <select v-model="sel.color" @change="onColorChange" :disabled="!sel.material">
+              <option value="">— Select color —</option>
+              <option v-for="c in colorsFor(sel.vendor,sel.line,sel.material)" :key="c.colorName" :value="c.colorName">{{ c.colorName }}</option>
+              <option v-if="sel.material" value="__custom__" class="custom-opt">✏ Custom color…</option>
+            </select>
+          </div>
+
+          <!-- read-only color preview for catalog selections -->
+          <div class="color-preview" v-if="sel.color && sel.color !== '__custom__'">
+            <div class="cp-swatch" :style="swatchStyle(paths[selectedPath])"></div>
+            <div class="cp-info">
+              <div class="cp-name">{{ paths[selectedPath].colorName }}</div>
+              <div class="cp-hex">#{{ paths[selectedPath].hex }}</div>
+            </div>
+            <div class="cp-lock">🔒</div>
+          </div>
+
+          <!-- editable fields for custom color only -->
+          <div class="custom-section" v-if="sel.color === '__custom__'">
+            <div class="custom-label">✏ Custom color</div>
+            <div class="field">
+              <label>Color name</label>
+              <input type="text" v-model="paths[selectedPath].colorName" placeholder="e.g. Custom Purple" />
+            </div>
+            <div class="field">
+              <label>Hex</label>
+              <div class="color-row">
+                <input type="color" :value="hexForPicker(selectedPath)" @input="onColorPick(selectedPath,$event)" />
+                <div class="hex-wrap">
+                  <span class="hex-pre">#</span>
+                  <input type="text" v-model="paths[selectedPath].hex"
+                    placeholder="e.g. A020F0" maxlength="6" style="text-transform:uppercase"
+                    @input="paths[selectedPath].hex = paths[selectedPath].hex.replace(/[^0-9a-fA-F]/g,'')" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Temperatures ── -->
+        <div class="section">
+          <div class="sec-head">Temperatures</div>
+          <div class="temp-row">
+            <div class="field">
+              <label>Load °C</label>
+              <input type="number" v-model.number="paths[selectedPath].loadTemp" min="150" max="350" />
+            </div>
+            <div class="field">
+              <label>Unload °C</label>
+              <input type="number" v-model.number="paths[selectedPath].unloadTemp" min="140" max="340" />
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn-nav back" @click="backToControls">← Controls</button>
+        <div style="flex:1"></div>
+        <button class="btn-nav"
+          style="background:#3e1a1a;color:#ef9a9a;border:1px solid #c62828;margin-right:8px"
+          :disabled="selectedPath===null || paths[selectedPath].state !== 'empty'"
+          @click="clearProfile">
+          Clear Profile
+        </button>
+        <button class="btn-nav" style="background:#2a2a2a;color:#888" @click="profileOpen=false">Close</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════════ PATH CONTROLS MODAL ════════════ -->
+  <div class="modal-backdrop" v-if="pathModalOpen" @click.self="pathModalOpen=false">
+    <div class="modal" style="max-width:380px">
+
+      <div class="modal-head">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" style="opacity:.7;flex-shrink:0">
+          <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+        </svg>
+        <span class="modal-title">Autoloader Controls</span>
+        <button class="modal-close" @click="pathModalOpen=false">✕</button>
+      </div>
+
+      <div class="modal-body" v-if="pathModalIdx!==null" style="gap:16px">
+
+        <!-- Edit profile — top of modal -->
+        <button class="btn-profile-open" @click="openProfile">
+          <div class="bpo-swatch" :style="swatchStyle(paths[pathModalIdx])"></div>
+          <span v-if="paths[pathModalIdx].colorName" style="color:#ccc">{{ paths[pathModalIdx].colorName }} <span style="color:#555">· {{ paths[pathModalIdx].mat }}</span></span>
+          <span v-else style="color:#444">No profile assigned</span>
+          <span style="margin-left:auto;font-size:12px;color:#555">Edit Profile →</span>
+        </button>
+
+        <hr class="divider" style="margin:0" />
+
+        <!-- Selector controls -->
+        <div>
+          <div class="sec-head" style="margin-bottom:8px">Selector</div>
+          <div class="btn-group">
+            <button class="bg-btn" @click="sendGcode('SA_HOME')">⌂ Home</button>
+            <button class="bg-btn" @click="sendGcode('SA_ENGAGE')">🔒 Engage</button>
+            <button class="bg-btn" @click="sendGcode('SA_DISENGAGE')">🔓 Disengage</button>
+          </div>
+        </div>
+
+        <!-- Drive controls -->
+        <div class="drive-section">
+          <div class="sec-head">Drive</div>
+          <div class="dist-row">
+            <span class="dist-unit" style="color:#888;font-size:12px">Distance</span>
+            <input class="dist-input" type="number" v-model.number="feedDist" min="1" max="500" />
+            <span class="dist-unit">mm</span>
+          </div>
+          <div class="btn-group">
+            <button class="bg-btn" v-for="d in [10,50,100,200]" :key="d"
+              :style="feedDist===d ? 'background:#1565c0;color:#fff;border-color:#1565c0' : ''"
+              @click="feedDist=d">{{ d }}</button>
+          </div>
+          <div class="act-row">
+            <button class="act-btn" @click="sendGcode('MANUAL_STEPPER STEPPER=sa_drive MOVE=-'+feedDist+' SPEED=25')">
+              <span class="arrow">↑</span> Retract
+            </button>
+            <button class="act-btn" @click="sendGcode('MANUAL_STEPPER STEPPER=sa_drive MOVE='+feedDist+' SPEED=25')">
+              <span class="arrow">↓</span> Feed
+            </button>
+          </div>
+        </div>
+
+        <hr class="divider" style="margin:0" />
+
+        <!-- Sensors + state inline -->
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="sen-chip" :class="{on:paths[pathModalIdx].entry}" style="flex:1">
+            <div class="sc-dot"></div><div class="sc-name">Entry</div>
+          </div>
+          <div class="sen-chip" :class="{on:paths[pathModalIdx].extruder}" style="flex:1">
+            <div class="sc-dot"></div><div class="sc-name">Extruder</div>
+          </div>
+          <div class="sen-chip" :class="{on:paths[pathModalIdx].toolhead}" style="flex:1">
+            <div class="sc-dot"></div><div class="sc-name">Toolhead</div>
+          </div>
+          <span class="badge" :class="paths[pathModalIdx].state" style="font-size:11px;padding:4px 12px;flex-shrink:0">
+            {{ paths[pathModalIdx].state }}
+          </span>
+        </div>
+
+        <!-- Load / Unload -->
+        <div class="path-modal-actions">
+          <button class="btn-pm load"   :disabled="!canLoad"   @click="doLoad">Load</button>
+          <button class="btn-pm unload" :disabled="!canUnload" @click="doUnload">Unload</button>
+        </div>
+        <div style="font-size:11px;color:#555;margin-top:-8px" v-if="!canLoad">
+          <span v-if="paths[pathModalIdx].state==='loaded'">Already loaded</span>
+          <span v-else-if="!paths[pathModalIdx].hex">No profile set — use Edit Profile first</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ CALIBRATION WIZARD ════════════ -->
+  <div class="modal-backdrop" v-if="wizardOpen" @click.self="wizardOpen=false">
+    <div class="modal">
+
+      <div class="modal-head">
+        <span style="font-size:16px;opacity:.8">⚙</span>
+        <span class="modal-title">Calibration Guide</span>
+        <button class="modal-close" @click="wizardOpen=false">✕</button>
+      </div>
+
+      <!-- progress bar -->
+      <div class="wiz-bar">
+        <div v-for="n in wizStepCount" :key="n" class="wiz-seg"
+          :class="{ done: n-1 < wizStep, active: n-1 === wizStep }"></div>
+      </div>
+      <div class="wiz-step-label">
+        Step {{ wizStep+1 }} of {{ wizStepCount }} —
+        <em>{{ wizStepTitles[wizStep] }}</em>
+      </div>
+
+      <div class="modal-body">
+
+        <!-- ─── Step 1: Motor Direction Check ─── -->
+        <template v-if="wizStep===1">
+          <div class="wiz-title">Motor Direction Check</div>
+          <div class="wiz-desc">
+            Before anything else, confirm both motors move in the <strong>correct direction</strong>.
+            A reversed motor will cause jams and failed calibration — catch it here first.
+          </div>
+          <div class="callout warn">
+            ⚠ No filament needed for this step. Keep your hands clear of the selector rail and
+            drive gears while buzzing.
+          </div>
+
+          <div class="wiz-desc"><strong>1 — Drive motor</strong></div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_BUZZ_DRIVE</div>
+              <div class="cmd-desc">Short jog of the drive motor — watch the drive gear rotate</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_BUZZ_DRIVE']}" @click="sendGcode('SA_BUZZ_DRIVE')">
+              {{ sentCmds['SA_BUZZ_DRIVE'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ The drive gear should rotate so that filament inserted into the entry would be
+            <strong>pushed toward the toolhead</strong> (forward / into the Bowden tube).
+            If it rotates the other way, invert the drive motor direction in
+            <code style="font-family:monospace;color:#80cbc4">autoloader.cfg</code>
+            (<code style="font-family:monospace;color:#80cbc4">dir_pin: !PA1</code> → remove or add the <code style="font-family:monospace;color:#80cbc4">!</code>).
+          </div>
+
+          <div class="wiz-desc" style="margin-top:4px"><strong>2 — Selector motor</strong></div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_BUZZ_SELECTOR</div>
+              <div class="cmd-desc">Short jog of the selector motor — watch the selector carriage move</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_BUZZ_SELECTOR']}" @click="sendGcode('SA_BUZZ_SELECTOR')">
+              {{ sentCmds['SA_BUZZ_SELECTOR'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ The selector carriage should move <strong>away from the endstop</strong> (toward higher
+            path numbers — T1, T2…). If it moves toward the endstop instead, invert the selector
+            motor direction in config (<code style="font-family:monospace;color:#80cbc4">dir_pin</code>
+            on the <code style="font-family:monospace;color:#80cbc4">manual_stepper sa_selector</code> section).
+          </div>
+          <div class="callout success" v-if="sentCmds['SA_BUZZ_DRIVE'] && sentCmds['SA_BUZZ_SELECTOR']">
+            ✅ Both motors buzzed. If both moved in the correct direction, click Next to continue.
+            If either was reversed, fix the config and buzz again before proceeding.
+          </div>
+        </template>
+
+        <!-- ─── Step 0: Prerequisites ─── -->
+        <template v-if="wizStep===0">
+
+          <div class="wiz-title">Before You Begin</div>
+          <div class="wiz-desc">
+            This wizard guides you through a complete Autoloader calibration:
+            selector positions, drive encoder MPP, and bowden length verification.<br><br>
+            <strong>Complete each check before continuing:</strong>
+          </div>
+          <div class="check-list">
+            <label class="check-item" v-for="(c,i) in preChecks" :key="i" :class="{checked:c.done}">
+              <input type="checkbox" v-model="c.done" />
+              <span>{{ c.label }}</span>
+            </label>
+          </div>
+          <div class="callout warn">
+            ⚠ All filament must be fully unloaded from every path before running selector calibration.
+            Filament present during calibration can cause jams or inaccurate positions.
+          </div>
+        </template>
+
+        <!-- ─── Step 2: Home Selector ─── -->
+        <template v-if="wizStep===2">
+          <div class="wiz-title">Home the Selector</div>
+          <div class="wiz-desc">
+            First, home the selector motor to establish the reference zero position.
+            The selector will travel to the physical endstop (T0 side).
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_HOME</div>
+              <div class="cmd-desc">Homes selector to endstop — takes ~2 s</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_HOME']}" @click="sendGcode('SA_HOME')">
+              {{ sentCmds['SA_HOME'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ Watch the selector physically move. Wait until it stops before proceeding.
+            You should hear the motor decelerate and stop at the endstop.
+          </div>
+          <div class="wiz-desc">
+            Then move the selector to T0 to verify the home position looks correct:
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_SELECT TOOL=0</div>
+              <div class="cmd-desc">Move selector to T0 entry — verify physical alignment</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_SELECT TOOL=0']}" @click="sendGcode('SA_SELECT TOOL=0')">
+              {{ sentCmds['SA_SELECT TOOL=0'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+        </template>
+
+        <!-- ─── Step 3: Selector Calibration ─── -->
+        <template v-if="wizStep===3">
+          <div class="wiz-title">Selector Position Calibration</div>
+          <div class="wiz-desc">
+            The firmware will move the selector to each path and prompt you to confirm or
+            adjust the position. Watch the <strong>Calibration Banner</strong> (orange stripe)
+            at the top of the panel for prompts — respond there.
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_CALIBRATE_SELECTOR</div>
+              <div class="cmd-desc">Starts interactive selector calibration across all paths</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_CALIBRATE_SELECTOR']}" @click="sendGcode('SA_CALIBRATE_SELECTOR')">
+              {{ sentCmds['SA_CALIBRATE_SELECTOR'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ The firmware will prompt you for each path in sequence.
+            Type <code style="font-family:monospace;color:#80cbc4">yes</code> to confirm a position,
+            or enter a numeric offset (e.g. <code style="font-family:monospace;color:#80cbc4">-0.5</code>)
+            to adjust and re-test. Calibration completes automatically once all paths are confirmed.
+          </div>
+          <div class="wiz-desc">
+            <strong>Manual path check</strong> — step through paths to visually verify selector alignment
+            at any time:
+          </div>
+          <div class="path-pills">
+            <button v-for="(p,i) in paths" :key="i" class="path-pill"
+              :class="{'active-path': i===currentPath}"
+              @click="sendGcode('SA_SELECT TOOL='+i)">
+              <div class="pp-sw" :style="swatchStyle(p)"></div>
+              T{{ i }}
+            </button>
+          </div>
+          <div class="wiz-desc" style="margin-top:2px">Selector motor diagnostic:</div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_BUZZ_SELECTOR</div>
+              <div class="cmd-desc">Briefly jogs selector motor — listen for smooth movement</div>
+            </div>
+            <button class="btn-send" @click="sendGcode('SA_BUZZ_SELECTOR')">Send</button>
+          </div>
+        </template>
+
+        <!-- ─── Step 4: Drive Calibration ─── -->
+        <template v-if="wizStep===4">
+          <div class="wiz-title">Drive Encoder Calibration</div>
+          <div class="wiz-desc">
+            This step calibrates how many millimeters of filament the drive motor moves per encoder
+            pulse (mm/pulse = MPP). Accurate MPP is critical for reliable load lengths.
+          </div>
+          <div class="callout warn">
+            ⚠ Insert a short length (~100 mm) of filament into the entry for the path being
+            calibrated. Do <em>not</em> thread it all the way to the toolhead — just past the
+            drive gears so the encoder can measure movement.
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_CALIBRATE_DRIVE</div>
+              <div class="cmd-desc">Interactive drive encoder MPP calibration</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SA_CALIBRATE_DRIVE']}" @click="sendGcode('SA_CALIBRATE_DRIVE')">
+              {{ sentCmds['SA_CALIBRATE_DRIVE'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ The firmware extrudes a set amount and asks you to measure the actual length moved
+            with a ruler. Enter the measured value (mm) in the Calibration Banner. The system
+            calculates the corrected MPP automatically. Repeat for each path if needed.
+          </div>
+          <div class="wiz-desc">Servo and drive motor diagnostics:</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <div class="cmd-block" style="flex:1">
+              <div class="cmd-info">
+                <div class="cmd-code">SA_ENGAGE</div>
+                <div class="cmd-desc">Engage drive servo</div>
+              </div>
+              <button class="btn-send" @click="sendGcode('SA_ENGAGE')">Send</button>
+            </div>
+            <div class="cmd-block" style="flex:1">
+              <div class="cmd-info">
+                <div class="cmd-code">SA_DISENGAGE</div>
+                <div class="cmd-desc">Disengage drive servo</div>
+              </div>
+              <button class="btn-send" @click="sendGcode('SA_DISENGAGE')">Send</button>
+            </div>
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SA_BUZZ_DRIVE</div>
+              <div class="cmd-desc">Brief drive motor jog — confirms encoder is responding</div>
+            </div>
+            <button class="btn-send" @click="sendGcode('SA_BUZZ_DRIVE')">Send</button>
+          </div>
+        </template>
+
+        <!-- ─── Step 5: Verify Bowden Lengths ─── -->
+        <template v-if="wizStep===5">
+          <div class="wiz-title">Verify Bowden Lengths</div>
+          <div class="wiz-desc">
+            Run a full load on each path, then compare the encoder distance to the configured
+            bowden length. They should match within <strong>±10 mm</strong>.
+            A large delta means the <code style="font-family:monospace;font-size:11px;color:#80cbc4">bowden_length</code>
+            setting for that path needs updating.
+          </div>
+          <div class="path-pills">
+            <button v-for="(p,i) in paths" :key="i" class="path-pill"
+              :class="{'active-path': i===currentPath}"
+              @click="sendGcode('SA_LOAD TOOL='+i)">
+              <div class="pp-sw" :style="swatchStyle(p)"></div>
+              Load T{{ i }}
+            </button>
+          </div>
+          <table class="verify-table">
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Config mm</th>
+                <th>Encoder mm</th>
+                <th>Delta</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(p,i) in paths" :key="i">
+                <td>T{{ i }}</td>
+                <td>{{ bowdenLengths[i] || '—' }}</td>
+                <td>{{ encoderDists[i] >= 0 ? encoderDists[i].toFixed(1) : '—' }}</td>
+                <td :class="verifyClass(i)">{{ verifyDelta(i) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="callout info">
+            ℹ If a path shows &gt;10 mm delta, update
+            <code style="font-family:monospace;color:#80cbc4">bowden_length</code>
+            in <code style="font-family:monospace;color:#80cbc4">autoloader.cfg</code>
+            and re-run SA_LOAD on that path.
+          </div>
+        </template>
+
+        <!-- ─── Step 6: Done ─── -->
+        <template v-if="wizStep===6">
+          <div class="wiz-title">🎉 Calibration Complete!</div>
+          <div class="callout success">
+            ✅ Your Autoloader is calibrated and ready for use.
+          </div>
+          <div class="check-list">
+            <div class="check-item checked"><span>✓</span><span>Selector homed and positions verified</span></div>
+            <div class="check-item checked"><span>✓</span><span>Drive encoder MPP calibrated</span></div>
+            <div class="check-item checked"><span>✓</span><span>Bowden lengths verified against encoder readings</span></div>
+          </div>
+          <div class="wiz-desc">
+            You can now load filament using the <strong>Load</strong> button on the main panel.
+            If you encounter issues, re-open this wizard and repeat the relevant step.<br><br>
+            <strong>Don't forget to save your config:</strong>
+          </div>
+          <div class="cmd-block">
+            <div class="cmd-info">
+              <div class="cmd-code">SAVE_CONFIG</div>
+              <div class="cmd-desc">Persists calibration values to printer.cfg — required to survive a restart</div>
+            </div>
+            <button class="btn-send" :class="{sent:sentCmds['SAVE_CONFIG']}" @click="sendGcode('SAVE_CONFIG')">
+              {{ sentCmds['SAVE_CONFIG'] ? '✓ Sent' : 'Send' }}
+            </button>
+          </div>
+          <div class="callout info">
+            ℹ Klipper will restart after SAVE_CONFIG. Reconnect to Mainsail once it comes back online.
+          </div>
+        </template>
+
+      </div><!-- /modal-body -->
+
+      <div class="modal-foot">
+        <button class="btn-nav back" :disabled="wizStep===0" @click="wizStep--">← Back</button>
+        <span style="flex:1;text-align:center;font-size:11px;color:#444">{{ wizStep+1 }} / {{ wizStepCount }}</span>
+        <button v-if="wizStep < wizStepCount-1" class="btn-nav next"
+          :disabled="wizStep===0 && !allChecked"
+          @click="wizStep++">Next →</button>
+        <button v-else class="btn-nav finish" @click="wizardOpen=false">Finish ✓</button>
+      </div>
+
+    </div><!-- /modal -->
+  </div><!-- /modal-backdrop -->
+
+</div>
+
+<script>
+// When served from the printer itself use same origin; fall back to hardcoded IP for local dev
+const PRINTER = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://192.168.1.214'
+  : window.location.origin
+const PROFILES_PATH = 'autoloader/filament_profiles'
+
+// ── Klipper cfg parser ───────────────────────────────────────────────
+function parseCfg(text) {
+  const sections = []
+  let current = null
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#')) continue
+    const secMatch = line.match(/^\[(.+)\]$/)
+    if (secMatch) {
+      const header = secMatch[1]
+      const spaceIdx = header.indexOf(' ')
+      current = {
+        _type: spaceIdx === -1 ? header : header.slice(0, spaceIdx),
+        _key:  spaceIdx === -1 ? ''     : header.slice(spaceIdx + 1).trim(),
+      }
+      sections.push(current)
+      continue
+    }
+    const kvMatch = line.match(/^([^:]+):\s*(.*)$/)
+    if (kvMatch && current) current[kvMatch[1].trim()] = kvMatch[2].trim()
+  }
+  return sections
+}
+
+function buildCatalogFromCfg(text) {
+  const sections = parseCfg(text)
+  const brands = {}
+  const lines  = {}
+
+  for (const s of sections) {
+    if (s._type === 'sa_brand') {
+      brands[s.name] = s.display_name || s.name
+    }
+    if (s._type === 'sa_product_line') {
+      lines[s._key] = {
+        lineKey:    s._key,
+        brandKey:   s.brand || '',
+        lineName:   s.display_name || s._key,
+        material:   s.material || '',
+        loadTemp:   parseInt(s.load_temp)   || 200,
+        unloadTemp: parseInt(s.unload_temp) || 185,
+      }
+    }
+  }
+
+  const entries = []
+  for (const s of sections) {
+    if (s._type !== 'sa_color') continue
+    const lineKey = s.product_line || s._key.split('.')[0]
+    const pl = lines[lineKey]
+    if (!pl) continue
+    entries.push({
+      vendorKey: pl.brandKey,
+      vendor:    brands[pl.brandKey] || pl.brandKey,
+      lineKey:   pl.lineKey,
+      line:      pl.lineName,
+      material:  pl.material,
+      colorName: s.color_name || '',
+      hex:       (s.color_hex || '').replace(/^#/, '').toUpperCase(),
+      loadTemp:  pl.loadTemp,
+      unloadTemp:pl.unloadTemp,
+    })
+  }
+  return entries
+}
+
+// ── Vue app ───────────────────────────────────────────────────────────
+new Vue({
+  el: '#app',
+  data() {
+    return {
+      currentPath: 0,
+      selectedPath: null,
+      calActive: false,
+      calInput: '',
+      calPrompt: 'Move selector to path 0 and confirm position, then press Respond.',
+
+      paths: [
+        { state:'loaded', entry:true,  extruder:true,  toolhead:true,  mat:'PLA', brand:'Polymaker Panchroma™', productLine:'panchroma_matte', colorName:'Cotton White',  hex:'E6DDDB', loadTemp:205, unloadTemp:190 },
+        { state:'loaded', entry:true,  extruder:true,  toolhead:true,  mat:'PLA', brand:'Polymaker Panchroma™', productLine:'panchroma_matte', colorName:'Charcoal Black',hex:'1C1C1C', loadTemp:205, unloadTemp:190 },
+        { state:'loaded', entry:true,  extruder:true,  toolhead:true,  mat:'PLA', brand:'Polymaker Panchroma™', productLine:'panchroma_matte', colorName:'Sapphire Blue', hex:'005AA2', loadTemp:205, unloadTemp:190 },
+        { state:'empty',   entry:false, extruder:false, toolhead:false, mat:'',    brand:'', productLine:'', colorName:'', hex:'', loadTemp:200, unloadTemp:185 },
+        { state:'empty',   entry:false, extruder:false, toolhead:false, mat:'',    brand:'', productLine:'', colorName:'', hex:'', loadTemp:200, unloadTemp:185 },
+        { state:'empty',   entry:false, extruder:false, toolhead:false, mat:'',    brand:'', productLine:'', colorName:'', hex:'', loadTemp:200, unloadTemp:185 },
+      ],
+
+      catalog:  [],
+      dbState:  'loading',   // 'loading' | 'live' | 'error'
+      dbDetail: '',
+
+      sel: { vendor:'', line:'', material:'', color:'' },
+
+      // ── Live connection ───────────────────────────
+      wsStatus: 'connecting',
+
+      // ── Path controls modal ───────────────────────
+      pathModalOpen: false,
+      pathModalIdx: null,
+      feedDist: 50,
+      profileOpen: false,
+
+      // ── Calibration wizard ────────────────────────
+      wizardOpen: false,
+      wizStep: 0,
+      sentCmds: {},
+      preChecks: [
+        { label: 'Printer is fully homed (G28 complete)',        done: false },
+        { label: 'All filament is unloaded from every path',     done: false },
+        { label: 'Printer is near room temperature',             done: false },
+        { label: 'You have physical access to the printer',      done: false },
+      ],
+      bowdenLengths: [823, 800, 800, 800, 800, 800],
+      encoderDists:  [823.4, -1, -1, -1, -1, -1],
+    }
+  },
+
+  computed: {
+    canLoad() {
+      if (this.pathModalIdx === null) return false
+      const p = this.paths[this.pathModalIdx]
+      // loaded = already there; no profile = nowhere to load to
+      return p.state !== 'loaded' && p.hex !== ''
+    },
+    canUnload() {
+      if (this.pathModalIdx === null) return false
+      return this.paths[this.pathModalIdx].state !== 'empty'
+    },
+    vendors() {
+      return [...new Set(this.catalog.map(f => f.vendor))].sort()
+    },
+    dbBadgeText() {
+      if (this.dbState === 'loading') return '⏳ Loading…'
+      if (this.dbState === 'error')   return '⚠ ' + this.dbDetail
+      return '📡 ' + this.dbDetail
+    },
+    dbBadgeClass() {
+      if (this.dbState === 'loading') return 'loading'
+      if (this.dbState === 'error')   return 'error'
+      return 'live'
+    },
+    wizStepTitles() {
+      return [
+        'Prerequisites',
+        'Motor Direction Check',
+        'Home Selector',
+        'Selector Calibration',
+        'Drive Calibration',
+        'Verify Bowden Lengths',
+        'Complete',
+      ]
+    },
+    wizStepCount() { return this.wizStepTitles.length },
+    allChecked() { return this.preChecks.every(c => c.done) },
+  },
+
+  watch: {
+    selectedPath(idx) {
+      if (idx === null) return
+      const p = this.paths[idx]
+      this.sel.vendor   = this.matchVendor(p.brand)
+      this.sel.line     = this.matchLine(this.sel.vendor, p.productLine, p.colorName)
+      this.sel.material = p.mat || ''
+      // Use __custom__ if the stored color isn't in the catalog
+      const inCatalog = !!(p.colorName && this.sel.material &&
+        this.colorsFor(this.sel.vendor, this.sel.line, this.sel.material)
+          .some(f => f.colorName === p.colorName))
+      this.sel.color = p.colorName ? (inCatalog ? p.colorName : '__custom__') : ''
+    },
+  },
+
+  async mounted() {
+    await this.loadProfiles()
+    this.connectWS()
+  },
+
+  methods: {
+    // ── load all .cfg files from the printer ──────────────────────
+    async loadProfiles() {
+      try {
+        // Get full file list (Moonraker returns all config files flat)
+        const listRes = await fetch(
+          `${PRINTER}/server/files/list?root=config`,
+          { signal: AbortSignal.timeout(5000) }
+        )
+        if (!listRes.ok) throw new Error(`list ${listRes.status}`)
+        const listJson = await listRes.json()
+
+        // Filter to our filament_profiles directory
+        const cfgFiles = (listJson.result || [])
+          .filter(f => f.path.startsWith(PROFILES_PATH + '/') && f.path.endsWith('.cfg'))
+          .map(f => f.path)
+
+        if (cfgFiles.length === 0) throw new Error('no .cfg files found')
+
+        // Fetch all files concurrently
+        const fetches = cfgFiles.map(path =>
+          fetch(`${PRINTER}/server/files/config/${path}`, { signal: AbortSignal.timeout(5000) })
+            .then(r => r.ok ? r.text() : Promise.reject(r.status))
+        )
+        const texts = await Promise.all(fetches)
+
+        // Parse and merge
+        const all = []
+        texts.forEach(t => all.push(...buildCatalogFromCfg(t)))
+
+        this.catalog  = all
+        this.dbState  = 'live'
+        this.dbDetail = `${cfgFiles.length} files · ${all.length} colors`
+
+        // Re-seed cascade selectors now that catalog is loaded
+        if (this.selectedPath !== null) {
+          const p = this.paths[this.selectedPath]
+          this.sel.vendor   = this.matchVendor(p.brand)
+          this.sel.line     = this.matchLine(this.sel.vendor, p.productLine, p.colorName)
+          this.sel.material = p.mat || ''
+          this.sel.color    = p.colorName || ''
+        }
+      } catch (e) {
+        this.dbState  = 'error'
+        this.dbDetail = String(e.message || e)
+      }
+    },
+
+    // ── cascade helpers ───────────────────────────────────────────
+    linesFor(vendor) {
+      if (!vendor) return []
+      return [...new Set(this.catalog.filter(f => f.vendor===vendor).map(f => f.line))].sort()
+    },
+    materialsFor(vendor, line) {
+      if (!vendor || !line) return []
+      return [...new Set(this.catalog.filter(f => f.vendor===vendor && f.line===line).map(f => f.material))].sort()
+    },
+    colorsFor(vendor, line, material) {
+      if (!vendor || !line || !material) return []
+      return this.catalog.filter(f => f.vendor===vendor && f.line===line && f.material===material)
+    },
+
+    // ── match helpers for pre-populating from existing path data ──
+    matchVendor(brandStr) {
+      if (!brandStr) return ''
+      // exact match on display name
+      const exact = this.vendors.find(v => v === brandStr)
+      if (exact) return exact
+      // case-insensitive / partial
+      const lower = brandStr.toLowerCase()
+      return this.vendors.find(v => v.toLowerCase().includes(lower) || lower.includes(v.toLowerCase())) || ''
+    },
+    matchLine(vendor, lineKey, colorName) {
+      if (!vendor || !lineKey) return ''
+      const lines = this.linesFor(vendor)
+      // try matching by lineKey to lineKey field in catalog
+      const byKey = this.catalog.find(f => f.vendor===vendor && f.lineKey===lineKey)
+      if (byKey) return byKey.line
+      // try fuzzy on display name
+      const norm = lineKey.replace(/[_-]/g,' ').toLowerCase()
+      const byName = lines.find(l => l.toLowerCase().includes(norm) || norm.includes(l.toLowerCase()))
+      if (byName) return byName
+      // if colorName matches an entry in this vendor, find its line
+      if (colorName) {
+        const byColor = this.catalog.find(f => f.vendor===vendor && f.colorName===colorName)
+        if (byColor) return byColor.line
+      }
+      return ''
+    },
+
+    // ── cascade events ────────────────────────────────────────────
+    onVendorChange()   { this.sel.line=''; this.sel.material=''; this.sel.color='' },
+    onLineChange()     { this.sel.material=''; this.sel.color='' },
+    onMaterialChange() { this.sel.color='' },
+    onColorChange() {
+      if (this.selectedPath === null) return
+      const p = this.paths[this.selectedPath]
+
+      if (this.sel.color === '__custom__') {
+        // Carry over the brand/line/material from the cascade but leave
+        // colorName and hex as-is so the user starts from the current value.
+        p.mat         = this.sel.material
+        p.brand       = this.sel.vendor
+        p.productLine = this.catalog.find(f => f.vendor===this.sel.vendor && f.line===this.sel.line)?.lineKey || ''
+        // Clear only if fields are totally blank so there's something to start from
+        if (!p.colorName) p.colorName = 'Custom'
+        if (!p.hex)       p.hex       = 'FFFFFF'
+        return
+      }
+
+      const match = this.colorsFor(this.sel.vendor, this.sel.line, this.sel.material)
+        .find(f => f.colorName === this.sel.color)
+      if (!match) return
+      p.mat         = match.material
+      p.brand       = match.vendor
+      p.productLine = match.lineKey
+      p.colorName   = match.colorName
+      p.hex         = match.hex
+      p.loadTemp    = match.loadTemp
+      p.unloadTemp  = match.unloadTemp
+    },
+
+    // ── swatch / color picker ─────────────────────────────────────
+    normalizeHex(h) { return (h || '').replace(/^#/,'').trim() },
+    swatchStyle(p) {
+      const h = this.normalizeHex(p.hex)
+      return h ? { background:'#'+h } : { background:'transparent', border:'2px solid #333' }
+    },
+    hexForPicker(i) {
+      const h = this.normalizeHex(this.paths[i].hex)
+      return h.length===6 ? '#'+h : '#888888'
+    },
+    onColorPick(i, e) {
+      this.paths[i].hex = e.target.value.replace('#','').toUpperCase()
+    },
+
+    doLoad()   { if (this.pathModalIdx !== null) this.sendGcode('SA_LOAD TOOL='   + this.pathModalIdx) },
+    doUnload() { if (this.pathModalIdx !== null) this.sendGcode('SA_UNLOAD TOOL=' + this.pathModalIdx) },
+
+    openPathModal(i) {
+      this.pathModalIdx  = i
+      this.pathModalOpen = true
+    },
+    openProfile() {
+      this.selectedPath  = this.pathModalIdx
+      this.pathModalOpen = false
+      this.profileOpen   = true
+    },
+    backToControls() {
+      this.profileOpen   = false
+      this.pathModalOpen = true
+    },
+    clearProfile() {
+      if (this.selectedPath === null) return
+      const p = this.paths[this.selectedPath]
+      p.mat = ''; p.brand = ''; p.productLine = ''
+      p.colorName = ''; p.hex = ''
+      p.loadTemp = 200; p.unloadTemp = 185
+      this.sel = { vendor: '', line: '', material: '', color: '' }
+    },
+
+    // ── Live WebSocket ────────────────────────────────────────────
+    connectWS() {
+      const url = PRINTER.replace(/^http/, 'ws') + '/websocket'
+      const ws  = new WebSocket(url)
+      this._ws  = ws
+
+      ws.onopen = () => {
+        // Subscribe to autoloader for live updates
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0', method: 'printer.objects.subscribe',
+          params: { objects: { autoloader: null } }, id: 1,
+        }))
+        // Also do an immediate full query so we don't wait for first diff
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0', method: 'printer.objects.query',
+          params: { objects: { autoloader: null } }, id: 2,
+        }))
+      }
+
+      ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data)
+        // Full response to subscribe or query
+        if (msg.id === 1 || msg.id === 2) {
+          const sa = msg.result?.status?.autoloader
+          if (sa) { this.wsStatus = 'live'; this.updateFromSA(sa) }
+        }
+        // Partial live diffs
+        if (msg.method === 'notify_status_update') {
+          const sa = msg.params?.[0]?.autoloader
+          if (sa) { this.wsStatus = 'live'; this.updateFromSA(sa) }
+        }
+        // Klipper restarted — re-subscribe
+        if (msg.method === 'notify_klippy_ready') {
+          ws.send(JSON.stringify({
+            jsonrpc: '2.0', method: 'printer.objects.subscribe',
+            params: { objects: { autoloader: null } }, id: 1,
+          }))
+        }
+      }
+
+      ws.onerror = () => { this.wsStatus = 'offline' }
+      ws.onclose = () => {
+        this.wsStatus = 'offline'
+        setTimeout(() => { if (this._ws === ws) this.connectWS() }, 3000)
+      }
+    },
+
+    updateFromSA(sa) {
+      const n = sa.num_paths ?? this.paths.length
+      for (let i = 0; i < n; i++) {
+        if (!this.paths[i]) this.$set(this.paths, i, {})
+        const p = this.paths[i]
+        if (sa.path_states?.[i]       !== undefined) p.state       = sa.path_states[i]
+        if (sa.entry_filament?.[i]    !== undefined) p.entry       = sa.entry_filament[i]
+        if (sa.extruder_filament?.[i] !== undefined) p.extruder    = sa.extruder_filament[i]
+        if (sa.toolhead_filament?.[i] !== undefined) p.toolhead    = sa.toolhead_filament[i]
+        if (sa.path_materials?.[i]    !== undefined) p.mat         = sa.path_materials[i]
+        if (sa.path_brands?.[i]       !== undefined) p.brand       = sa.path_brands[i]
+        if (sa.path_product_lines?.[i]!== undefined) p.productLine = sa.path_product_lines[i]
+        if (sa.path_color_names?.[i]  !== undefined) p.colorName   = sa.path_color_names[i]
+        if (sa.path_color_hexes?.[i]  !== undefined) p.hex         = (sa.path_color_hexes[i] || '').replace(/^#/, '')
+        if (sa.path_load_temps?.[i]   !== undefined) p.loadTemp    = sa.path_load_temps[i]
+        if (sa.path_unload_temps?.[i] !== undefined) p.unloadTemp  = sa.path_unload_temps[i]
+      }
+      if (sa.current_path  !== undefined) this.currentPath   = sa.current_path
+      if (sa.cal_state     !== undefined) this.calActive     = sa.cal_state !== ''
+      if (sa.cal_prompt    !== undefined) this.calPrompt     = sa.cal_prompt
+      if (sa.bowden_lengths!== undefined) this.bowdenLengths = sa.bowden_lengths
+      if (sa.encoder_dist  !== undefined) this.encoderDists  = sa.encoder_dist
+    },
+
+    // ── Calibration wizard ────────────────────────────────────────
+    openWizard() {
+      this.wizStep  = 0
+      this.sentCmds = {}
+      this.preChecks.forEach(c => { c.done = false })
+      this.wizardOpen = true
+    },
+    async sendGcode(cmd) {
+      this.$set(this.sentCmds, cmd, true)
+      console.log('[SA] →', cmd)
+      try {
+        const res = await fetch(`${PRINTER}/printer/gcode/script`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script: cmd }),
+        })
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          console.error('[SA] gcode error:', body)
+          this.$set(this.sentCmds, cmd, 'error')
+          setTimeout(() => this.$set(this.sentCmds, cmd, false), 4000)
+        }
+      } catch (e) {
+        console.error('[SA] sendGcode failed:', e)
+        this.$set(this.sentCmds, cmd, 'error')
+        setTimeout(() => this.$set(this.sentCmds, cmd, false), 4000)
+      }
+    },
+    sendCalResponse() {
+      const val = this.calInput.trim()
+      if (!val) return
+      this.sendGcode(`SA_RESPOND VALUE=${val}`)
+      this.calInput = ''
+    },
+    verifyDelta(i) {
+      const cfg = this.bowdenLengths[i]
+      const enc = this.encoderDists[i]
+      if (!cfg || enc === undefined || enc < 0) return '—'
+      const d = enc - cfg
+      return (d >= 0 ? '+' : '') + d.toFixed(1) + ' mm'
+    },
+    verifyClass(i) {
+      const cfg = this.bowdenLengths[i]
+      const enc = this.encoderDists[i]
+      if (!cfg || enc === undefined || enc < 0) return ''
+      return Math.abs(enc - cfg) <= 10 ? 'match' : 'mismatch'
+    },
+  },
+})
+</script>
+</body>
+</html>
