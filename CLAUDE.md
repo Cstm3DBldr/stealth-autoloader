@@ -37,14 +37,24 @@ before deploying or pushing — just do it and report the result.
 - **Update README.md** whenever commands, config parameters, or calibration procedures change.
 - **Update CLAUDE.md** whenever the user adds new rules, preferences, or project context.
 - **No confirmation prompts needed** for SCP, SSH restart, git commit, or git push.
-- **Printer's `parameters.cfg` is authoritative for defaults.** Before any
-  deploy, refactor, or task that touches `autoloader/parameters.cfg`, diff
-  `~/printer_data/config/autoloader/parameters.cfg` (printer) against
-  `autoloader/parameters.cfg` (repo). For any parameter that exists in both
-  but with different values, the printer's value wins — pull it into the
-  repo as the new default, commit, push. New parameters that exist only in
-  the repo (not yet on the printer) are kept as-is. `scripts/verify.sh`
-  performs this check automatically and exits non-zero on drift.
+- **Printer is authoritative for ALL deployed files. Always pull-first
+  before modifying.** Before starting any task that touches files which
+  are deployed to the printer (cfg, KlipperScreen panels, html), pull the
+  printer's live copy and reconcile against the repo:
+    - `~/printer_data/config/autoloader/*.cfg`, `*.html`
+    - `~/printer_data/config/sa_klipperscreen.conf`
+    - `~/KlipperScreen/panels/sa_*.py`, `~/KlipperScreen/sa_*.py`
+    - `~/printer_data/config/autoloader/filament_profiles/`
+  The printer's content wins on any divergence; pull it into the repo as
+  the new default, commit, push, then make the requested change. This
+  protects against losing user-tuned values, runtime calibrations, or
+  edits made directly via the Mainsail config editor / KlipperScreen.
+
+  Symlinked files (Klipper extras, Moonraker component) don't need this
+  step — they read directly from the repo.
+
+  `scripts/verify.sh` runs the parameters.cfg drift check on every run
+  and exits non-zero if the printer has tuned values not in the repo.
 
 ---
 
