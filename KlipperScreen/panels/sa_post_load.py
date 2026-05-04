@@ -56,10 +56,12 @@ class Panel(ScreenPanel):
         self._sub.set_halign(Gtk.Align.CENTER)
         outer.pack_start(self._sub, False, False, 0)
 
-        # Dividers removed \u2014 section grouping comes from the colored
-        # "LOAD PATH:" / "UNLOAD PATH:" headers + spacing alone. Adding
-        # Separators back here pushed the bottom UNLOAD T-row off the
-        # 480px screen on this hardware.
+        # Divider below the sub-header \u2014 visual break before the action row.
+        # Kept; the SECOND divider (between action row and LOAD PATH) was
+        # removed because it pushed the UNLOAD T-row off the bottom on a
+        # 480px screen. Section grouping below relies on the colored
+        # "LOAD PATH:" / "UNLOAD PATH:" headers alone.
+        outer.pack_start(Gtk.Separator(), False, False, 4)
 
         # Primary action buttons (row 1)
         row1 = Gtk.Box(spacing=8)
