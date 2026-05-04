@@ -228,24 +228,18 @@ class Panel(ScreenPanel):
 
         if sa is not None:
             self._last_sa.update(sa)
-            new_entry = self._last_sa.get("entry_filament", [])
-            for i, active in enumerate(new_entry):
-                was_active = self._entry_prev[i] if i < len(self._entry_prev) else False
-                if not was_active and active:
-                    GLib.idle_add(
-                        self._screen.show_panel, 'sa_load_unload', 'Load / Unload')
-            self._entry_prev = list(new_entry)
-
-            cal = self._last_sa.get("cal_state", "")
-            if cal != self._last_cal_state:
-                if cal in ('load_purge', 'unload_done'):
-                    import sa_ui_prefs as _prefs
-                    if _prefs.get("popup_on_complete", True):
-                        GLib.idle_add(self._screen.show_panel, 'sa_post_load', 'SA Action')
-                elif cal:
-                    # Calibration phase starting — open prompt panel
-                    GLib.idle_add(self._screen.show_panel, 'sa_cal_prompt', 'SA Calibration')
-            self._last_cal_state = cal
+            # Track entry rising-edges for stats only — the actual popup
+            # trigger is handled by the global watcher in sa_subscription.py
+            # so it works from any KS panel, not only sa_main.
+            self._entry_prev = list(self._last_sa.get("entry_filament", []))
+            self._last_cal_state = self._last_sa.get("cal_state", "")
+            # Popup logic moved to sa_subscription.install_global_popup_watcher.
+            # That watcher monkey-patches screen.process_update so it fires
+            # regardless of which panel is currently active, AND it checks
+            # _dismissed_at_cal_state so an explicit user-Park doesn't
+            # immediately reopen the popup before Klipper finishes processing
+            # SA_RESPOND. Keeping the panel-local logic here would cause the
+            # two watchers to race during the dismiss window.
 
         GLib.idle_add(self._redraw)
 

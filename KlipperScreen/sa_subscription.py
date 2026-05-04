@@ -38,6 +38,25 @@ _last_cal_state    = None
 _last_entry        = []
 _initialized       = False  # baseline from first observation (no trigger)
 
+# When the user explicitly dismisses sa_post_load (Park / Exit / Load-Same),
+# Klipper's SA_RESPOND processing is asynchronous — there's a window where
+# subsequent status updates still report the SAME cal_state value because
+# the gcode hasn't been picked up yet. Without this flag, our global watcher
+# (or sa_main's panel-local watcher) sees what looks like a fresh transition
+# into load_purge / unload_done on the very next status reprocess and reopens
+# sa_post_load. The flag stores the cal_state at dismiss time and suppresses
+# popup reopening as long as cal_state matches; it clears automatically when
+# cal_state actually transitions to a different value (i.e. Klipper has
+# processed the response).
+_dismissed_at_cal_state = None
+
+
+def mark_user_dismissed(cal_state):
+    """Called from sa_post_load._close() when the user explicitly dismisses
+    the action popup. Suppresses popup reopen on the same cal_state value."""
+    global _dismissed_at_cal_state
+    _dismissed_at_cal_state = cal_state
+
 def install_global_popup_watcher(screen):
     """Monkey-patch screen.process_update so the post-load action popup and
     the on-insert load wizard fire from any KlipperScreen panel, matching
@@ -73,6 +92,7 @@ def _on_status(screen, *args):
     if not isinstance(sa, dict):
         return
 
+    global _dismissed_at_cal_state
     cal   = sa.get("cal_state")
     entry = sa.get("entry_filament")
 
@@ -87,14 +107,27 @@ def _on_status(screen, *args):
         _initialized = True
         return
 
+    # Clear the user-dismissed flag once cal_state actually changes away
+    # from the value at dismiss-time. This re-arms the popup for the next
+    # legitimate transition into load_purge / unload_done.
+    if (_dismissed_at_cal_state is not None
+            and cal != _dismissed_at_cal_state):
+        _dismissed_at_cal_state = None
+
     from gi.repository import GLib
 
     # cal_state transition → post-load action popup
     if cal is not None and cal != _last_cal_state:
         import logging
         logging.info(
-            "sa_subscription: cal_state %r -> %r" % (_last_cal_state, cal))
-        if cal in ("load_purge", "unload_done"):
+            "sa_subscription: cal_state %r -> %r (dismissed_at=%r)"
+            % (_last_cal_state, cal, _dismissed_at_cal_state))
+        # Skip popup if user already explicitly dismissed at this cal_state
+        # value. The dismiss flag clears automatically (above) once cal_state
+        # actually transitions away.
+        if cal == _dismissed_at_cal_state:
+            logging.info("sa_subscription: suppressed (user dismissed)")
+        elif cal in ("load_purge", "unload_done"):
             try:
                 import sa_ui_prefs as _prefs
                 if _prefs.get("popup_on_complete", True):

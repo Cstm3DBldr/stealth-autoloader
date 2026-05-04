@@ -75,7 +75,7 @@ class Panel(ScreenPanel):
         self._load_same_btn = self._make_action_btn(
             "\u25b6  LOAD SAME", _GREEN, self._do_load_same)
         self._park_btn = self._make_action_btn(
-            "\U0001f3d4  PARK",    None,   self._do_park)
+            "Ⓟ  PARK",    None,   self._do_park)
         self._exit_btn = self._make_action_btn(
             "\u2715  EXIT",        _RED,   self._do_exit)
         # set_no_show_all so the screen.attach_panel show_all() pass
@@ -174,6 +174,15 @@ class Panel(ScreenPanel):
         self._gcode("SA_RESPOND VALUE=%s" % value)
 
     def _close(self):
+        # Tell the global popup watcher this dismiss is intentional, so the
+        # next status update with the same cal_state (Klipper hasn't
+        # processed our SA_RESPOND yet — async) doesn't re-open the popup.
+        # The flag clears automatically once cal_state actually transitions.
+        try:
+            _sasub.mark_user_dismissed(self._cal_state)
+        except Exception:
+            pass
+
         # Walk back through the autoloader popup chain instead of pushing
         # sa_main onto the stack. show_panel() would leave sa_post_load and
         # sa_load_unload in the back stack, so the user's next "back" tap
