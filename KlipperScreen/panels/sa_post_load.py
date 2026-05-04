@@ -63,24 +63,29 @@ class Panel(ScreenPanel):
         # "LOAD PATH:" / "UNLOAD PATH:" headers alone.
         outer.pack_start(Gtk.Separator(), False, False, 4)
 
-        # Primary action buttons (row 1)
+        # Primary action buttons \u2014 single row in both states. PURGE shows
+        # in load_purge, LOAD SAME shows in unload_done; only one of those
+        # two is ever visible. PARK and EXIT are always visible. With one
+        # of the two conditional buttons hidden via set_visible(False),
+        # GTK skips its allocation and the remaining 3 buttons share the
+        # row width evenly.
         row1 = Gtk.Box(spacing=8)
         self._more_btn = self._make_action_btn(
             "\u21ba  PURGE 60mm", _GREEN, self._do_more)
+        self._load_same_btn = self._make_action_btn(
+            "\u25b6  LOAD SAME", _GREEN, self._do_load_same)
         self._park_btn = self._make_action_btn(
             "\U0001f3d4  PARK",    None,   self._do_park)
         self._exit_btn = self._make_action_btn(
             "\u2715  EXIT",        _RED,   self._do_exit)
-        for b in (self._more_btn, self._park_btn, self._exit_btn):
+        # set_no_show_all so the screen.attach_panel show_all() pass
+        # doesn't override our state-dependent set_visible() calls below.
+        self._more_btn.set_no_show_all(True)
+        self._load_same_btn.set_no_show_all(True)
+        for b in (self._more_btn, self._load_same_btn, self._park_btn, self._exit_btn):
             b.set_size_request(-1, 56)
             row1.pack_start(b, True, True, 0)
         outer.pack_start(row1, False, False, 0)
-
-        # Load-same row (unload_done only)
-        self._load_same_btn = self._make_action_btn(
-            "\u25b6  LOAD SAME PATH", _GREEN, self._do_load_same)
-        self._load_same_btn.set_size_request(-1, 50)
-        outer.pack_start(self._load_same_btn, False, False, 0)
 
         # Load T0..T5 row
         load_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
