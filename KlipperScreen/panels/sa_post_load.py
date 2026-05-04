@@ -43,7 +43,7 @@ class Panel(ScreenPanel):
     # ── UI construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=10)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=6)
 
         # Status header
         self._hdr = Gtk.Label()
@@ -56,7 +56,10 @@ class Panel(ScreenPanel):
         self._sub.set_halign(Gtk.Align.CENTER)
         outer.pack_start(self._sub, False, False, 0)
 
-        outer.pack_start(Gtk.Separator(), False, False, 4)
+        # Dividers removed \u2014 section grouping comes from the colored
+        # "LOAD PATH:" / "UNLOAD PATH:" headers + spacing alone. Adding
+        # Separators back here pushed the bottom UNLOAD T-row off the
+        # 480px screen on this hardware.
 
         # Primary action buttons (row 1)
         row1 = Gtk.Box(spacing=8)
@@ -66,20 +69,19 @@ class Panel(ScreenPanel):
             "\U0001f3d4  PARK",    None,   self._do_park)
         self._exit_btn = self._make_action_btn(
             "\u2715  EXIT",        _RED,   self._do_exit)
-        row1.pack_start(self._more_btn, True, True, 0)
-        row1.pack_start(self._park_btn, True, True, 0)
-        row1.pack_start(self._exit_btn, True, True, 0)
+        for b in (self._more_btn, self._park_btn, self._exit_btn):
+            b.set_size_request(-1, 56)
+            row1.pack_start(b, True, True, 0)
         outer.pack_start(row1, False, False, 0)
 
         # Load-same row (unload_done only)
         self._load_same_btn = self._make_action_btn(
             "\u25b6  LOAD SAME PATH", _GREEN, self._do_load_same)
+        self._load_same_btn.set_size_request(-1, 50)
         outer.pack_start(self._load_same_btn, False, False, 0)
 
-        outer.pack_start(Gtk.Separator(), False, False, 2)
-
         # Load T0..T5 row
-        load_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        load_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self._load_lbl = Gtk.Label(halign=Gtk.Align.START)
         self._load_lbl.set_markup('<span font_size="small" foreground="#90CAF9">LOAD PATH:</span>')
         self._load_grid = Gtk.Grid(column_spacing=6, row_spacing=0,
@@ -89,7 +91,7 @@ class Panel(ScreenPanel):
         outer.pack_start(load_box, False, False, 0)
 
         # Unload T0..T5 row
-        unload_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        unload_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self._unload_lbl = Gtk.Label(halign=Gtk.Align.START)
         self._unload_lbl.set_markup('<span font_size="small" foreground="#FFCC80">UNLOAD PATH:</span>')
         self._unload_grid = Gtk.Grid(column_spacing=6, row_spacing=0,
@@ -116,7 +118,9 @@ class Panel(ScreenPanel):
                 grid.remove(child)
             for i in range(num):
                 btn = _sbs.make("T%d" % i, "sa-btn-alt")
-                btn.set_size_request(-1, 48)
+                # Compact path-row buttons so both LOAD and UNLOAD rows fit
+                # below the action buttons on a 480px screen.
+                btn.set_size_request(-1, 38)
                 btn.connect("clicked", self._do_path_action, action, i)
                 grid.attach(btn, i, 0, 1, 1)
         self._load_grid.show_all()
