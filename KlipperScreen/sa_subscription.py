@@ -91,17 +91,22 @@ def _on_status(screen, *args):
 
     # cal_state transition → post-load action popup
     if cal is not None and cal != _last_cal_state:
+        import logging
+        logging.info(
+            "sa_subscription: cal_state %r -> %r" % (_last_cal_state, cal))
         if cal in ("load_purge", "unload_done"):
             try:
                 import sa_ui_prefs as _prefs
                 if _prefs.get("popup_on_complete", True):
+                    logging.info("sa_subscription: opening sa_post_load")
                     GLib.idle_add(
                         screen.show_panel, "sa_post_load", "SA Action")
             except Exception:
+                logging.info("sa_subscription: opening sa_post_load (no prefs)")
                 GLib.idle_add(
                     screen.show_panel, "sa_post_load", "SA Action")
         elif cal:
-            # Calibration phase started → calibration prompt panel
+            logging.info("sa_subscription: opening sa_cal_prompt")
             GLib.idle_add(
                 screen.show_panel, "sa_cal_prompt", "SA Calibration")
         _last_cal_state = cal
