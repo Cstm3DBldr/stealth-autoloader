@@ -366,14 +366,24 @@ class Panel(ScreenPanel):
         return btn
 
     def _select_path(self, widget, path):
-        if self._sel_btn is not None:
-            self._sel_btn.get_style_context().remove_class('path-selected')
+        # Defensive: clear the class from EVERY button in the grid before
+        # marking the new selection. Relying on self._sel_btn alone misses
+        # cases where a button got the class from _populate_path_page (after
+        # a status update or _on_filament_inserted set _sel_path) but
+        # self._sel_btn was reset to None by _reset() in between.
+        self._clear_path_selection()
         widget.get_style_context().add_class('path-selected')
         self._sel_btn  = widget
         self._sel_path = path
         self._wz['path'] = path
         self._update_path_status()
         self._show_page('path')
+
+    def _clear_path_selection(self):
+        """Remove the 'path-selected' class from every path button in the grid."""
+        for child in self._path_grid.get_children():
+            child.get_style_context().remove_class('path-selected')
+        self._sel_btn = None
 
     def _update_path_status(self):
         if self._sel_path is None:
