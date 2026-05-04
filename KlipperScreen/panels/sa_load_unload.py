@@ -130,7 +130,7 @@ class Panel(ScreenPanel):
         for btn in (self._back_btn, self._save_btn, self._conf_btn):
             # Match the action-button row height so the bottom strip stays
             # compact and the whole panel fits on a 480px screen.
-            btn.set_size_request(-1, 44)
+            btn.set_size_request(-1, 40)
             nav.pack_start(btn, True, True, 0)
 
         self.content.pack_end(nav, False, False, 0)
@@ -146,16 +146,21 @@ class Panel(ScreenPanel):
         hdr.set_halign(Gtk.Align.CENTER)
         outer.pack_start(hdr, False, False, 0)
 
-        # Path grid: NOT expanding, NOT row_homogeneous. Otherwise the grid
-        # absorbs every pixel of leftover vertical space and stretches each
-        # row, making the per-button set_size_request a floor instead of a
-        # cap and pushing the rest of the column off the bottom of the
-        # screen. Explicit height lock = 2 rows \u00d7 btn_h + row_spacing,
-        # computed once at activate-time from _path_btn_h() below.
+        # Path grid: row_homogeneous=False is the critical flag. With it
+        # True, the grid stretches each row to fill the grid's allocated
+        # height and the per-button set_size_request becomes a floor instead
+        # of a cap \u2014 the rows then push the action bar / status / nav off
+        # the bottom of the screen. With row_homogeneous=False, rows stay
+        # at their natural size (= button's set_size_request) and any
+        # leftover vertical space pools at the bottom of the grid widget,
+        # which is fine because op_box and status are packed AFTER the grid
+        # and remain visible. expand=True is kept so the grid absorbs the
+        # slack \u2014 without it the outer Box would shrink and clip its
+        # children on small displays.
         self._path_grid = Gtk.Grid(row_homogeneous=False, column_homogeneous=True,
                                    row_spacing=4, column_spacing=4)
         self._path_grid.set_valign(Gtk.Align.START)
-        outer.pack_start(self._path_grid, False, False, 0)
+        outer.pack_start(self._path_grid, True, True, 0)
 
         op_box = Gtk.Box(spacing=4)
         self._load_btn   = _sbs.make("\u25b6  LOAD",   "sa-btn")
@@ -169,7 +174,7 @@ class Panel(ScreenPanel):
         # Cap action-button height so the row doesn't blow up to default GTK
         # button height on KS themes that draw tall buttons.
         for btn in (self._load_btn, self._unload_btn, self._setmat_btn, self._clear_btn):
-            btn.set_size_request(-1, 44)
+            btn.set_size_request(-1, 40)
             op_box.pack_start(btn, True, True, 0)
         op_box.set_valign(Gtk.Align.START)
         outer.pack_start(op_box, False, False, 0)
@@ -177,7 +182,7 @@ class Panel(ScreenPanel):
         self._path_status = Gtk.Label(label="No tool selected")
         self._path_status.set_halign(Gtk.Align.CENTER)
         self._path_status.set_valign(Gtk.Align.START)
-        self._path_status.set_size_request(-1, 18)
+        self._path_status.set_size_request(-1, 16)
         outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
@@ -273,26 +278,23 @@ class Panel(ScreenPanel):
     # ── Path page ─────────────────────────────────────────────────────────
 
     def _path_btn_h(self):
-        # KlipperScreen budget on a 480px landscape screen:
-        #   content_height = screen.height - titlebar - action_bar
-        #                  ≈ 480 - 36 - 48  =  396 px usable for panels.
-        # Page reservations on the path page:
-        #   ~28  page header label
-        #   ~44  action-button row (LOAD/UNLOAD/MATERIAL/CLEAR)
-        #   ~18  path status label
-        #   ~44  bottom nav bar (Back/Save Only/Next)
-        #   ~16  margins + spacing
-        # Reserve 220px → leaves ~176 for the path grid → 88/row max.
-        # Cap at 56 so the layout fits comfortably at 396px content_height
-        # and stays compact even when KS themes inflate buttons.
+        # KS budget on a 480px landscape screen:
+        #   content_height ≈ 480 - 36 (titlebar) - 48 (action_bar) = 396
+        # Page reservations:
+        #   ~28  page header
+        #   ~40  action-button row
+        #   ~16  path status label
+        #   ~40  bottom nav bar
+        #   ~24  margins + spacing
+        # Reserve 240 → leaves ~156 for the grid → 78/row max → cap at 50.
         try:
             content_h = self._screen._gtk.content_height
         except Exception:
-            content_h = self._screen.height - 84  # titlebar + action_bar fallback
-        avail = content_h - 220
+            content_h = self._screen.height - 84
+        avail = content_h - 240
         num   = len(self._path_states) or 6
         rows  = (num + 2) // 3
-        return max(44, min(56, avail // rows))
+        return max(40, min(50, avail // rows))
 
     def _populate_path_page(self):
         for child in self._path_grid.get_children():
