@@ -257,10 +257,12 @@ class Panel(ScreenPanel):
     # ── Path page ─────────────────────────────────────────────────────────
 
     def _path_btn_h(self):
+        # Available height = screen − header (60) − action-bar (74) − padding (50).
+        # Cap at 72px so 6 paths in a 2x3 grid don't push past the visible area.
         avail = self._screen.height - 60 - 74 - 50
         num   = len(self._path_states) or 6
         rows  = (num + 2) // 3
-        return max(50, min(100, avail // rows))
+        return max(50, min(72, avail // rows))
 
     def _populate_path_page(self):
         for child in self._path_grid.get_children():
@@ -304,7 +306,9 @@ class Panel(ScreenPanel):
         btn.get_style_context().add_class("sa-btn")
 
         btn_h   = self._path_btn_h()
-        sw_size = max(44, btn_h - 12)
+        # Compact swatch — matches Mainsail panel's small-row look. Capped so
+        # tall buttons don't blow up the swatch and crowd the row's labels.
+        sw_size = max(28, min(36, btn_h - 32))
 
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row.set_valign(Gtk.Align.CENTER)
@@ -485,16 +489,18 @@ class Panel(ScreenPanel):
 
         btn = Gtk.Button()
         btn.get_style_context().add_class("sa-btn")
-        btn.set_size_request(72, 82)
+        # Compact color-picker chip (was 72×82) so the FlowBox can fit more
+        # colors without overflowing on small screens.
+        btn.set_size_request(60, 70)
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         if _cs is not None:
             # Cairo swatch — supports pie/gradient for multi-color
-            da = _cs.make_swatch_da(52, hex_list, color_type)
+            da = _cs.make_swatch_da(40, hex_list, color_type)
         else:
             da = Gtk.DrawingArea()
-            da.set_size_request(-1, 52)
+            da.set_size_request(-1, 40)
             r, g, b = _hex_to_rgb01(hex_c)
             da.connect("draw", lambda w, cr, _r=r, _g=g, _b=b: _draw_color_swatch(w, cr, _r, _g, _b))
 
