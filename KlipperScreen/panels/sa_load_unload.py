@@ -306,21 +306,28 @@ class Panel(ScreenPanel):
         btn.get_style_context().add_class("sa-btn")
 
         btn_h   = self._path_btn_h()
-        # Compact swatch — matches Mainsail panel's small-row look. Capped so
-        # tall buttons don't blow up the swatch and crowd the row's labels.
-        sw_size = max(28, min(36, btn_h - 32))
+        # Mid-size swatch — between the original (44–88) and the recent
+        # too-compact (28–36). Aimed at 36–48 px depending on button height.
+        sw_size = max(36, min(48, btn_h - 24))
 
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # 3-column equal-width grid: T# | swatch | material
+        # column_homogeneous makes each column exactly 1/3 of the button
+        # width, which puts the swatch's column centered horizontally. The
+        # swatch widget then halign=CENTER inside that column, so it lands at
+        # the geometric center of the button regardless of label widths.
+        row = Gtk.Grid()
+        row.set_column_homogeneous(True)
         row.set_valign(Gtk.Align.CENTER)
-        row.set_halign(Gtk.Align.CENTER)
+        row.set_halign(Gtk.Align.FILL)
+        row.set_hexpand(True)
 
-        # Tool number
+        # Tool number — centered in the left third
         t_lbl = Gtk.Label()
         t_lbl.set_markup('<b><span font_size="large">T%d</span></b>' % i)
-        t_lbl.set_size_request(30, -1)
         t_lbl.set_halign(Gtk.Align.CENTER)
+        t_lbl.set_hexpand(True)
 
-        # Color swatch DrawingArea
+        # Color swatch DrawingArea — centered in the middle third
         if _cs is not None:
             if hex_c:
                 hexes = [hex_c]
@@ -336,20 +343,24 @@ class Panel(ScreenPanel):
             else:
                 swatch_w = _cs.make_state_da(sw_size, 'unknown')
         else:
-            # Fallback: unicode character
             swatch_w = Gtk.Label()
             h = hex_c if (hex_c and hex_c.startswith('#')) else ('#' + hex_c if hex_c else '#888888')
             swatch_w.set_markup('<span font_size="xx-large" foreground="%s">%s</span>' % (h, COLOR_SWATCH))
+        swatch_w.set_halign(Gtk.Align.CENTER)
+        swatch_w.set_valign(Gtk.Align.CENTER)
+        swatch_w.set_hexpand(True)
 
-        # Material label
+        # Material label — centered in the right third
         mat_lbl = Gtk.Label()
         mat_lbl.set_markup('<span font_size="small">%s</span>' % (mat[:8] if mat else '---'))
-        mat_lbl.set_size_request(52, -1)
         mat_lbl.set_halign(Gtk.Align.CENTER)
+        mat_lbl.set_hexpand(True)
+        mat_lbl.set_ellipsize(3)
+        mat_lbl.set_max_width_chars(8)
 
-        row.pack_start(t_lbl,    False, False, 0)
-        row.pack_start(swatch_w, False, False, 0)
-        row.pack_start(mat_lbl,  False, False, 0)
+        row.attach(t_lbl,    0, 0, 1, 1)
+        row.attach(swatch_w, 1, 0, 1, 1)
+        row.attach(mat_lbl,  2, 0, 1, 1)
         btn.add(row)
         btn.connect("clicked", self._select_path, i)
         return btn
