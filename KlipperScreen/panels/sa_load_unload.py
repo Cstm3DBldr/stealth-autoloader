@@ -13,6 +13,7 @@ for _p in (_ks_root, _panels_dir):
         sys.path.insert(0, _p)
 
 import sa_button_style as _sbs
+import sa_subscription as _sasub
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_load_unload')
@@ -127,6 +128,9 @@ class Panel(ScreenPanel):
         self._conf_btn.connect("clicked", self._confirm)
 
         for btn in (self._back_btn, self._save_btn, self._conf_btn):
+            # Match the action-button row height so the bottom strip stays
+            # compact and the whole panel fits on a 480px screen.
+            btn.set_size_request(-1, 50)
             nav.pack_start(btn, True, True, 0)
 
         self.content.pack_end(nav, False, False, 0)
@@ -136,7 +140,7 @@ class Panel(ScreenPanel):
     # ── Page factories ────────────────────────────────────────────────────
 
     def _make_path_page(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=6)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=4)
 
         hdr = Gtk.Label(label="Select a tool path")
         hdr.set_halign(Gtk.Align.CENTER)
@@ -155,13 +159,16 @@ class Panel(ScreenPanel):
         self._unload_btn.connect("clicked",  self._do_unload)
         self._setmat_btn.connect("clicked",  self._do_set_material)
         self._clear_btn.connect("clicked",   self._do_clear_profile)
+        # Cap action-button height so the row doesn't blow up to default GTK
+        # button height on KS themes that draw tall buttons.
         for btn in (self._load_btn, self._unload_btn, self._setmat_btn, self._clear_btn):
+            btn.set_size_request(-1, 50)
             op_box.pack_start(btn, True, True, 0)
         outer.pack_start(op_box, False, False, 0)
 
         self._path_status = Gtk.Label(label="No tool selected")
         self._path_status.set_halign(Gtk.Align.CENTER)
-        self._path_status.set_size_request(-1, 28)
+        self._path_status.set_size_request(-1, 22)
         outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
@@ -257,12 +264,19 @@ class Panel(ScreenPanel):
     # ── Path page ─────────────────────────────────────────────────────────
 
     def _path_btn_h(self):
-        # Available height = screen − header (60) − action-bar (74) − padding (50).
-        # Cap at 72px so 6 paths in a 2x3 grid don't push past the visible area.
-        avail = self._screen.height - 60 - 74 - 50
+        # Vertical budget on the path page (480px screen example):
+        #   ~30  page header label
+        #   ~50  action-button row (LOAD/UNLOAD/MATERIAL/CLEAR — height-capped)
+        #   ~22  path status label (height-capped)
+        #   ~50  bottom nav bar (Back/Save Only/Next — height-capped)
+        #   ~24  margins + spacing between rows
+        # Reserve 176px → leaves ~304 for the path grid → 152/row max.
+        # Cap at 64px so the rest of the column has breathing room and no
+        # element gets clipped on smaller screens.
+        avail = self._screen.height - 176
         num   = len(self._path_states) or 6
         rows  = (num + 2) // 3
-        return max(50, min(72, avail // rows))
+        return max(48, min(64, avail // rows))
 
     def _populate_path_page(self):
         for child in self._path_grid.get_children():
@@ -740,8 +754,10 @@ class Panel(ScreenPanel):
         return {}
 
     def activate(self):
+        # Combined subscription so base_panel's toolhead-temp display
+        # keeps updating during autoloader-triggered tool changes.
         self._screen._ws.klippy.object_subscription(
-            {"objects": {"autoloader": None}})
+            {"objects": _sasub.build_subscription(self._screen)})
         sa = self._query_sa()
         self._apply_sa(sa)
         self._reset()

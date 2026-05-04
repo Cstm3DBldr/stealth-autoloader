@@ -130,3 +130,4 @@ def _parse(hex_c):
     if len(h) == 3:
         h = ''.join(c*2 for c in h)
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+

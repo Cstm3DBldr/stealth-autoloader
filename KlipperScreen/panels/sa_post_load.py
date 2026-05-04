@@ -11,6 +11,7 @@ for _p in (_ks_root, _panels_dir):
         sys.path.insert(0, _p)
 
 import sa_button_style as _sbs
+import sa_subscription as _sasub
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_post_load')
@@ -162,7 +163,20 @@ class Panel(ScreenPanel):
         self._gcode("SA_RESPOND VALUE=%s" % value)
 
     def _close(self):
-        self._screen.show_panel('sa_main', 'SA Status')
+        # Walk back through the autoloader popup chain instead of pushing
+        # sa_main onto the stack. show_panel() would leave sa_post_load and
+        # sa_load_unload in the back stack, so the user's next "back" tap
+        # would re-open the popup. Pop everything autoloader-popup-related
+        # so back lands wherever the user was BEFORE the popup chain.
+        s = self._screen
+        try:
+            s._menu_go_back()  # pop self (sa_post_load)
+            popup_panels = ('sa_load_unload', 'sa_post_load', 'sa_cal_prompt')
+            while s._cur_panels and s._cur_panels[-1] in popup_panels:
+                s._menu_go_back()
+        except Exception as e:
+            logger.warning("sa_post_load: _close fallback to sa_main: %s", e)
+            s.show_panel('sa_main', 'SA Status')
 
     def _do_more(self, widget=None):
         self._respond("more")
@@ -199,7 +213,7 @@ class Panel(ScreenPanel):
     def activate(self):
         self._active = True
         self._screen._ws.klippy.object_subscription(
-            {"objects": {"autoloader": None}})
+            {"objects": _sasub.build_subscription(self._screen)})
         sa = self._query_sa()
         self._apply_state(
             sa.get("cal_state", ""),

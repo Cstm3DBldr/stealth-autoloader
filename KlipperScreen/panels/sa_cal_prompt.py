@@ -11,6 +11,7 @@ for _p in (_ks_root, _panels_dir):
         sys.path.insert(0, _p)
 
 import sa_button_style as _sbs
+import sa_subscription as _sasub
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_cal_prompt')
@@ -244,7 +245,7 @@ class Panel(ScreenPanel):
     def activate(self):
         self._active = True
         self._screen._ws.klippy.object_subscription(
-            {"objects": {"autoloader": None}})
+            {"objects": _sasub.build_subscription(self._screen)})
         sa = self._query_sa()
         self._apply_state(
             sa.get("cal_state",  ""),

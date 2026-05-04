@@ -5,6 +5,7 @@ import logging
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sa_button_style as _sbs
+import sa_subscription as _sasub
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_main')
@@ -188,10 +189,11 @@ class Panel(ScreenPanel):
             self._apply_encoders()
 
     def activate(self):
-        objs = {"autoloader": None}
         num = self._num_paths or 6
-        for i in range(num):
-            objs["sa_encoder %d" % i] = None
+        # Combined subscription so base_panel's toolhead-temp display
+        # keeps updating during autoloader-triggered tool changes.
+        objs = _sasub.build_subscription(
+            self._screen, num_paths=num, include_encoders=True)
         self._screen._ws.klippy.object_subscription({"objects": objs})
 
         sa = self._query_sa()
@@ -272,9 +274,8 @@ class Panel(ScreenPanel):
         num = sa.get("num_paths", 0)
         if num != self._num_paths:
             self._build_rows(num)
-            objs = {"autoloader": None}
-            for i in range(num):
-                objs["sa_encoder %d" % i] = None
+            objs = _sasub.build_subscription(
+                self._screen, num_paths=num, include_encoders=True)
             self._screen._ws.klippy.object_subscription({"objects": objs})
 
         states    = sa.get("path_states",      [])
