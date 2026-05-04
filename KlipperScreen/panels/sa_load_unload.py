@@ -130,7 +130,7 @@ class Panel(ScreenPanel):
         for btn in (self._back_btn, self._save_btn, self._conf_btn):
             # Match the action-button row height so the bottom strip stays
             # compact and the whole panel fits on a 480px screen.
-            btn.set_size_request(-1, 50)
+            btn.set_size_request(-1, 44)
             nav.pack_start(btn, True, True, 0)
 
         self.content.pack_end(nav, False, False, 0)
@@ -146,9 +146,16 @@ class Panel(ScreenPanel):
         hdr.set_halign(Gtk.Align.CENTER)
         outer.pack_start(hdr, False, False, 0)
 
-        self._path_grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
+        # Path grid: NOT expanding, NOT row_homogeneous. Otherwise the grid
+        # absorbs every pixel of leftover vertical space and stretches each
+        # row, making the per-button set_size_request a floor instead of a
+        # cap and pushing the rest of the column off the bottom of the
+        # screen. Explicit height lock = 2 rows \u00d7 btn_h + row_spacing,
+        # computed once at activate-time from _path_btn_h() below.
+        self._path_grid = Gtk.Grid(row_homogeneous=False, column_homogeneous=True,
                                    row_spacing=4, column_spacing=4)
-        outer.pack_start(self._path_grid, True, True, 0)
+        self._path_grid.set_valign(Gtk.Align.START)
+        outer.pack_start(self._path_grid, False, False, 0)
 
         op_box = Gtk.Box(spacing=4)
         self._load_btn   = _sbs.make("\u25b6  LOAD",   "sa-btn")
@@ -162,13 +169,15 @@ class Panel(ScreenPanel):
         # Cap action-button height so the row doesn't blow up to default GTK
         # button height on KS themes that draw tall buttons.
         for btn in (self._load_btn, self._unload_btn, self._setmat_btn, self._clear_btn):
-            btn.set_size_request(-1, 50)
+            btn.set_size_request(-1, 44)
             op_box.pack_start(btn, True, True, 0)
+        op_box.set_valign(Gtk.Align.START)
         outer.pack_start(op_box, False, False, 0)
 
         self._path_status = Gtk.Label(label="No tool selected")
         self._path_status.set_halign(Gtk.Align.CENTER)
-        self._path_status.set_size_request(-1, 22)
+        self._path_status.set_valign(Gtk.Align.START)
+        self._path_status.set_size_request(-1, 18)
         outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
@@ -264,19 +273,26 @@ class Panel(ScreenPanel):
     # ── Path page ─────────────────────────────────────────────────────────
 
     def _path_btn_h(self):
-        # Vertical budget on the path page (480px screen example):
-        #   ~30  page header label
-        #   ~50  action-button row (LOAD/UNLOAD/MATERIAL/CLEAR — height-capped)
-        #   ~22  path status label (height-capped)
-        #   ~50  bottom nav bar (Back/Save Only/Next — height-capped)
-        #   ~24  margins + spacing between rows
-        # Reserve 176px → leaves ~304 for the path grid → 152/row max.
-        # Cap at 64px so the rest of the column has breathing room and no
-        # element gets clipped on smaller screens.
-        avail = self._screen.height - 176
+        # KlipperScreen budget on a 480px landscape screen:
+        #   content_height = screen.height - titlebar - action_bar
+        #                  ≈ 480 - 36 - 48  =  396 px usable for panels.
+        # Page reservations on the path page:
+        #   ~28  page header label
+        #   ~44  action-button row (LOAD/UNLOAD/MATERIAL/CLEAR)
+        #   ~18  path status label
+        #   ~44  bottom nav bar (Back/Save Only/Next)
+        #   ~16  margins + spacing
+        # Reserve 220px → leaves ~176 for the path grid → 88/row max.
+        # Cap at 56 so the layout fits comfortably at 396px content_height
+        # and stays compact even when KS themes inflate buttons.
+        try:
+            content_h = self._screen._gtk.content_height
+        except Exception:
+            content_h = self._screen.height - 84  # titlebar + action_bar fallback
+        avail = content_h - 220
         num   = len(self._path_states) or 6
         rows  = (num + 2) // 3
-        return max(48, min(64, avail // rows))
+        return max(44, min(56, avail // rows))
 
     def _populate_path_page(self):
         for child in self._path_grid.get_children():
