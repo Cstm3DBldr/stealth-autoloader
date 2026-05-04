@@ -58,6 +58,36 @@ before deploying or pushing — just do it and report the result.
 
 ---
 
+## UI Preferences (locked — restore if disturbed)
+
+### KlipperScreen Load/Unload path buttons (`KlipperScreen/panels/sa_load_unload.py`)
+
+User-confirmed canonical look (commit `76b4f35`). If a future edit changes
+any of this, restore it to match unless the user explicitly asks for a
+different layout.
+
+- **Layout:** each path button is a `Gtk.Grid` with `column_homogeneous=True`
+  and 3 columns: `T#` (left), color swatch (middle), material (right). Each
+  column is exactly 1/3 of the button width.
+- **Swatch placement:** swatch widget has `halign=CENTER` inside its column,
+  so it lands at the absolute geometric center of the button regardless of
+  the T# or material label widths. Do NOT use a `Gtk.Box` + `pack_start`
+  chain here — that lets label widths shift the swatch off-center.
+- **Swatch size:** `sw_size = max(36, min(48, btn_h - 24))` — gives 36–48 px
+  depending on button height. Don't shrink below 36 (too small to read at
+  arm's length) and don't grow above 48 (overwhelms the row).
+- **Button height:** `_path_btn_h()` returns `max(50, min(72, avail // rows))`
+  with `avail = self._screen.height - 60 - 74 - 50`. The 72 cap is what
+  prevents the 2×3 grid from pushing the action bar offscreen on a 480px
+  display — don't raise it without testing on a real KS device.
+- **Label alignment:** both labels `halign=CENTER` inside their columns.
+  Material has `set_ellipsize(3)` and `set_max_width_chars(8)` so a long
+  material name can't push past the column boundary.
+- **Color-picker chips** (in the wizard color step): `60×70` button with
+  `40 px` swatch (was `72×82` / `52 px` — too crowded on small screens).
+
+---
+
 ## Project File Structure
 
 | File | Purpose |
