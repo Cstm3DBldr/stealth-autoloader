@@ -18,6 +18,104 @@
 #   itself. The result is one combined subscribe call that doesn't
 #   starve any consumer.
 
+# ── Global popup watcher ─────────────────────────────────────────────────────
+# KlipperScreen's screen.process_update only forwards status updates to the
+# CURRENTLY ACTIVE panel. So a watcher that lives in sa_main.process_update
+# (or any other autoloader panel) only fires when that panel is on screen.
+# That meant: if the user kicked off a load/unload from Mainsail while KS was
+# on the home screen (or any non-autoloader panel), KS never saw cal_state
+# transition to 'load_purge' / 'unload_done' and never opened sa_post_load —
+# the post-load action popup only appeared in Mainsail.
+#
+# Fix: monkey-patch screen.process_update once, the first time any autoloader
+# panel calls install_global_popup_watcher(). The wrapped version delegates
+# to the original (so all existing per-panel handlers keep working), then
+# also checks autoloader.cal_state and opens sa_post_load on the load_purge /
+# unload_done transitions regardless of which panel is currently active.
+
+_watcher_installed = False
+_last_cal_state    = None
+_last_entry        = []
+_initialized       = False  # baseline from first observation (no trigger)
+
+def install_global_popup_watcher(screen):
+    """Monkey-patch screen.process_update so the post-load action popup and
+    the on-insert load wizard fire from any KlipperScreen panel, matching
+    Mainsail's always-on behavior. Idempotent — only patches once per run.
+    """
+    global _watcher_installed
+    if _watcher_installed:
+        return
+    _watcher_installed = True
+    original = screen.process_update
+
+    def wrapped(*args, **kwargs):
+        result = original(*args, **kwargs)
+        try:
+            _on_status(screen, *args)
+        except Exception:
+            import logging
+            logging.exception("sa_subscription: popup watcher failed")
+        return result
+
+    screen.process_update = wrapped
+
+
+def _on_status(screen, *args):
+    """Inspect a status update for autoloader transitions and open the
+    appropriate popup panel via screen.show_panel."""
+    global _last_cal_state, _last_entry, _initialized
+    if not args or args[0] != "notify_status_update":
+        return
+    if len(args) < 2 or not isinstance(args[1], dict):
+        return
+    sa = args[1].get("autoloader")
+    if not isinstance(sa, dict):
+        return
+
+    cal   = sa.get("cal_state")
+    entry = sa.get("entry_filament")
+
+    # First observation establishes the baseline without firing any popup.
+    # Otherwise a printer that already has filament inserted at boot would
+    # auto-open the load wizard, and a stale cal_state would auto-open the
+    # post-load panel.
+    if not _initialized:
+        _last_cal_state = cal if cal is not None else _last_cal_state
+        if isinstance(entry, list):
+            _last_entry = list(entry)
+        _initialized = True
+        return
+
+    from gi.repository import GLib
+
+    # cal_state transition → post-load action popup
+    if cal is not None and cal != _last_cal_state:
+        if cal in ("load_purge", "unload_done"):
+            try:
+                import sa_ui_prefs as _prefs
+                if _prefs.get("popup_on_complete", True):
+                    GLib.idle_add(
+                        screen.show_panel, "sa_post_load", "SA Action")
+            except Exception:
+                GLib.idle_add(
+                    screen.show_panel, "sa_post_load", "SA Action")
+        elif cal:
+            # Calibration phase started → calibration prompt panel
+            GLib.idle_add(
+                screen.show_panel, "sa_cal_prompt", "SA Calibration")
+        _last_cal_state = cal
+
+    # entry-sensor rising edge → load/unload wizard popup (filament inserted)
+    if isinstance(entry, list):
+        for i, active in enumerate(entry):
+            was = _last_entry[i] if i < len(_last_entry) else False
+            if not was and active:
+                GLib.idle_add(
+                    screen.show_panel, "sa_load_unload", "Load / Unload")
+        _last_entry = list(entry)
+
+
 def build_subscription(screen, num_paths=0, include_encoders=False):
     """Combined subscription dict for an autoloader panel.
 

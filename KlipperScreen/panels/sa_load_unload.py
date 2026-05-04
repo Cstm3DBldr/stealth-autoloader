@@ -128,9 +128,6 @@ class Panel(ScreenPanel):
         self._conf_btn.connect("clicked", self._confirm)
 
         for btn in (self._back_btn, self._save_btn, self._conf_btn):
-            # Match the action-button row height so the bottom strip stays
-            # compact and the whole panel fits on a 480px screen.
-            btn.set_size_request(-1, 40)
             nav.pack_start(btn, True, True, 0)
 
         self.content.pack_end(nav, False, False, 0)
@@ -140,26 +137,14 @@ class Panel(ScreenPanel):
     # ── Page factories ────────────────────────────────────────────────────
 
     def _make_path_page(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=4)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=6)
 
         hdr = Gtk.Label(label="Select a tool path")
         hdr.set_halign(Gtk.Align.CENTER)
         outer.pack_start(hdr, False, False, 0)
 
-        # Path grid: row_homogeneous=False is the critical flag. With it
-        # True, the grid stretches each row to fill the grid's allocated
-        # height and the per-button set_size_request becomes a floor instead
-        # of a cap \u2014 the rows then push the action bar / status / nav off
-        # the bottom of the screen. With row_homogeneous=False, rows stay
-        # at their natural size (= button's set_size_request) and any
-        # leftover vertical space pools at the bottom of the grid widget,
-        # which is fine because op_box and status are packed AFTER the grid
-        # and remain visible. expand=True is kept so the grid absorbs the
-        # slack \u2014 without it the outer Box would shrink and clip its
-        # children on small displays.
-        self._path_grid = Gtk.Grid(row_homogeneous=False, column_homogeneous=True,
+        self._path_grid = Gtk.Grid(row_homogeneous=True, column_homogeneous=True,
                                    row_spacing=4, column_spacing=4)
-        self._path_grid.set_valign(Gtk.Align.START)
         outer.pack_start(self._path_grid, True, True, 0)
 
         op_box = Gtk.Box(spacing=4)
@@ -171,18 +156,13 @@ class Panel(ScreenPanel):
         self._unload_btn.connect("clicked",  self._do_unload)
         self._setmat_btn.connect("clicked",  self._do_set_material)
         self._clear_btn.connect("clicked",   self._do_clear_profile)
-        # Cap action-button height so the row doesn't blow up to default GTK
-        # button height on KS themes that draw tall buttons.
         for btn in (self._load_btn, self._unload_btn, self._setmat_btn, self._clear_btn):
-            btn.set_size_request(-1, 40)
             op_box.pack_start(btn, True, True, 0)
-        op_box.set_valign(Gtk.Align.START)
         outer.pack_start(op_box, False, False, 0)
 
         self._path_status = Gtk.Label(label="No tool selected")
         self._path_status.set_halign(Gtk.Align.CENTER)
-        self._path_status.set_valign(Gtk.Align.START)
-        self._path_status.set_size_request(-1, 16)
+        self._path_status.set_size_request(-1, 28)
         outer.pack_start(self._path_status, False, False, 0)
 
         return {'outer': outer}
@@ -278,23 +258,12 @@ class Panel(ScreenPanel):
     # ── Path page ─────────────────────────────────────────────────────────
 
     def _path_btn_h(self):
-        # KS budget on a 480px landscape screen:
-        #   content_height ≈ 480 - 36 (titlebar) - 48 (action_bar) = 396
-        # Page reservations:
-        #   ~28  page header
-        #   ~40  action-button row
-        #   ~16  path status label
-        #   ~40  bottom nav bar
-        #   ~24  margins + spacing
-        # Reserve 240 → leaves ~156 for the grid → 78/row max → cap at 50.
-        try:
-            content_h = self._screen._gtk.content_height
-        except Exception:
-            content_h = self._screen.height - 84
-        avail = content_h - 240
+        # Available height = screen − header (60) − action-bar (74) − padding (50).
+        # Cap at 72px so 6 paths in a 2x3 grid don't push past the visible area.
+        avail = self._screen.height - 60 - 74 - 50
         num   = len(self._path_states) or 6
         rows  = (num + 2) // 3
-        return max(40, min(50, avail // rows))
+        return max(50, min(72, avail // rows))
 
     def _populate_path_page(self):
         for child in self._path_grid.get_children():
@@ -776,6 +745,8 @@ class Panel(ScreenPanel):
         # keeps updating during autoloader-triggered tool changes.
         self._screen._ws.klippy.object_subscription(
             {"objects": _sasub.build_subscription(self._screen)})
+        # Make sure the global autoloader popup watcher is wired up.
+        _sasub.install_global_popup_watcher(self._screen)
         sa = self._query_sa()
         self._apply_sa(sa)
         self._reset()

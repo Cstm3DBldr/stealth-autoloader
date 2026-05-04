@@ -195,6 +195,7 @@ class Panel(ScreenPanel):
         objs = _sasub.build_subscription(
             self._screen, num_paths=num, include_encoders=True)
         self._screen._ws.klippy.object_subscription({"objects": objs})
+        _sasub.install_global_popup_watcher(self._screen)
 
         sa = self._query_sa()
         if sa:

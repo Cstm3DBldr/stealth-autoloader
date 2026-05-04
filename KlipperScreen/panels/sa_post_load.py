@@ -218,6 +218,7 @@ class Panel(ScreenPanel):
         self._active = True
         self._screen._ws.klippy.object_subscription(
             {"objects": _sasub.build_subscription(self._screen)})
+        _sasub.install_global_popup_watcher(self._screen)
         sa = self._query_sa()
         self._apply_state(
             sa.get("cal_state", ""),
