@@ -95,6 +95,21 @@ class Panel(ScreenPanel):
 
         self.content.pack_start(self._stack, True, True, 0)
 
+        # Pin self.content to KS's precomputed content_height. base_panel's
+        # action_bar has set_vexpand(True) AND set_size_request(_, full
+        # screen height) — without an equally explicit floor on self.content,
+        # GTK's first-pass grid allocation hands more vertical budget to
+        # action_bar than the content row, stretching the rail icons. By
+        # the second open, cached realized sizes shift the balance and the
+        # rail looks correct. This pin forces the content row to claim its
+        # full share on every allocation pass — first or subsequent.
+        try:
+            ch = int(getattr(self._gtk, 'content_height', 0))
+        except Exception:
+            ch = 0
+        if ch > 0:
+            self.content.set_size_request(-1, ch)
+
     def _set_page(self, name):
         """Notebook equivalent of Stack.set_visible_child_name."""
         idx = self._page_index.get(name)
