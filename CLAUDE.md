@@ -86,6 +86,50 @@ different layout.
 - **Color-picker chips** (in the wizard color step): `60×70` button with
   `40 px` swatch (was `72×82` / `52 px` — too crowded on small screens).
 
+### KlipperScreen Autoloader home menu (`KlipperScreen/panels/sa_home.py`)
+
+User-confirmed canonical look (commit `b991e31`, "Concept B"). If a future
+edit changes any of this, restore it to match unless the user explicitly
+asks for a different layout.
+
+- **Two-section layout:** top "hero row" (`vexpand=True` — absorbs leftover
+  height, ends up ~65% of the panel on a 480 px display); bottom "utility
+  row" with a fixed `set_size_request(-1, 110)` height. Outer Box is
+  `spacing=8, margin=8`, `homogeneous=False`.
+- **Hero tiles (top):** STATUS (`color1`, `spoolman` icon) on the left,
+  LOAD/UNLOAD (`color3`, `load` icon) on the right. Each is a custom
+  `Gtk.Button` containing a vertical Box (icon → label → preview line),
+  built via `_build_hero_btn()`. Do NOT replace these with the standard
+  `self._gtk.Button(icon, label, color)` — that one only supports
+  icon + label and won't fit the preview.
+- **Hero icon size:** `int(self._gtk.img_scale * self._gtk.button_image_scale * 2.0)`
+  — 2× the standard KS button image scale. Don't reduce below 1.5× or the
+  hero treatment is lost.
+- **Hero label:** `<span font_size="large" weight="bold">…</span>`.
+- **Hero preview line:** `<span font_size="small" foreground="#BDBDBD">…</span>`,
+  `set_max_width_chars(32)`, `set_ellipsize(3)`. Content driven by
+  `_build_status_text()` and `_build_load_text()`:
+    - STATUS: `"N/M loaded · T0 mat · T1 mat"` (up to 2 loaded materials),
+      `"N / M paths loaded"` if no materials set, or `"Autoloader idle"` if
+      `total == 0`.
+    - LOAD/UNLOAD: `"Selector at TN"` (with `" · drive engaged"` when
+      `servo_engaged`), or `"Selector unhomed"` when `current_path < 0`.
+  Always escape dynamic text via `xml.sax.saxutils.escape` before passing
+  to `set_markup` — material names can contain `&`/`<`.
+- **Utility row (bottom):** four standard KS buttons in
+  `MACROS / CALIBRATION / SETTINGS / CONFIG` order, each
+  `self._gtk.Button(icon, label, color)`, all `pack_start(True, True, 0)`
+  for equal-width slots. Row spacing = 8 px. Don't change the order — it's
+  alphabetical-ish AND matches the user's "frequency of use, low to high"
+  reading.
+- **No decorative colored bars** under the labels. Visual hierarchy comes
+  from tile size + the standard KS color classes only.
+- **Subscription:** `activate()` calls `_sasub.build_subscription(...)` and
+  `_sasub.install_global_popup_watcher(...)` — same pattern as every other
+  autoloader panel. `process_update` updates previews via `GLib.idle_add`.
+  `activate()` also does a one-shot `apiclient.send_request("printer/objects/query?autoloader")`
+  so the previews show real data instantly instead of `"…"`.
+
 ---
 
 ## Project File Structure
