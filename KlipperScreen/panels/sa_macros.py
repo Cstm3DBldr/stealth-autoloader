@@ -203,19 +203,26 @@ class Panel(ScreenPanel):
         # action_bar's set_size_request is honored on every render.
         # sa_config and sa_load_unload already use this pattern.
         scroll = Gtk.ScrolledWindow()
-        # NEVER, AUTOMATIC matches sa_config — vertical policy NEVER turns out
-        # to make ScrolledWindow propagate the child's full natural height
-        # (defeating the whole point of the wrap), while AUTOMATIC reports a
-        # small minimum height to the parent and only shows a scrollbar if
-        # the content actually overflows. With the page tightened to fit on
-        # 480 px the scrollbar never appears in practice.
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
-        # Explicitly opt out of propagating the child's natural height so
-        # main_grid sees a small value during first allocation, no matter
-        # how many fixed-size buttons are inside the page.
         scroll.set_propagate_natural_height(False)
         scroll.set_propagate_natural_width(False)
+        # Pin a min_content_height equal to KS's precomputed content_height
+        # (screen.height − titlebar_height). In landscape mode base_panel
+        # makes the action_bar set_size_request the full screen height AND
+        # set_vexpand(True), so without a floor on the content's height,
+        # GTK's first-pass grid allocation can hand action_bar more space
+        # than the content row — squeezing buttons until AUTOMATIC scroll
+        # kicks in. With min_content_height pinned, the content row claims
+        # its full slice up front, action_bar gets exactly its requested
+        # size_request, and the layout is identical on first vs subsequent
+        # opens. Falls back to a sane default if KS hasn't populated
+        # _gtk.content_height yet.
+        try:
+            min_h = int(getattr(self._gtk, 'content_height', 0)) or 380
+        except Exception:
+            min_h = 380
+        scroll.set_min_content_height(min_h)
         scroll.add(outer)
         return scroll
 
@@ -249,19 +256,26 @@ class Panel(ScreenPanel):
         # both pages of the Notebook so first-render and re-render
         # match.
         scroll = Gtk.ScrolledWindow()
-        # NEVER, AUTOMATIC matches sa_config — vertical policy NEVER turns out
-        # to make ScrolledWindow propagate the child's full natural height
-        # (defeating the whole point of the wrap), while AUTOMATIC reports a
-        # small minimum height to the parent and only shows a scrollbar if
-        # the content actually overflows. With the page tightened to fit on
-        # 480 px the scrollbar never appears in practice.
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
-        # Explicitly opt out of propagating the child's natural height so
-        # main_grid sees a small value during first allocation, no matter
-        # how many fixed-size buttons are inside the page.
         scroll.set_propagate_natural_height(False)
         scroll.set_propagate_natural_width(False)
+        # Pin a min_content_height equal to KS's precomputed content_height
+        # (screen.height − titlebar_height). In landscape mode base_panel
+        # makes the action_bar set_size_request the full screen height AND
+        # set_vexpand(True), so without a floor on the content's height,
+        # GTK's first-pass grid allocation can hand action_bar more space
+        # than the content row — squeezing buttons until AUTOMATIC scroll
+        # kicks in. With min_content_height pinned, the content row claims
+        # its full slice up front, action_bar gets exactly its requested
+        # size_request, and the layout is identical on first vs subsequent
+        # opens. Falls back to a sane default if KS hasn't populated
+        # _gtk.content_height yet.
+        try:
+            min_h = int(getattr(self._gtk, 'content_height', 0)) or 380
+        except Exception:
+            min_h = 380
+        scroll.set_min_content_height(min_h)
         scroll.add(outer)
         return scroll
 
