@@ -74,30 +74,32 @@ class Panel(ScreenPanel):
         self._num_paths   = 6
         self._pending_cmd = None   # gcode template waiting for tool selection
 
-        self._stack = Gtk.Stack()
-        self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        self._stack.set_transition_duration(150)
-        # Stack defaults to v/hhomogeneous=True, which sizes the Stack to the
-        # LARGEST of its child pages. base_panel's left action bar spans the
-        # content row in a Grid, so a Stack that reports the tool page's
-        # (taller) natural size stretches the rail and pushes the bottom
-        # power icon past the screen edge. Disable homogeneity so the Stack
-        # only reports the currently-visible page's size.
-        self._stack.set_vhomogeneous(False)
-        self._stack.set_hhomogeneous(False)
-
-        self._stack.add_named(self._build_main_page(), "main")
-        self._stack.add_named(self._build_tool_page(), "tool")
-        # Pin the visible child during __init__ so the first allocation
-        # pass (which happens before activate() runs) has a non-None
-        # visible child to size to. Without this, vhomogeneous=False
-        # has nothing to fall back on and GTK uses the largest-child
-        # default for that first pass — causing the panel to render
-        # too tall on a fresh KlipperScreen restart but correctly on
-        # any subsequent re-open of the panel.
-        self._stack.set_visible_child_name("main")
+        # Use Gtk.Notebook (with tabs hidden) instead of Gtk.Stack for
+        # page switching. Stack's vhomogeneous flag — even when set to
+        # False before adding children — doesn't reliably take effect on
+        # the first allocation pass after KlipperScreen restart, so the
+        # rail stretches and the power icon clips off-screen on first
+        # open. Notebook sizes each page independently with no shared
+        # homogeneous semantics, matching sa_load_unload's known-good
+        # behaviour. The page index map keeps the call sites readable
+        # (set_page("main") / set_page("tool")) instead of bare indices.
+        self._stack       = Gtk.Notebook()
+        self._stack.set_show_tabs(False)
+        self._stack.set_show_border(False)
+        self._page_index  = {}
+        self._page_index["main"] = self._stack.append_page(
+            self._build_main_page(), None)
+        self._page_index["tool"] = self._stack.append_page(
+            self._build_tool_page(), None)
+        self._stack.set_current_page(self._page_index["main"])
 
         self.content.pack_start(self._stack, True, True, 0)
+
+    def _set_page(self, name):
+        """Notebook equivalent of Stack.set_visible_child_name."""
+        idx = self._page_index.get(name)
+        if idx is not None:
+            self._stack.set_current_page(idx)
 
     # ── Section header ────────────────────────────────────────────────────
 
@@ -208,7 +210,7 @@ class Panel(ScreenPanel):
         back_btn.set_margin_top(6)
         back_btn.set_margin_bottom(8)
         back_btn.connect("clicked",
-                         lambda w: self._stack.set_visible_child_name("main"))
+                         lambda w: self._set_page("main"))
         outer.pack_start(back_btn, False, False, 0)
 
         return outer
@@ -230,14 +232,14 @@ class Panel(ScreenPanel):
     def _pick_tool(self, widget, gcode_template):
         self._pending_cmd = gcode_template
         self._rebuild_tool_buttons(self._num_paths)
-        self._stack.set_visible_child_name("tool")
+        self._set_page("tool")
 
     def _tool_selected(self, widget, tool_idx):
         if self._pending_cmd:
             cmd = self._pending_cmd.replace("{t}", str(tool_idx))
             self._screen._ws.klippy.gcode_script(cmd)
             self._pending_cmd = None
-        self._stack.set_visible_child_name("main")
+        self._set_page("main")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -251,20 +253,7 @@ class Panel(ScreenPanel):
 
         sa = self._printer.data.get("autoloader", {})
         self._num_paths = sa.get("num_paths", 6)
-        self._stack.set_visible_child_name("main")
-
-        # Belt-and-suspenders: force a fresh size negotiation from idle so
-        # any cached first-pass allocation (made before vhomogeneous took
-        # effect) is replaced with a correct second-pass measurement.
-        # Together with the visible-child pin in __init__, this makes
-        # post-restart first opens render identically to subsequent opens.
-        def _kick_resize():
-            self._stack.queue_resize()
-            parent = self.content.get_parent()
-            if parent is not None:
-                parent.queue_resize()
-            return False
-        GLib.idle_add(_kick_resize)
+        self._set_page("main")
 
     def process_update(self, action, data):
         if action != "notify_status_update":
