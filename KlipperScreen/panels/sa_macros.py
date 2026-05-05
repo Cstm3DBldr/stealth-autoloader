@@ -43,14 +43,20 @@ _CAL = [
     ("BOWDEN",      "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
 ]
 
-# QUICK RE-CAL row — the three most-common cal tasks as bigger, more
-# prominent buttons for one-tap re-runs. Same gcodes as the matching
-# entries in _CAL, but presented separately so a user who wants to
-# touch up a single cal doesn't have to scan the full 5-button strip.
+# QUICK RE-CAL row — the three most-common cal tasks as one-tap
+# shortcuts. Same gcodes as the matching entries in _CAL, but presented
+# separately so a user who wants to touch up a single cal doesn't have
+# to scan the full 5-button strip.
+#
+# Labels are intentionally single-line and short. An embedded "\n"
+# forces the GTK label widget to render at 2-line natural height
+# regardless of btn_h, which inflates the row by ~14 px and pushes
+# the panel past what base_panel's left navigation rail can fit
+# without the bottom (power) icon clipping off the screen.
 _QUICK_CAL = [
-    ("Re-cal\nSelector",      "SA_CALIBRATE_SELECTOR",      False),
-    ("Re-cal\nDrive",         "SA_CALIBRATE_DRIVE",         False),
-    ("Re-cal\nEnc Speed",     "SA_CALIBRATE_ENCODER_SPEED", False),
+    ("Re-cal Sel",     "SA_CALIBRATE_SELECTOR",      False),
+    ("Re-cal Drive",   "SA_CALIBRATE_DRIVE",         False),
+    ("Re-cal Enc",     "SA_CALIBRATE_ENCODER_SPEED", False),
 ]
 
 
@@ -159,10 +165,11 @@ class Panel(ScreenPanel):
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
         outer.pack_start(self._section_row(_CAL,       btn_h=32),    False, False, 0)
 
-        # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
-        # to telegraph "quick shortcut" while still fitting on screen.
+        # QUICK RE-CAL — three buttons sized to match DIAGNOSTICS so all
+        # rows render at their requested heights (single-line labels, no
+        # embedded newlines forcing extra vertical space).
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=38),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=36),    False, False, 0)
 
         return outer
 
