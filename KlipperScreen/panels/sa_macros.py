@@ -322,12 +322,28 @@ class Panel(ScreenPanel):
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
 
-        # Diagnostic logging at multiple points so we capture allocations
-        # before, during, and after first-allocation settling.
+        # Cap base_panel's main_grid to the actual screen height. Diagnostic
+        # logging revealed that on first attach main_grid is allocated 800x496
+        # on a 480 px screen — the bottom 16 px of action_bar (where the power
+        # icon lives) falls off the visible area. Root cause: action_bar's 6
+        # icon buttons report a slightly larger natural height before their
+        # icon images have been realized; on reopen the icons are cached and
+        # the natural sum settles at the correct 480. Pinning a hard
+        # set_size_request on main_grid forces both first and subsequent
+        # allocations to the actual screen size regardless of what the
+        # children's pre-realization natural sizes total to.
+        try:
+            sw = int(getattr(self._screen, 'width',  0)) or 0
+            sh = int(getattr(self._screen, 'height', 0)) or 0
+            if sw > 0 and sh > 0:
+                self._screen.base_panel.main_grid.set_size_request(sw, sh)
+        except Exception:
+            logger.exception("sa_macros: failed to pin main_grid size_request")
+
+        # Diagnostic logging — keep until user confirms first-load is fixed.
         GLib.idle_add(self._log_alloc, "activate-idle")
         GLib.timeout_add(100,  self._log_alloc, "activate+100ms")
         GLib.timeout_add(500,  self._log_alloc, "activate+500ms")
-        GLib.timeout_add(1500, self._log_alloc, "activate+1500ms")
 
     def process_update(self, action, data):
         if action != "notify_status_update":
