@@ -94,13 +94,14 @@ _DIAG = [
 ]
 
 _CAL = [
-    # Three most-common global calibrations. Per-tool calibrations
-    # (SA_CALIBRATE_ENCODER TOOL=N, SA_CALIBRATE_BOWDEN TOOL=N) live in
-    # the step-by-step Calibration Guide panel because they require a
-    # tool selection step.
-    ("Calibrate Selector",  "SA_CALIBRATE_SELECTOR",      False),
-    ("Calibrate Drive",     "SA_CALIBRATE_DRIVE",         False),
-    ("Calibrate Encoder",   "SA_CALIBRATE_ENCODER_SPEED", False),
+    # Three globals + per-tool Bowden. Labels stack on two lines
+    # ("Calibrate" / "<thing>") so the long ones fit a 4-column row at
+    # 800 px screen width without ellipsizing. Bowden is per-tool —
+    # tapping it opens the tool picker.
+    ("Calibrate\nSelector",      "SA_CALIBRATE_SELECTOR",        False),
+    ("Calibrate\nDrive",         "SA_CALIBRATE_DRIVE",           False),
+    ("Calibrate\nEncoder Speed", "SA_CALIBRATE_ENCODER_SPEED",   False),
+    ("Calibrate\nBowden",        "SA_CALIBRATE_BOWDEN TOOL={t}", True),
 ]
 
 
@@ -235,15 +236,16 @@ class Panel(ScreenPanel):
         outer.set_margin_bottom(14)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first.
+        # DAILY first. CALIBRATION is taller than usual to comfortably
+        # accommodate the 2-line labels on its 4 buttons.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=82),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=78),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=68),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=64),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=58),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=72),    False, False, 0)
 
         # vexpand spacer at the end — REQUIRED for first-render correctness.
         #

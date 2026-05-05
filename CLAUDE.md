@@ -138,20 +138,32 @@ layout. The first-render-bug history that produced these constraints
 is preserved in commits `0079f41` → `d48e0f2`.
 
 - **Three sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
-  CALIBRATION (3). Order is "frequency of use, highest first." Don't
+  CALIBRATION (4). Order is "frequency of use, highest first." Don't
   reorder. An earlier "QUICK RE-CAL" 4th section was removed because
   its 3 buttons (Re-cal Sel / Drive / Enc) were exact duplicates of
   the first 3 CALIBRATION buttons — same gcodes, just different
   labels. Don't add it back.
-- **CALIBRATION buttons** are the 3 global calibrations only —
-  per-tool ones (`SA_CALIBRATE_ENCODER TOOL=N`, `SA_CALIBRATE_BOWDEN
-  TOOL=N`) live in the step-by-step Calibration Guide panel because
-  they require a tool selection step. Labels use the full
-  `Calibrate <thing>` form ("Calibrate Selector" / "Calibrate Drive"
-  / "Calibrate Encoder") — the section header doesn't carry the
-  word "Calibrate" alone since the buttons themselves do.
-- **Button heights:** DAILY=82, DIAGNOSTICS=68, CALIBRATION=58 px.
-  Height hierarchy puts the eye on DAILY first.
+- **CALIBRATION buttons** are 3 globals + 1 per-tool:
+  - `Calibrate Selector` → `SA_CALIBRATE_SELECTOR` (global)
+  - `Calibrate Drive` → `SA_CALIBRATE_DRIVE` (global)
+  - `Calibrate Encoder Speed` → `SA_CALIBRATE_ENCODER_SPEED` (global)
+  - `Calibrate Bowden` → `SA_CALIBRATE_BOWDEN TOOL={t}` (per-tool —
+    tapping opens the tool picker)
+  
+  Per-tool encoder mm/pulse calibration (`SA_CALIBRATE_ENCODER TOOL=N`)
+  is intentionally NOT here — it lives in the step-by-step Calibration
+  Guide panel because it has a more involved per-path workflow.
+- **CALIBRATION labels stack on 2 lines via embedded `\n`:**
+  `"Calibrate\nSelector"` etc. This is the ONE place where embedded
+  `\n` is acceptable — the long "Calibrate Encoder Speed" label
+  doesn't fit a 4-column row width on a 800 px screen, so all four
+  labels are deliberately stacked for visual consistency. The
+  resulting 2-line button height is the reason CALIBRATION's
+  `btn_h=72` is taller than DIAGNOSTICS's 64.
+- **Button heights:** DAILY=78, DIAGNOSTICS=64, CALIBRATION=72 px.
+  CALIBRATION breaks the simple "decreases with frequency" hierarchy
+  because of the 2-line labels — each individual button is still
+  visually smaller than DAILY, but the row needs the extra height.
 - **Outer Box:** `Gtk.Box(VERTICAL, spacing=6)`, margins
   `top=10, start=8, end=8, bottom=14`. The trailing **vexpand=True
   spacer** Box at the end of `_build_main_page` is REQUIRED — without
@@ -183,10 +195,12 @@ is preserved in commits `0079f41` → `d48e0f2`.
   `__init__` to override screen_panel.py's default `vexpand=True`,
   so the content widget claims exactly its slice of the grid row
   (no fight with action_bar's vexpand for leftover space).
-- **Section row labels:** keep them single-line — NEVER use embedded
-  `\n` to stack words. That forces the GTK label to render at 2-line
-  natural height regardless of `btn_h` and adds ~14 px to the row,
-  which can stretch the page past base_panel's left rail height.
+- **Section row labels:** prefer single-line. Embedded `\n` to stack
+  words is OK ONLY when the natural single-line label wouldn't fit
+  the column width (the CALIBRATION row's 4 buttons are the example);
+  in that case set `btn_h` larger to accommodate, and use `\n` on
+  EVERY label in the row for visual consistency rather than letting
+  GTK's auto-wrap pick which buttons stack.
 - **Section row buttons:** `set_homogeneous(True)` for equal width;
   Pango wrap settings (`set_line_wrap(WORD_CHAR)`, `set_lines(2)`)
   let "HOME SELECTOR" stack to two lines instead of ellipsizing.
