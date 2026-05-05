@@ -163,6 +163,14 @@ class Panel(ScreenPanel):
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
         outer.pack_start(self._section_row(_QUICK_CAL, btn_h=38),    False, False, 0)
 
+        # Hard bottom spacer — guarantees a visible gap below the QUICK
+        # RE-CAL row before the screen edge regardless of how GTK
+        # distributes leftover space inside the outer Box. The previous
+        # margin_bottom approach wasn't reliably visible.
+        bottom_pad = Gtk.Box()
+        bottom_pad.set_size_request(-1, 24)
+        outer.pack_start(bottom_pad, False, False, 0)
+
         return outer
 
     # ── Tool picker page ──────────────────────────────────────────────────
