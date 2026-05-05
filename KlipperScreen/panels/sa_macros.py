@@ -93,22 +93,29 @@ _DIAG = [
     ("BUZZ SELECTOR",   "SA_BUZZ_SELECTOR",                 False),
 ]
 
-_CAL = [
-    # Three globals + two per-tool. Labels stack on two lines
-    # ("Calibrate" / "<thing>") so they fit a 5-column row at 800 px
-    # screen width without ellipsizing. "Enc Speed" is abbreviated to
-    # keep line 2 short enough for the narrower 5-column width.
-    #
-    # Encoder cals are TWO different things despite similar names:
-    #   SA_CALIBRATE_ENCODER_SPEED  - global, finds max reliable feed
-    #                                 speed before the encoder slips
-    #   SA_CALIBRATE_ENCODER TOOL=N - per-tool, measures mm-per-pulse
-    #                                 calibration for one path
-    ("Calibrate\nSelector",  "SA_CALIBRATE_SELECTOR",          False),
-    ("Calibrate\nDrive",     "SA_CALIBRATE_DRIVE",             False),
-    ("Calibrate\nEnc Speed", "SA_CALIBRATE_ENCODER_SPEED",     False),
-    ("Calibrate\nEncoder",   "SA_CALIBRATE_ENCODER TOOL={t}",  True),
-    ("Calibrate\nBowden",    "SA_CALIBRATE_BOWDEN TOOL={t}",   True),
+# CALIBRATION is laid out as TWO rows under one section header:
+#   row 1 (globals, 3 buttons)
+#   row 2 (per-tool, 2 buttons — both open the tool picker on click)
+#
+# Encoder cals are TWO different things despite the similar names:
+#   SA_CALIBRATE_ENCODER_SPEED  - global, finds max reliable feed
+#                                 speed before the encoder slips
+#   SA_CALIBRATE_ENCODER TOOL=N - per-tool, measures mm-per-pulse
+#                                 calibration for one path
+# Don't merge them.
+#
+# Labels stack on two lines via embedded \n for visual consistency
+# across both rows. The 3-column row 1 has enough width for the full
+# "Encoder Speed" label; the 5-column variant had to abbreviate to
+# "Enc Speed".
+_CAL_GLOBAL = [
+    ("Calibrate\nSelector",      "SA_CALIBRATE_SELECTOR",        False),
+    ("Calibrate\nDrive",         "SA_CALIBRATE_DRIVE",           False),
+    ("Calibrate\nEncoder Speed", "SA_CALIBRATE_ENCODER_SPEED",   False),
+]
+_CAL_PERTOOL = [
+    ("Calibrate\nEncoder",       "SA_CALIBRATE_ENCODER TOOL={t}", True),
+    ("Calibrate\nBowden",        "SA_CALIBRATE_BOWDEN TOOL={t}",  True),
 ]
 
 
@@ -242,17 +249,19 @@ class Panel(ScreenPanel):
         outer.set_margin_end(8)
         outer.set_margin_bottom(14)
 
-        # Heights step down section by section so the eye lands on
-        # DAILY first. CALIBRATION is taller than usual to comfortably
-        # accommodate the 2-line labels on its 4 buttons.
+        # CALIBRATION renders as 3+2 rows under one section header.
+        # Heights are tuned so all four button rows + 3 section headers
+        # + spacing + margins still leave ~50 px for the bottom spacer
+        # to absorb visibly.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=78),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,        btn_h=80), False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=64),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,         btn_h=66), False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=72),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL_GLOBAL,   btn_h=64), False, False, 0)
+        outer.pack_start(self._section_row(_CAL_PERTOOL,  btn_h=64), False, False, 0)
 
         # vexpand spacer at the end — REQUIRED for first-render correctness.
         #

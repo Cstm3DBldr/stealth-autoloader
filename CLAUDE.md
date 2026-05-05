@@ -137,36 +137,40 @@ restore it to match unless the user explicitly asks for a different
 layout. The first-render-bug history that produced these constraints
 is preserved in commits `0079f41` → `d48e0f2`.
 
-- **Three sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
-  CALIBRATION (5). Order is "frequency of use, highest first." Don't
-  reorder. An earlier "QUICK RE-CAL" 4th section was removed because
-  its 3 buttons (Re-cal Sel / Drive / Enc) were exact duplicates of
-  the first 3 CALIBRATION buttons — same gcodes, just different
-  labels. Don't add it back.
-- **CALIBRATION buttons** are 3 globals + 2 per-tool:
-  - `Calibrate Selector`   → `SA_CALIBRATE_SELECTOR`           (global)
-  - `Calibrate Drive`      → `SA_CALIBRATE_DRIVE`              (global)
-  - `Calibrate Enc Speed`  → `SA_CALIBRATE_ENCODER_SPEED`      (global)
-  - `Calibrate Encoder`    → `SA_CALIBRATE_ENCODER TOOL={t}`   (per-tool)
-  - `Calibrate Bowden`     → `SA_CALIBRATE_BOWDEN TOOL={t}`    (per-tool)
+- **Three sections, top→bottom:** DAILY (4 buttons in 1 row) →
+  DIAGNOSTICS (3 buttons in 1 row) → CALIBRATION (5 buttons across
+  2 rows: 3 globals + 2 per-tool). Order is "frequency of use,
+  highest first." Don't reorder. An earlier "QUICK RE-CAL" 4th
+  section was removed because its 3 buttons (Re-cal Sel / Drive /
+  Enc) were exact duplicates of the first 3 CALIBRATION buttons —
+  same gcodes, just different labels. Don't add it back.
+- **CALIBRATION is laid out as 3+2 rows under ONE section header:**
+  - Row 1 (`_CAL_GLOBAL`, 3 wide buttons):
+    - `Calibrate Selector`        → `SA_CALIBRATE_SELECTOR`
+    - `Calibrate Drive`           → `SA_CALIBRATE_DRIVE`
+    - `Calibrate Encoder Speed`   → `SA_CALIBRATE_ENCODER_SPEED`
+  - Row 2 (`_CAL_PERTOOL`, 2 even wider buttons, both open tool picker):
+    - `Calibrate Encoder`         → `SA_CALIBRATE_ENCODER TOOL={t}`
+    - `Calibrate Bowden`          → `SA_CALIBRATE_BOWDEN TOOL={t}`
   
   Encoder cals are two different things despite the similar names:
   `_SPEED` is the global max-feed-speed slip test; the per-tool one
   is the mm-per-pulse calibration. Don't merge them or assume they're
   duplicates — the user explicitly asked for both.
 - **CALIBRATION labels stack on 2 lines via embedded `\n`:**
-  `"Calibrate\nSelector"` etc. This is the ONE place where embedded
-  `\n` is acceptable — the labels wouldn't fit a 5-column row width
-  single-line on a 800 px screen, so all five are deliberately
-  stacked for visual consistency. "Enc Speed" is abbreviated (rather
-  than the full "Encoder Speed") because line-2 width is tight at
-  5 columns; if you ever drop back to 4 buttons, restore the full
-  "Encoder Speed" label. The resulting 2-line button height is the
-  reason CALIBRATION's `btn_h=72` is taller than DIAGNOSTICS's 64.
-- **Button heights:** DAILY=78, DIAGNOSTICS=64, CALIBRATION=72 px.
-  CALIBRATION breaks the simple "decreases with frequency" hierarchy
-  because of the 2-line labels — each individual button is still
-  visually smaller than DAILY, but the row needs the extra height.
+  `"Calibrate\nSelector"`, `"Calibrate\nEncoder Speed"`, etc. This
+  is the ONE place where embedded `\n` is acceptable — most labels
+  wouldn't fit single-line in a 3-column row at 800 px screen
+  width. Stacking ALL labels (rather than letting GTK auto-wrap
+  only the long ones) keeps the rows visually uniform and lets
+  the full "Encoder Speed" label render at row-1's wider 3-column
+  width without ellipsizing. The single-row 5-column variant had
+  to abbreviate to "Enc Speed" — if you ever drop back to a single
+  row, switch the abbreviation accordingly.
+- **Button heights:** DAILY=80, DIAGNOSTICS=66, CALIBRATION=64 per
+  row (×2 rows). The CAL rows are slightly shorter than DIAGNOSTICS
+  because there are TWO of them — total CALIBRATION vertical real
+  estate is still the largest of the three sections.
 - **Outer Box:** `Gtk.Box(VERTICAL, spacing=6)`, margins
   `top=10, start=8, end=8, bottom=14`. The trailing **vexpand=True
   spacer** Box at the end of `_build_main_page` is REQUIRED — without
