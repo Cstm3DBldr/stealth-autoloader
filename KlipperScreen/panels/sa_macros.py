@@ -44,11 +44,21 @@ def _install_action_bar_css():
             b".action_bar button,"
             b" .action_bar > button,"
             b" box.action_bar button {"
-            b"  border: 2px solid red;"
             b"  margin: 0;"
             b"  padding: 2px;"
             b"  min-height: 0;"
             b"  min-width: 0;"
+            b"}"
+            # Stabilize section header label sizing on first attach.
+            # Default theme rules use em-based padding/margin which
+            # measures slightly differently before vs after the first
+            # font-metric realize pass, inflating each header by ~4 px
+            # on first attach (4 headers × 4 px ≈ 16 px of content
+            # overflow that stretches the rail).
+            b".sa-section-header {"
+            b"  margin: 0;"
+            b"  padding: 0;"
+            b"  min-height: 0;"
             b"}"
         )
         Gtk.StyleContext.add_provider_for_screen(
@@ -179,15 +189,21 @@ class Panel(ScreenPanel):
     # ── Section header ────────────────────────────────────────────────────
 
     def _section_header(self, title):
-        """Small-caps dimmed label used as a section divider."""
+        """Small-caps dimmed label used as a section divider.
+
+        First-render correctness note: Pango markup attributes that
+        depend on font metrics (e.g. font_size="x-small",
+        letter_spacing="2000") produced different natural heights on
+        first vs subsequent realize passes. Use a fixed pt-size and
+        skip letter_spacing so the label measures the same on every
+        pass. The .sa-section-header CSS class (installed alongside
+        the action_bar overrides) pins margin/padding to fixed pixels
+        for the same reason.
+        """
         lbl = Gtk.Label(halign=Gtk.Align.START, xalign=0.0)
         lbl.set_markup(
-            '<span font_size="x-small" foreground="#9E9E9E" '
-            'letter_spacing="2000">── %s ──</span>' % title)
-        # Tight headers — top margin minimized further so all 4 sections
-        # fit on a 480 px screen with no scroll on the QUICK RE-CAL row.
-        lbl.set_margin_top(1)
-        lbl.set_margin_bottom(0)
+            '<span font="8" foreground="#9E9E9E">── %s ──</span>' % title)
+        lbl.get_style_context().add_class("sa-section-header")
         return lbl
 
     def _section_row(self, items, btn_h):
@@ -403,28 +419,10 @@ class Panel(ScreenPanel):
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
 
-        # Hard-clamp the screen window to its actual size so main_grid
-        # physically cannot allocate more than the visible 800x480 even
-        # when its natural size requests 800x496 on first attach.
-        try:
-            sw = int(getattr(self._screen, 'width',  0))
-            sh = int(getattr(self._screen, 'height', 0))
-            if sw > 0 and sh > 0:
-                hints = Gdk.Geometry()
-                hints.min_width  = sw
-                hints.min_height = sh
-                hints.max_width  = sw
-                hints.max_height = sh
-                self._screen.set_geometry_hints(
-                    None, hints,
-                    Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE)
-        except Exception:
-            logger.exception("sa_macros: failed to clamp window geometry")
-
-        # Keep diagnostic logging until first-load is confirmed fixed.
+        # Keep diagnostic logging one more cycle to confirm the section-
+        # header CSS fix actually shrinks the content row on first attach.
         GLib.idle_add(self._log_alloc, "activate-idle")
-        GLib.timeout_add(100,  self._log_alloc, "activate+100ms")
-        GLib.timeout_add(500,  self._log_alloc, "activate+500ms")
+        GLib.timeout_add(500, self._log_alloc, "activate+500ms")
 
     def process_update(self, action, data):
         if action != "notify_status_update":
