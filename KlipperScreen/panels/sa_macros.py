@@ -33,11 +33,14 @@ _DIAG = [
 ]
 
 _CAL = [
-    ("CAL SELECTOR",    "SA_CALIBRATE_SELECTOR",            False),
-    ("CAL DRIVE",       "SA_CALIBRATE_DRIVE",               False),
-    ("CAL ENC SPD",     "SA_CALIBRATE_ENCODER_SPEED",       False),
-    ("CAL ENCODER",     "SA_CALIBRATE_ENCODER TOOL={t}",    True),
-    ("CAL BOWDEN",      "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
+    # CALIBRATION row labels intentionally drop the "CAL " prefix — the
+    # section header already says CALIBRATION, and shorter labels let the
+    # 5-up row fit on a 480 px display without ellipsizing or overflow.
+    ("SELECTOR",    "SA_CALIBRATE_SELECTOR",            False),
+    ("DRIVE",       "SA_CALIBRATE_DRIVE",               False),
+    ("ENC SPEED",   "SA_CALIBRATE_ENCODER_SPEED",       False),
+    ("ENCODER",     "SA_CALIBRATE_ENCODER TOOL={t}",    True),
+    ("BOWDEN",      "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
 ]
 
 
@@ -77,17 +80,31 @@ class Panel(ScreenPanel):
         return lbl
 
     def _section_row(self, items, btn_h):
-        """Single row of equal-width buttons for a section."""
+        """Single row of equal-width buttons for a section.
+
+        Two layers of overflow protection:
+          1. row.set_homogeneous(True) so the available width is split
+             equally across N children regardless of label length.
+          2. Each button's label is set to ellipsize, which lets the
+             button shrink below the natural label width — homogeneous
+             alone sizes everyone to the LARGEST natural width, which
+             can still push the row past the screen on small displays.
+        """
+        from gi.repository import Pango
         row = Gtk.Box(spacing=6)
         row.set_hexpand(True)
-        # set_homogeneous(True) is required for equal-width buttons.
-        # pack_start(expand=True, fill=True) only distributes LEFTOVER space
-        # (after each child takes its natural size), so different label
-        # lengths produce different button widths and the rightmost overflow.
         row.set_homogeneous(True)
         for label, gcode, needs_tool in items:
             btn = _sbs.make(label)
             btn.set_size_request(-1, btn_h)
+            # Find the Label child created by Gtk.Button(label=...) and
+            # let it ellipsize. Without this the button's natural width
+            # is the full label width, and 5×that still overflows on a
+            # 480 px display.
+            child = btn.get_child()
+            if isinstance(child, Gtk.Label):
+                child.set_ellipsize(Pango.EllipsizeMode.END)
+                child.set_max_width_chars(12)
             if needs_tool:
                 btn.connect("clicked", self._pick_tool, gcode)
             else:
