@@ -133,27 +133,31 @@ class Panel(ScreenPanel):
         # (content_height ≈ 396 px) without scrolling. Each section's
         # header is followed directly by its button row with no extra
         # spacing in between (`spacing=2` between siblings of the outer
-        # Box keeps headers visually attached to their rows).
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                        spacing=2, margin=4)
+        # Box keeps headers visually attached to their rows). Slightly
+        # bigger bottom margin so the QUICK RE-CAL row doesn't sit
+        # flush against the screen edge.
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        outer.set_margin_top(4)
+        outer.set_margin_start(4)
+        outer.set_margin_end(4)
+        outer.set_margin_bottom(8)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Trimmed again (54/44/38/48 → 50/40/36/44) to
-        # leave clean breathing room at the bottom of the QUICK RE-CAL
-        # row on a 480 px screen.
+        # DAILY first. Trimmed again (50/40/36/44 → 46/38/34/40) to
+        # free space for an 8 px bottom padding under QUICK RE-CAL.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=50),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=46),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=40),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=38),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=36),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=34),    False, False, 0)
 
         # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
         # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=44),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=40),    False, False, 0)
 
         return outer
 
