@@ -130,6 +130,65 @@ asks for a different layout.
   `activate()` also does a one-shot `apiclient.send_request("printer/objects/query?autoloader")`
   so the previews show real data instantly instead of `"…"`.
 
+### KlipperScreen Macros menu (`KlipperScreen/panels/sa_macros.py`)
+
+User-confirmed canonical look (commit `083940b`). If a future edit
+changes any of this, restore it to match unless the user explicitly asks
+for a different layout. The first-render-bug history that produced
+these constraints is preserved in commits `0079f41` → `d48e0f2`.
+
+- **Four sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
+  CALIBRATION (5) → QUICK RE-CAL (3). Order is "frequency of use,
+  highest first." Don't reorder.
+- **Button heights:** DAILY=58, DIAGNOSTICS=48, CALIBRATION=42,
+  QUICK_RECAL=50 px. Height hierarchy intentionally puts the eye on
+  DAILY first; QUICK RE-CAL is taller than CALIBRATION to telegraph
+  shortcut prominence even though it sits lower.
+- **Outer Box:** `Gtk.Box(VERTICAL, spacing=4)`, margins
+  `top=8, start=8, end=8, bottom=14`. The trailing **vexpand=True
+  spacer** Box at the end of `_build_main_page` is REQUIRED — without
+  at least one expanding child, the page's natural height = sum of
+  fixed children, and base_panel's spanning vexpand action_bar grabs
+  more vertical budget than it should on first allocation. Don't
+  remove the spacer.
+- **Section header:** `Gtk.Label` with markup
+  `<span font="11" foreground="#9E9E9E">── %s ──</span>`. Pinned to
+  fixed pt size and CSS class `.sa-section-header` (margin/padding/
+  min-height all 0). NEVER use em-based `font_size="x-small"` or
+  `letter_spacing` — both depend on font-metric measurement that's
+  unstable across the first realize pass and produce ~4 px extra
+  per header on first attach (×4 headers = the 16 px content
+  overflow that stretches base_panel's left rail and clips the
+  power icon off-screen).
+- **CSS provider** is installed once per session by
+  `_install_action_bar_css()` (module-level guard). Pins
+  `.action_bar > button` margin/padding to small fixed pixel values
+  AND sets `.sa-section-header` to the same. Both rules run from
+  one provider at `STYLE_PROVIDER_PRIORITY_USER + 100`.
+- **Page switching:** `Gtk.Notebook` with `set_show_tabs(False)` +
+  `set_show_border(False)`, two pages: `main` and `tool`. Notebook
+  was chosen over `Gtk.Stack` because Stack's `vhomogeneous=False`
+  flag doesn't reliably take effect on the first allocation pass
+  after KlipperScreen restart. Don't switch back to Stack.
+- **Self.content sizing:** `vexpand=False` and
+  `set_size_request(-1, _gtk.content_height)` are both pinned in
+  `__init__` to override screen_panel.py's default `vexpand=True`,
+  so the content widget claims exactly its slice of the grid row
+  (no fight with action_bar's vexpand for leftover space).
+- **QUICK RE-CAL labels:** `"Re-cal Sel" / "Re-cal Drive" /
+  "Re-cal Enc"` — short, single-line. NEVER use embedded `\n` to
+  stack words; that forces the GTK label to render at 2-line
+  natural height regardless of `btn_h` and adds ~14 px to the row.
+- **Section row buttons:** `set_homogeneous(True)` for equal width;
+  Pango wrap settings (`set_line_wrap(WORD_CHAR)`, `set_lines(2)`)
+  let "HOME SELECTOR" stack to two lines instead of ellipsizing.
+  `set_ellipsize(END)` + `set_max_width_chars(12)` is the safety
+  net for any longer label that's still added in the future.
+- **Subscription:** `activate()` calls
+  `_sasub.build_subscription(...)` and
+  `_sasub.install_global_popup_watcher(...)` — same pattern as
+  every other autoloader panel.
+
 ---
 
 ## Project File Structure
