@@ -154,10 +154,7 @@ class Panel(ScreenPanel):
 
     def _build_main_page(self):
         # Tight spacing so 4 sections fit on a 480 px screen without
-        # scrolling. The outer Box of fixed-size buttons MUST be wrapped
-        # in a ScrolledWindow before being handed to the page-switcher;
-        # see the comment on the wrapping ScrolledWindow below for the
-        # full rationale.
+        # scrolling.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         outer.set_margin_top(6)
         outer.set_margin_start(6)
@@ -181,50 +178,31 @@ class Panel(ScreenPanel):
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
         outer.pack_start(self._section_row(_QUICK_CAL, btn_h=36),    False, False, 0)
 
-        # ScrolledWindow wrapper — required for first-render correctness.
+        # vexpand spacer at the end — REQUIRED for first-render correctness.
         #
-        # base_panel attaches `self.content` (a vexpand=True Box) into a
-        # Gtk.Grid alongside the left action_bar. action_bar has a hard
-        # set_size_request(width, height*0.1) — i.e. it asks for about
-        # 1/10 of the screen height. main_grid lets natural-size
-        # negotiation pick row heights.
+        # In landscape mode base_panel.py:75 sets action_bar.set_vexpand(True)
+        # and action_bar.set_size_request(action_bar_width, screen.height).
+        # The action_bar spans both grid rows in column 0, so it's competing
+        # with the content row for vertical budget.
         #
-        # A plain Gtk.Box of fixed-height buttons reports its FULL natural
-        # height up front (sum of headers + button rows + spacing). On a
-        # 480 px display that's ~320 px, which steals from the action_bar's
-        # budget on first allocation; the action_bar gets over-allocated
-        # to compensate, stretches its 6 icons evenly, and the bottom
-        # (power) icon clips past the screen edge while the panel content
-        # reaches the bottom with no padding.
+        # If every child of `outer` is pack_start(False, False, 0), the Box's
+        # natural height is just the sum of those children — and on first
+        # allocation, GTK's grid pass hands action_bar more height than the
+        # content row, squeezing the buttons until they overflow or stretch
+        # the rail icons. (sa_load_unload's path page doesn't have this bug
+        # because its inner _path_grid is packed with expand=True; that one
+        # expanding child is enough to make the page claim all available
+        # vertical space on every allocation pass.)
         #
-        # ScrolledWindow defers sizing — it reports a tiny minimum and
-        # uses whatever the parent allocates. This decouples the page's
-        # natural height from main_grid's first-pass measurement, so the
-        # action_bar's set_size_request is honored on every render.
-        # sa_config and sa_load_unload already use this pattern.
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_overlay_scrolling(False)
-        scroll.set_propagate_natural_height(False)
-        scroll.set_propagate_natural_width(False)
-        # Pin a min_content_height equal to KS's precomputed content_height
-        # (screen.height − titlebar_height). In landscape mode base_panel
-        # makes the action_bar set_size_request the full screen height AND
-        # set_vexpand(True), so without a floor on the content's height,
-        # GTK's first-pass grid allocation can hand action_bar more space
-        # than the content row — squeezing buttons until AUTOMATIC scroll
-        # kicks in. With min_content_height pinned, the content row claims
-        # its full slice up front, action_bar gets exactly its requested
-        # size_request, and the layout is identical on first vs subsequent
-        # opens. Falls back to a sane default if KS hasn't populated
-        # _gtk.content_height yet.
-        try:
-            min_h = int(getattr(self._gtk, 'content_height', 0)) or 380
-        except Exception:
-            min_h = 380
-        scroll.set_min_content_height(min_h)
-        scroll.add(outer)
-        return scroll
+        # A single vexpand=True spacer at the end of `outer` is the minimal
+        # equivalent — the Box now always claims its full slice of the
+        # content row, action_bar gets exactly its set_size_request budget,
+        # and the layout is identical on first open and re-open.
+        spacer = Gtk.Box()
+        spacer.set_vexpand(True)
+        outer.pack_start(spacer, True, True, 0)
+
+        return outer
 
     # ── Tool picker page ──────────────────────────────────────────────────
 
@@ -251,33 +229,10 @@ class Panel(ScreenPanel):
                          lambda w: self._set_page("main"))
         outer.pack_start(back_btn, False, False, 0)
 
-        # Same ScrolledWindow wrapper rationale as _build_main_page —
-        # keeps the page's natural-height contract consistent across
-        # both pages of the Notebook so first-render and re-render
-        # match.
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_overlay_scrolling(False)
-        scroll.set_propagate_natural_height(False)
-        scroll.set_propagate_natural_width(False)
-        # Pin a min_content_height equal to KS's precomputed content_height
-        # (screen.height − titlebar_height). In landscape mode base_panel
-        # makes the action_bar set_size_request the full screen height AND
-        # set_vexpand(True), so without a floor on the content's height,
-        # GTK's first-pass grid allocation can hand action_bar more space
-        # than the content row — squeezing buttons until AUTOMATIC scroll
-        # kicks in. With min_content_height pinned, the content row claims
-        # its full slice up front, action_bar gets exactly its requested
-        # size_request, and the layout is identical on first vs subsequent
-        # opens. Falls back to a sane default if KS hasn't populated
-        # _gtk.content_height yet.
-        try:
-            min_h = int(getattr(self._gtk, 'content_height', 0)) or 380
-        except Exception:
-            min_h = 380
-        scroll.set_min_content_height(min_h)
-        scroll.add(outer)
-        return scroll
+        # The tool page already has _tool_grid packed with expand=True,
+        # which makes the page claim all available vertical space — so
+        # no extra vexpand spacer is needed here (unlike _build_main_page).
+        return outer
 
     def _rebuild_tool_buttons(self, num_paths):
         for child in self._tool_grid.get_children():
