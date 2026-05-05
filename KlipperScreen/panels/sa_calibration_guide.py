@@ -41,6 +41,11 @@ class Panel(ScreenPanel):
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_transition_duration(150)
+        # See sa_macros.py for the rationale — Gtk.Stack defaults to sizing
+        # to its largest child page, which stretches base_panel's left
+        # action bar and clips the bottom power icon.
+        self._stack.set_vhomogeneous(False)
+        self._stack.set_hhomogeneous(False)
 
         self._stack.add_named(self._build_pages_view(), "pages")
         self._stack.add_named(self._build_tool_page(),  "tool")
@@ -56,6 +61,11 @@ class Panel(ScreenPanel):
         self._page_stack = Gtk.Stack()
         self._page_stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._page_stack.set_transition_duration(200)
+        # Same homogeneous fix as the outer Stack — different steps have
+        # different content heights, so let GTK size to the visible step
+        # rather than the tallest one.
+        self._page_stack.set_vhomogeneous(False)
+        self._page_stack.set_hhomogeneous(False)
 
         self._step_boxes = []
         for i in range(_NUM_STEPS):

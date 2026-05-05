@@ -77,6 +77,14 @@ class Panel(ScreenPanel):
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_transition_duration(150)
+        # Stack defaults to v/hhomogeneous=True, which sizes the Stack to the
+        # LARGEST of its child pages. base_panel's left action bar spans the
+        # content row in a Grid, so a Stack that reports the tool page's
+        # (taller) natural size stretches the rail and pushes the bottom
+        # power icon past the screen edge. Disable homogeneity so the Stack
+        # only reports the currently-visible page's size.
+        self._stack.set_vhomogeneous(False)
+        self._stack.set_hhomogeneous(False)
 
         self._stack.add_named(self._build_main_page(), "main")
         self._stack.add_named(self._build_tool_page(), "tool")
@@ -145,13 +153,10 @@ class Panel(ScreenPanel):
         # bottom padding (margin or explicit spacer widget) pushes the
         # rail's bottom icon (power) off the screen edge.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        outer.set_margin_top(4)
-        outer.set_margin_start(4)
-        outer.set_margin_end(4)
-        # Keep this small — base_panel's left rail is sized to the overall
-        # panel height, and bumping margin_bottom or appending a spacer
-        # widget pushed the bottom rail icon (power) off the screen.
-        outer.set_margin_bottom(6)
+        outer.set_margin_top(6)
+        outer.set_margin_start(6)
+        outer.set_margin_end(6)
+        outer.set_margin_bottom(10)
 
         # Heights step down section by section so the eye lands on
         # DAILY first. Total panel height has to stay under what the

@@ -43,6 +43,11 @@ class Panel(ScreenPanel):
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_transition_duration(150)
+        # See sa_macros.py for the rationale — Gtk.Stack defaults to sizing
+        # to its largest child page, which stretches base_panel's left
+        # action bar and clips the bottom power icon.
+        self._stack.set_vhomogeneous(False)
+        self._stack.set_hhomogeneous(False)
 
         self._list_outer = self._build_list_page()
         self._edit_outer = self._build_edit_page()
