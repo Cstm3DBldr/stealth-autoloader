@@ -138,22 +138,22 @@ class Panel(ScreenPanel):
                         spacing=2, margin=4)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Trimmed further (60/50/42/52 → 54/44/38/48) so
-        # all 4 sections clear the bottom of a 480 px screen with no
-        # scroll, even after KS chrome takes its share.
+        # DAILY first. Trimmed again (54/44/38/48 → 50/40/36/44) to
+        # leave clean breathing room at the bottom of the QUICK RE-CAL
+        # row on a 480 px screen.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=54),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=50),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=44),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=40),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=38),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=36),    False, False, 0)
 
         # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
         # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=48),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=44),    False, False, 0)
 
         return outer
 
