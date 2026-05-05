@@ -35,17 +35,27 @@ def _install_action_bar_css():
         return
     try:
         css = Gtk.CssProvider()
+        # Visible-change marker (red border) confirms our CSS is reaching
+        # the buttons. Padding/margin pinned to fixed pixels to stabilize
+        # natural height across first/subsequent layout passes. Multiple
+        # selectors so whatever the actual class structure of the buttons
+        # is, at least one match wins.
         css.load_from_data(
-            b".action_bar > button {"
-            b"  margin: 1px;"
-            b"  padding: 4px;"
+            b".action_bar button,"
+            b" .action_bar > button,"
+            b" box.action_bar button {"
+            b"  border: 2px solid red;"
+            b"  margin: 0;"
+            b"  padding: 2px;"
             b"  min-height: 0;"
+            b"  min-width: 0;"
             b"}"
         )
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), css,
             Gtk.STYLE_PROVIDER_PRIORITY_USER + 100)
         _action_bar_css_installed = True
+        logging.info("sa_macros: action_bar CSS provider installed")
     except Exception:
         logging.exception("sa_macros: failed to install action_bar CSS")
 
