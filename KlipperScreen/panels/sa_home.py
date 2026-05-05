@@ -11,6 +11,32 @@ import sa_subscription as _sasub
 logger = logging.getLogger('klipperscreen.sa_home')
 
 
+def _effective_state(i, states, entry, toolhead, extruder):
+    """Combine stored path state with sensor readings to determine
+    actual filament state. Mirrors sa_main._effective_state so both
+    panels report the same loaded count.
+
+    Without this, sa_home shows a "0/6 paths loaded" preview while
+    the actual SA Status panel shows "4 loaded" — because sa_home
+    was reading only the backend-stored `path_states` list, which
+    isn't always set to "loaded" (e.g. if the path was filled by
+    manual feed instead of SA_LOAD, or after a Klipper restart).
+    The three sensors are ground truth for what's physically there.
+    """
+    e  = entry[i]    if i < len(entry)    else None
+    th = toolhead[i] if i < len(toolhead) else None
+    ex = extruder[i] if i < len(extruder) else None
+    if e is None:
+        return states[i] if i < len(states) else 'unknown'
+    if not e and not th and not ex:
+        return 'empty'
+    if e and th and ex:
+        return 'loaded'
+    if e or th or ex:
+        return 'partial'
+    return states[i] if i < len(states) else 'unknown'
+
+
 # Concept B layout — hero row + utility row.
 #   Top  (~65% h): STATUS and LOAD/UNLOAD as large hero tiles with a live
 #                   status preview line below the label.
@@ -160,13 +186,21 @@ class Panel(ScreenPanel):
         sa        = self._last_sa
         states    = sa.get("path_states", [])
         materials = sa.get("path_materials", [])
-        loaded    = sum(1 for s in states if s == "loaded")
+        entry     = sa.get("entry_filament",    [])
+        toolhead  = sa.get("toolhead_filament", [])
+        extruder  = sa.get("extruder_filament", [])
         total     = len(states)
+
+        # Use effective state (stored + sensors) so this preview matches
+        # the count shown by sa_main on the actual STATUS panel.
+        eff = [_effective_state(i, states, entry, toolhead, extruder)
+               for i in range(total)]
+        loaded = sum(1 for s in eff if s == "loaded")
 
         # Up to 2 loaded paths' material names inline; otherwise just the count.
         seen = []
         for i, m in enumerate(materials):
-            if m and i < len(states) and states[i] == "loaded" and len(seen) < 2:
+            if m and i < len(eff) and eff[i] == "loaded" and len(seen) < 2:
                 seen.append("T%d %s" % (i, m))
         if seen:
             return "%d/%d loaded · %s" % (loaded, total, " · ".join(seen))
