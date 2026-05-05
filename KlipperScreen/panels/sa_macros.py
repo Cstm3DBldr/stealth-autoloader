@@ -43,6 +43,16 @@ _CAL = [
     ("BOWDEN",      "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
 ]
 
+# QUICK RE-CAL row — the three most-common cal tasks as bigger, more
+# prominent buttons for one-tap re-runs. Same gcodes as the matching
+# entries in _CAL, but presented separately so a user who wants to
+# touch up a single cal doesn't have to scan the full 5-button strip.
+_QUICK_CAL = [
+    ("Re-cal\nSelector",      "SA_CALIBRATE_SELECTOR",      False),
+    ("Re-cal\nDrive",         "SA_CALIBRATE_DRIVE",         False),
+    ("Re-cal\nEnc Speed",     "SA_CALIBRATE_ENCODER_SPEED", False),
+]
+
 
 class Panel(ScreenPanel):
     """Autoloader macros — grouped by frequency of use.
@@ -132,6 +142,12 @@ class Panel(ScreenPanel):
         # need the full real estate.
         outer.pack_start(self._section_header("CALIBRATION"),   False, False, 0)
         outer.pack_start(self._section_row(_CAL, btn_h=56),     False, False, 0)
+
+        # QUICK RE-CAL — three big buttons for one-tap re-runs of the most
+        # common no-tool-needed cal tasks. Placed AFTER the full CALIBRATION
+        # row per user request.
+        outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=64),    False, False, 0)
 
         return outer
 

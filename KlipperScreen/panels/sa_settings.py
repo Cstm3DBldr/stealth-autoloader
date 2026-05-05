@@ -2,13 +2,43 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 import logging
-import sys, os
+import os
+import subprocess
+import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sa_button_style as _sbs
 import sa_ui_prefs     as _prefs
 from ks_includes.screen_panel import ScreenPanel
 
 logger = logging.getLogger('klipperscreen.sa_settings')
+
+
+def _autoloader_version():
+    """Best-effort `git describe` against the deployed autoloader repo so
+    the About section can show what build is actually running. Falls back
+    to a hard-coded label if the git invocation fails (no git binary, no
+    repo, or timeout). Computed once at module import; safe to cache for
+    the lifetime of the panel — the only way it changes is by pulling new
+    code, which requires a Klipperscreen restart anyway."""
+    repo = os.path.expanduser("~/autoloader")
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", repo, "describe",
+             "--tags", "--always", "--dirty"],
+            stderr=subprocess.DEVNULL, timeout=2.0)
+        return out.decode().strip() or "unknown"
+    except Exception:
+        # Fallback: try just the short HEAD sha.
+        try:
+            out = subprocess.check_output(
+                ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                stderr=subprocess.DEVNULL, timeout=2.0)
+            return out.decode().strip() or "unknown"
+        except Exception:
+            return "unknown"
+
+
+_VERSION = _autoloader_version()
 
 _COLORS = [
     ("Blue",        "#1565C0", "#1976D2", "#0D47A1"),
@@ -125,6 +155,31 @@ class Panel(ScreenPanel):
         reset_btn = _sbs.make("Reset All Material Profiles", "sa-btn-warn")
         reset_btn.connect("clicked", self._reset_materials)
         outer.pack_start(reset_btn, False, False, 0)
+
+        # ── About / version ───────────────────────────────────────────────────
+        # Cached at module import via _autoloader_version(). Tap-to-copy
+        # would be nice but isn't a normal Gtk.Label gesture; keeping it
+        # display-only for now. If you ever need to roll back, the version
+        # string here matches what `git describe --tags --always --dirty`
+        # prints in ~/autoloader on the printer.
+        about_hdr = self._section("ABOUT")
+        about_hdr.set_margin_top(12)
+        outer.pack_start(about_hdr, False, False, 0)
+
+        ver_row = Gtk.Box(spacing=6)
+        ver_lbl = Gtk.Label(halign=Gtk.Align.START)
+        ver_lbl.set_markup(
+            '<span foreground="#E0E0E0">Autoloader </span>'
+            '<span foreground="#90CAF9">%s</span>'
+            % GLib.markup_escape_text(_VERSION))
+        ver_row.pack_start(ver_lbl, False, False, 0)
+        outer.pack_start(ver_row, False, False, 0)
+
+        repo_lbl = Gtk.Label(halign=Gtk.Align.START)
+        repo_lbl.set_markup(
+            '<span font_size="small" foreground="#9E9E9E">'
+            '  github.com/Cstm3DBldr/autoloader</span>')
+        outer.pack_start(repo_lbl, False, False, 0)
 
         scroll.add(outer)
         return scroll
