@@ -153,15 +153,11 @@ class Panel(ScreenPanel):
     # ── Main page ─────────────────────────────────────────────────────────
 
     def _build_main_page(self):
-        # Tight spacing/margin so 4 sections fit on a 480 px screen
-        # (content_height ≈ 396 px) without scrolling. Each section's
-        # header is followed directly by its button row with no extra
-        # spacing in between (`spacing=2` between siblings of the outer
-        # Box keeps headers visually attached to their rows). Bottom
-        # margin is intentionally small — base_panel's left navigation
-        # rail is sized off this panel's overall height, and any extra
-        # bottom padding (margin or explicit spacer widget) pushes the
-        # rail's bottom icon (power) off the screen edge.
+        # Tight spacing so 4 sections fit on a 480 px screen without
+        # scrolling. The outer Box of fixed-size buttons MUST be wrapped
+        # in a ScrolledWindow before being handed to the page-switcher;
+        # see the comment on the wrapping ScrolledWindow below for the
+        # full rationale.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         outer.set_margin_top(6)
         outer.set_margin_start(6)
@@ -169,8 +165,7 @@ class Panel(ScreenPanel):
         outer.set_margin_bottom(10)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Total panel height has to stay under what the
-        # left rail can accommodate or the power icon clips off bottom.
+        # DAILY first.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
         outer.pack_start(self._section_row(_DAILY,     btn_h=44),    False, False, 0)
 
@@ -186,7 +181,32 @@ class Panel(ScreenPanel):
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
         outer.pack_start(self._section_row(_QUICK_CAL, btn_h=36),    False, False, 0)
 
-        return outer
+        # ScrolledWindow wrapper — required for first-render correctness.
+        #
+        # base_panel attaches `self.content` (a vexpand=True Box) into a
+        # Gtk.Grid alongside the left action_bar. action_bar has a hard
+        # set_size_request(width, height*0.1) — i.e. it asks for about
+        # 1/10 of the screen height. main_grid lets natural-size
+        # negotiation pick row heights.
+        #
+        # A plain Gtk.Box of fixed-height buttons reports its FULL natural
+        # height up front (sum of headers + button rows + spacing). On a
+        # 480 px display that's ~320 px, which steals from the action_bar's
+        # budget on first allocation; the action_bar gets over-allocated
+        # to compensate, stretches its 6 icons evenly, and the bottom
+        # (power) icon clips past the screen edge while the panel content
+        # reaches the bottom with no padding.
+        #
+        # ScrolledWindow defers sizing — it reports a tiny minimum and
+        # uses whatever the parent allocates. This decouples the page's
+        # natural height from main_grid's first-pass measurement, so the
+        # action_bar's set_size_request is honored on every render.
+        # sa_config and sa_load_unload already use this pattern.
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        scroll.set_overlay_scrolling(False)
+        scroll.add(outer)
+        return scroll
 
     # ── Tool picker page ──────────────────────────────────────────────────
 
@@ -213,7 +233,15 @@ class Panel(ScreenPanel):
                          lambda w: self._set_page("main"))
         outer.pack_start(back_btn, False, False, 0)
 
-        return outer
+        # Same ScrolledWindow wrapper rationale as _build_main_page —
+        # keeps the page's natural-height contract consistent across
+        # both pages of the Notebook so first-render and re-render
+        # match.
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        scroll.set_overlay_scrolling(False)
+        scroll.add(outer)
+        return scroll
 
     def _rebuild_tool_buttons(self, num_paths):
         for child in self._tool_grid.get_children():
