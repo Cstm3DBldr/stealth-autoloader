@@ -138,28 +138,31 @@ layout. The first-render-bug history that produced these constraints
 is preserved in commits `0079f41` → `d48e0f2`.
 
 - **Three sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
-  CALIBRATION (4). Order is "frequency of use, highest first." Don't
+  CALIBRATION (5). Order is "frequency of use, highest first." Don't
   reorder. An earlier "QUICK RE-CAL" 4th section was removed because
   its 3 buttons (Re-cal Sel / Drive / Enc) were exact duplicates of
   the first 3 CALIBRATION buttons — same gcodes, just different
   labels. Don't add it back.
-- **CALIBRATION buttons** are 3 globals + 1 per-tool:
-  - `Calibrate Selector` → `SA_CALIBRATE_SELECTOR` (global)
-  - `Calibrate Drive` → `SA_CALIBRATE_DRIVE` (global)
-  - `Calibrate Encoder Speed` → `SA_CALIBRATE_ENCODER_SPEED` (global)
-  - `Calibrate Bowden` → `SA_CALIBRATE_BOWDEN TOOL={t}` (per-tool —
-    tapping opens the tool picker)
+- **CALIBRATION buttons** are 3 globals + 2 per-tool:
+  - `Calibrate Selector`   → `SA_CALIBRATE_SELECTOR`           (global)
+  - `Calibrate Drive`      → `SA_CALIBRATE_DRIVE`              (global)
+  - `Calibrate Enc Speed`  → `SA_CALIBRATE_ENCODER_SPEED`      (global)
+  - `Calibrate Encoder`    → `SA_CALIBRATE_ENCODER TOOL={t}`   (per-tool)
+  - `Calibrate Bowden`     → `SA_CALIBRATE_BOWDEN TOOL={t}`    (per-tool)
   
-  Per-tool encoder mm/pulse calibration (`SA_CALIBRATE_ENCODER TOOL=N`)
-  is intentionally NOT here — it lives in the step-by-step Calibration
-  Guide panel because it has a more involved per-path workflow.
+  Encoder cals are two different things despite the similar names:
+  `_SPEED` is the global max-feed-speed slip test; the per-tool one
+  is the mm-per-pulse calibration. Don't merge them or assume they're
+  duplicates — the user explicitly asked for both.
 - **CALIBRATION labels stack on 2 lines via embedded `\n`:**
   `"Calibrate\nSelector"` etc. This is the ONE place where embedded
-  `\n` is acceptable — the long "Calibrate Encoder Speed" label
-  doesn't fit a 4-column row width on a 800 px screen, so all four
-  labels are deliberately stacked for visual consistency. The
-  resulting 2-line button height is the reason CALIBRATION's
-  `btn_h=72` is taller than DIAGNOSTICS's 64.
+  `\n` is acceptable — the labels wouldn't fit a 5-column row width
+  single-line on a 800 px screen, so all five are deliberately
+  stacked for visual consistency. "Enc Speed" is abbreviated (rather
+  than the full "Encoder Speed") because line-2 width is tight at
+  5 columns; if you ever drop back to 4 buttons, restore the full
+  "Encoder Speed" label. The resulting 2-line button height is the
+  reason CALIBRATION's `btn_h=72` is taller than DIAGNOSTICS's 64.
 - **Button heights:** DAILY=78, DIAGNOSTICS=64, CALIBRATION=72 px.
   CALIBRATION breaks the simple "decreases with frequency" hierarchy
   because of the 2-line labels — each individual button is still

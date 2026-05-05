@@ -94,14 +94,21 @@ _DIAG = [
 ]
 
 _CAL = [
-    # Three globals + per-tool Bowden. Labels stack on two lines
-    # ("Calibrate" / "<thing>") so the long ones fit a 4-column row at
-    # 800 px screen width without ellipsizing. Bowden is per-tool —
-    # tapping it opens the tool picker.
-    ("Calibrate\nSelector",      "SA_CALIBRATE_SELECTOR",        False),
-    ("Calibrate\nDrive",         "SA_CALIBRATE_DRIVE",           False),
-    ("Calibrate\nEncoder Speed", "SA_CALIBRATE_ENCODER_SPEED",   False),
-    ("Calibrate\nBowden",        "SA_CALIBRATE_BOWDEN TOOL={t}", True),
+    # Three globals + two per-tool. Labels stack on two lines
+    # ("Calibrate" / "<thing>") so they fit a 5-column row at 800 px
+    # screen width without ellipsizing. "Enc Speed" is abbreviated to
+    # keep line 2 short enough for the narrower 5-column width.
+    #
+    # Encoder cals are TWO different things despite similar names:
+    #   SA_CALIBRATE_ENCODER_SPEED  - global, finds max reliable feed
+    #                                 speed before the encoder slips
+    #   SA_CALIBRATE_ENCODER TOOL=N - per-tool, measures mm-per-pulse
+    #                                 calibration for one path
+    ("Calibrate\nSelector",  "SA_CALIBRATE_SELECTOR",          False),
+    ("Calibrate\nDrive",     "SA_CALIBRATE_DRIVE",             False),
+    ("Calibrate\nEnc Speed", "SA_CALIBRATE_ENCODER_SPEED",     False),
+    ("Calibrate\nEncoder",   "SA_CALIBRATE_ENCODER TOOL={t}",  True),
+    ("Calibrate\nBowden",    "SA_CALIBRATE_BOWDEN TOOL={t}",   True),
 ]
 
 
