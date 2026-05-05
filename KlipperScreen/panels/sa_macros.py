@@ -80,6 +80,11 @@ class Panel(ScreenPanel):
         """Single row of equal-width buttons for a section."""
         row = Gtk.Box(spacing=6)
         row.set_hexpand(True)
+        # set_homogeneous(True) is required for equal-width buttons.
+        # pack_start(expand=True, fill=True) only distributes LEFTOVER space
+        # (after each child takes its natural size), so different label
+        # lengths produce different button widths and the rightmost overflow.
+        row.set_homogeneous(True)
         for label, gcode, needs_tool in items:
             btn = _sbs.make(label)
             btn.set_size_request(-1, btn_h)

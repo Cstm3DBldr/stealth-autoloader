@@ -128,16 +128,12 @@ def _on_status(screen, *args):
         if cal == _dismissed_at_cal_state:
             logging.info("sa_subscription: suppressed (user dismissed)")
         elif cal in ("load_purge", "unload_done"):
-            try:
-                import sa_ui_prefs as _prefs
-                if _prefs.get("popup_on_complete", True):
-                    logging.info("sa_subscription: opening sa_post_load")
-                    GLib.idle_add(
-                        screen.show_panel, "sa_post_load", "SA Action")
-            except Exception:
-                logging.info("sa_subscription: opening sa_post_load (no prefs)")
-                GLib.idle_add(
-                    screen.show_panel, "sa_post_load", "SA Action")
+            # Popup-on-complete is now unconditional — the per-user toggle
+            # in sa_settings was removed because the popup behaviour worked
+            # well enough that gating it added complexity without value.
+            logging.info("sa_subscription: opening sa_post_load")
+            GLib.idle_add(
+                screen.show_panel, "sa_post_load", "SA Action")
         elif cal:
             logging.info("sa_subscription: opening sa_cal_prompt")
             GLib.idle_add(

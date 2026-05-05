@@ -75,16 +75,25 @@ class Panel(ScreenPanel):
         nav = Gtk.Box(spacing=6, margin_start=6, margin_end=6,
                       margin_top=4, margin_bottom=4)
 
+        # Prev/Next buttons trimmed 220 → 150 so the center label has more
+        # room for the progress-dots strip without forcing the nav box
+        # natural width past the screen and clipping content in the page
+        # above (was happening on 800×480 displays).
         self._prev_btn = _sbs.make("◀  Back", "sa-btn")
-        self._prev_btn.set_size_request(220, -1)
+        self._prev_btn.set_size_request(150, -1)
         self._prev_btn.connect("clicked", self._go_prev)
 
         self._step_lbl = Gtk.Label()
         self._step_lbl.set_hexpand(True)
         self._step_lbl.set_halign(Gtk.Align.CENTER)
+        # Belt-and-suspenders: even with smaller dots, ellipsize end so an
+        # unexpectedly long step name (or future locale) can't grow the
+        # label past its allocation.
+        self._step_lbl.set_ellipsize(3)
+        self._step_lbl.set_max_width_chars(28)
 
         self._next_btn = _sbs.make("Next  ▶", "sa-btn")
-        self._next_btn.set_size_request(220, -1)
+        self._next_btn.set_size_request(150, -1)
         self._next_btn.connect("clicked", self._go_next)
 
         nav.pack_start(self._prev_btn, False, False, 0)
@@ -95,13 +104,10 @@ class Panel(ScreenPanel):
         return wrapper
 
     def _update_nav(self):
-        # Strip the leading "N — " prefix from the canonical step title — the
-        # progress-dots helper already prints "Step N of M ·" itself.
-        title = _STEP_TITLES[self._step]
-        if " — " in title:
-            title = title.split(" — ", 1)[1]
-        self._step_lbl.set_markup(_sbs.progress_dots(
-            self._step, _NUM_STEPS, name=title))
+        # Step name now lives only in the page header (not in the dots
+        # markup) — keeps the nav strip narrow enough to fit alongside
+        # the prev/next buttons without forcing horizontal overflow.
+        self._step_lbl.set_markup(_sbs.progress_dots(self._step, _NUM_STEPS))
         self._prev_btn.set_sensitive(self._step > 0)
         last = self._step == _NUM_STEPS - 1
         self._next_btn.set_label("Done" if last else "Next  ▶")

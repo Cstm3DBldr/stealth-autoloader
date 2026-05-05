@@ -152,22 +152,26 @@ _LINE   = "#424242"
 
 
 def progress_dots(step_idx, total, name=None):
+    # Dots are deliberately at "medium" size (was "x-large" — that
+    # combined with the step name pushed the nav-bar natural width past
+    # the 720 px content area on a 480 px display, which cascaded into
+    # other widgets in the same wrapper Box being clipped on the right
+    # edge). The page already has a visible step header, so the name
+    # arg is now ignored unless the caller really wants it appended.
     parts = []
     for i in range(total):
         if i < step_idx:
             parts.append(
-                '<span foreground="%s" font_size="x-large">●</span>' % _DONE)
+                '<span foreground="%s" font_size="medium">●</span>' % _DONE)
         elif i == step_idx:
             parts.append(
-                '<span foreground="%s" font_size="x-large" weight="bold">●</span>'
+                '<span foreground="%s" font_size="medium" weight="bold">●</span>'
                 % _NOW)
         else:
             parts.append(
-                '<span foreground="%s" font_size="x-large">○</span>' % _UPCOME)
-    sep = '<span foreground="%s">━━</span>' % _LINE
+                '<span foreground="%s" font_size="medium">○</span>' % _UPCOME)
+    sep = '<span foreground="%s">━</span>' % _LINE
     dots = sep.join(parts)
     suffix = "Step %d of %d" % (step_idx + 1, total)
-    if name:
-        suffix = "%s · %s" % (suffix, name)
-    return '%s     <span weight="bold">%s</span>' % (dots, suffix)
+    return '%s   <span font_size="small">%s</span>' % (dots, suffix)
 

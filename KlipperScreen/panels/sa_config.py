@@ -57,7 +57,10 @@ class Panel(ScreenPanel):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+        # AUTOMATIC instead of ALWAYS — the always-on vertical scrollbar
+        # was rendering as a narrow strip pinned to the right edge that
+        # visually clipped the edit pencil button on each row.
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
 
         self._list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,

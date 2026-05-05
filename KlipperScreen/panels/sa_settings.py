@@ -49,42 +49,35 @@ class Panel(ScreenPanel):
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=10)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=10)
 
-        # ── Popup notifications ───────────────────────────────────────────────
-        outer.pack_start(self._section("NOTIFICATIONS"), False, False, 0)
+        # NOTIFICATIONS section removed — the popup-on-complete toggle is
+        # now unconditional default behaviour. See sa_subscription.py
+        # for the matching cleanup of the _prefs lookup that gated it.
 
-        popup_row = Gtk.Box(spacing=12)
-        popup_lbl = Gtk.Label(label="Show action popup after load/unload complete",
-                              halign=Gtk.Align.START, xalign=0.0)
-        popup_lbl.set_hexpand(True)
-        self._popup_switch = Gtk.Switch()
-        self._popup_switch.set_active(_prefs.get("popup_on_complete", True))
-        self._popup_switch.set_valign(Gtk.Align.CENTER)
-        self._popup_switch.connect("notify::active", self._on_popup_toggle)
-        popup_row.pack_start(popup_lbl,          True,  True,  0)
-        popup_row.pack_start(self._popup_switch, False, False, 0)
-        outer.pack_start(popup_row, False, False, 0)
-
-        outer.pack_start(Gtk.Separator(), False, False, 4)
-
-        # ── Accent color ──────────────────────────────────────────────────────
+        # ── Accent color (Option B: 12 color circles) ─────────────────────────
         outer.pack_start(self._section("BUTTON ACCENT COLOR"), False, False, 0)
 
-        self._accent_btns  = {}
-        self._selected_hex = _prefs.get("accent_color", "#1565C0")
-        color_grid = Gtk.Grid(row_spacing=6, column_spacing=6,
-                              row_homogeneous=True, column_homogeneous=True)
+        self._accent_btns     = {}
+        self._accent_name_lbl = Gtk.Label(halign=Gtk.Align.END)
+        self._selected_hex    = _prefs.get("accent_color", "#1565C0")
+
+        color_grid = Gtk.Grid(row_spacing=8, column_spacing=8,
+                              row_homogeneous=True, column_homogeneous=True,
+                              margin_top=4, margin_bottom=2)
 
         for idx, (name, hex_c, hover, active) in enumerate(_COLORS):
             btn = Gtk.Button()
             css = Gtk.CssProvider()
             cls = "sa-accent-%d" % idx
+            # Circle: fully rounded (radius = half height) so it appears as
+            # a perfect dot. .path-selected adds the lime ring used
+            # elsewhere in the project for "currently selected".
             css.load_from_data((
-                ".{c} {{ background: {bg}; border-radius: 6px; min-height: 54px; }}"
+                ".{c} {{ background: {bg}; border-radius: 24px; "
+                "min-width: 48px; min-height: 48px; padding: 0; }}"
                 ".{c}:hover {{ background: {hv}; }}"
                 ".{c}:active {{ background: {ac}; }}"
-                ".{c} label {{ color: white; font-weight: bold; }}"
             ).format(c=cls, bg=hex_c, hv=hover, ac=active).encode())
             Gtk.StyleContext.add_provider_for_screen(
                 Gdk.Screen.get_default(), css,
@@ -93,21 +86,38 @@ class Panel(ScreenPanel):
             if hex_c == self._selected_hex:
                 btn.get_style_context().add_class("path-selected")
 
-            btn.add(Gtk.Label(label=name))
+            btn.set_size_request(48, 48)
             btn.connect("clicked", self._set_color, hex_c, hover, active)
             self._accent_btns[hex_c] = btn
-            color_grid.attach(btn, idx % 4, idx // 4, 1, 1)
+            # 6 columns × 2 rows holds 12 swatches in roughly half the
+            # vertical space the old labeled-button grid took.
+            color_grid.attach(btn, idx % 6, idx // 6, 1, 1)
 
         outer.pack_start(color_grid, False, False, 0)
 
-        outer.pack_start(Gtk.Separator(), False, False, 4)
+        # "Currently: <Color name>" hint below the grid so users know what
+        # they just picked without label-on-button real estate.
+        name_row = Gtk.Box(spacing=8)
+        name_row.set_halign(Gtk.Align.END)
+        name_row.set_margin_top(2)
+        self._accent_name_lbl.set_markup(
+            '<span font_size="small" foreground="#9E9E9E">Currently: %s</span>'
+            % self._color_name_for(self._selected_hex))
+        name_row.pack_start(self._accent_name_lbl, False, False, 0)
+        outer.pack_start(name_row, False, False, 0)
 
         # ── Configured values — scrolls with the page, uses accent color ──────
         detail_btn = _sbs.make("Autoloader Configured Values \u2192", "sa-btn")
         detail_btn.connect("clicked", lambda w: self._stack.set_visible_child_name("detail"))
+        detail_btn.set_margin_top(8)
         outer.pack_start(detail_btn, False, False, 0)
 
-        outer.pack_start(Gtk.Separator(), False, False, 4)
+        cv_hint = Gtk.Label(halign=Gtk.Align.START)
+        cv_hint.set_markup(
+            '<span font_size="small" foreground="#9E9E9E">'
+            '  Read the speeds, distances, bowden lengths, and encoder '
+            'mm/pulse currently in use.</span>')
+        outer.pack_start(cv_hint, False, False, 0)
 
         # ── Material profiles ─────────────────────────────────────────────────
         outer.pack_start(self._section("MATERIAL PROFILES"), False, False, 0)
@@ -227,8 +237,12 @@ class Panel(ScreenPanel):
         lbl.set_markup('<b><span font_size="large">%s</span></b>' % title)
         return lbl
 
-    def _on_popup_toggle(self, widget, param):
-        _prefs.save({"popup_on_complete": widget.get_active()})
+    def _color_name_for(self, hex_c):
+        """Look up the human-readable name of an accent hex from _COLORS."""
+        for name, h, _hv, _ac in _COLORS:
+            if h.lower() == hex_c.lower():
+                return name
+        return hex_c
 
     def _set_color(self, widget, hex_c, hover, active):
         for h, btn in self._accent_btns.items():
@@ -240,6 +254,11 @@ class Panel(ScreenPanel):
         self._selected_hex = hex_c
         _prefs.save({"accent_color": hex_c})
         _sbs.reapply(hex_c, hover, active)
+        # Update the "Currently: X" hint without rebuilding the page.
+        if getattr(self, "_accent_name_lbl", None) is not None:
+            self._accent_name_lbl.set_markup(
+                '<span font_size="small" foreground="#9E9E9E">Currently: %s'
+                '</span>' % self._color_name_for(hex_c))
         self._screen.show_popup_message(
             "Button color updated \u2014 reopen panels to see changes", level=1)
 
