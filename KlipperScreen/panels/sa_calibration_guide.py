@@ -95,8 +95,13 @@ class Panel(ScreenPanel):
         return wrapper
 
     def _update_nav(self):
-        self._step_lbl.set_markup(
-            '<b>Step %d of %d</b>' % (self._step + 1, _NUM_STEPS))
+        # Strip the leading "N — " prefix from the canonical step title — the
+        # progress-dots helper already prints "Step N of M ·" itself.
+        title = _STEP_TITLES[self._step]
+        if " — " in title:
+            title = title.split(" — ", 1)[1]
+        self._step_lbl.set_markup(_sbs.progress_dots(
+            self._step, _NUM_STEPS, name=title))
         self._prev_btn.set_sensitive(self._step > 0)
         last = self._step == _NUM_STEPS - 1
         self._next_btn.set_label("Done" if last else "Next  ▶")

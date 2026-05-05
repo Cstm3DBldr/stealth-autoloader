@@ -37,6 +37,20 @@ def _input_type(state):
     return 'yesno'
 
 
+def _phase_label(cal_state):
+    """Short uppercase phase name from a cal_state value, shown above the
+    prompt as a section header. Driven by the cal_state prefix that the
+    autoloader Klipper extra emits."""
+    if not cal_state:
+        return "CALIBRATION"
+    s = cal_state.lower()
+    if s.startswith('sel_'):  return "SELECTOR CALIBRATION"
+    if s.startswith('drv_'):  return "DRIVE MOTOR CALIBRATION"
+    if s.startswith('enc_'):  return "ENCODER CALIBRATION"
+    if s.startswith('bow_'):  return "BOWDEN CALIBRATION"
+    return cal_state.upper()
+
+
 class Panel(ScreenPanel):
     """Calibration prompt panel — shows backend prompt + appropriate input."""
 
@@ -53,17 +67,29 @@ class Panel(ScreenPanel):
     # ── UI construction ────────────────────────────────────────────────────────
 
     def _build_ui(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=8)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin=8)
 
-        # Prompt text
+        # Phase label — small dimmed line above the prompt indicating which
+        # calibration is running ("SELECTOR · sel_confirm" etc.). Updated by
+        # _apply_state() from the cal_state value.
+        self._phase_lbl = Gtk.Label(halign=Gtk.Align.CENTER)
+        self._phase_lbl.set_markup(
+            '<span font_size="x-small" foreground="#9E9E9E" letter_spacing="2000">'
+            'CALIBRATION</span>')
+        outer.pack_start(self._phase_lbl, False, False, 0)
+
+        # Prompt text — large, centered, the focal point of the panel.
         self._prompt_lbl = Gtk.Label()
         self._prompt_lbl.set_line_wrap(True)
         self._prompt_lbl.set_halign(Gtk.Align.CENTER)
+        self._prompt_lbl.set_justify(Gtk.Justification.CENTER)
         self._prompt_lbl.set_markup(
-            '<span font_size="large">Waiting for calibration…</span>')
-        outer.pack_start(self._prompt_lbl, False, False, 0)
+            '<span font_size="x-large" weight="bold">'
+            'Waiting for calibration…</span>')
+        outer.pack_start(self._prompt_lbl, False, False, 4)
 
-        outer.pack_start(Gtk.Separator(), False, False, 2)
+        # Divider removed — phase label + bold prompt give enough separation
+        # without the visual weight of a Gtk.Separator.
 
         # Input area — swapped based on input type
         self._input_stack = Gtk.Stack()
@@ -219,9 +245,17 @@ class Panel(ScreenPanel):
         self._cal_state = cal_state
 
         if cal_state:
+            from xml.sax.saxutils import escape as _xml_escape
+            # Phase label — derive a short uppercase category name from the
+            # cal_state prefix so the user knows which calibration is running.
+            phase = _phase_label(cal_state)
+            self._phase_lbl.set_markup(
+                '<span font_size="x-small" foreground="#9E9E9E" '
+                'letter_spacing="2000">%s</span>' % _xml_escape(phase))
             display_text = cal_prompt if cal_prompt else cal_state
             self._prompt_lbl.set_markup(
-                '<span font_size="medium">%s</span>' % display_text)
+                '<span font_size="x-large" weight="bold">%s</span>'
+                % _xml_escape(display_text))
             itype = _input_type(cal_state)
             self._input_stack.set_visible_child_name(itype)
             # Clear numpad display on state change

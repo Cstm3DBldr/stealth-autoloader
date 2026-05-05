@@ -131,3 +131,43 @@ def _parse(hex_c):
         h = ''.join(c*2 for c in h)
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
+
+# ── Progress dots ────────────────────────────────────────────────────────────
+# Shared horizontal dot strip used by sa_calibration_guide (and any future
+# multi-step wizard). Returns a Pango markup string suitable for
+# Gtk.Label.set_markup().
+#
+# step_idx : 0-based current step
+# total    : total step count
+# name     : optional human-readable step name appended to the right
+#
+# Colors:  done = green     ●
+#          current = blue   ●  (bold)
+#          upcoming = grey  ○
+
+_DONE   = "#388E3C"
+_NOW    = "#1565C0"
+_UPCOME = "#424242"
+_LINE   = "#424242"
+
+
+def progress_dots(step_idx, total, name=None):
+    parts = []
+    for i in range(total):
+        if i < step_idx:
+            parts.append(
+                '<span foreground="%s" font_size="x-large">●</span>' % _DONE)
+        elif i == step_idx:
+            parts.append(
+                '<span foreground="%s" font_size="x-large" weight="bold">●</span>'
+                % _NOW)
+        else:
+            parts.append(
+                '<span foreground="%s" font_size="x-large">○</span>' % _UPCOME)
+    sep = '<span foreground="%s">━━</span>' % _LINE
+    dots = sep.join(parts)
+    suffix = "Step %d of %d" % (step_idx + 1, total)
+    if name:
+        suffix = "%s · %s" % (suffix, name)
+    return '%s     <span weight="bold">%s</span>' % (dots, suffix)
+
