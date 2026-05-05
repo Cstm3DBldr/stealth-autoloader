@@ -140,24 +140,28 @@ class Panel(ScreenPanel):
         outer.set_margin_top(4)
         outer.set_margin_start(4)
         outer.set_margin_end(4)
-        outer.set_margin_bottom(8)
+        # Bumped well above the previous 8 px so the QUICK RE-CAL row has
+        # an obvious gap from the bottom edge instead of the previous
+        # barely-perceptible padding.
+        outer.set_margin_bottom(20)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Trimmed again (50/40/36/44 → 46/38/34/40) to
-        # free space for an 8 px bottom padding under QUICK RE-CAL.
+        # DAILY first. Each row trimmed 2 px from the previous pass to
+        # make the freed space available for a noticeably bigger
+        # bottom margin (20 px) under QUICK RE-CAL.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=46),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=44),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=38),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=36),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=34),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=32),    False, False, 0)
 
         # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
         # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=40),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=38),    False, False, 0)
 
         return outer
 
