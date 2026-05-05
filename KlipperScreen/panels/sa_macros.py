@@ -88,6 +88,14 @@ class Panel(ScreenPanel):
 
         self._stack.add_named(self._build_main_page(), "main")
         self._stack.add_named(self._build_tool_page(), "tool")
+        # Pin the visible child during __init__ so the first allocation
+        # pass (which happens before activate() runs) has a non-None
+        # visible child to size to. Without this, vhomogeneous=False
+        # has nothing to fall back on and GTK uses the largest-child
+        # default for that first pass — causing the panel to render
+        # too tall on a fresh KlipperScreen restart but correctly on
+        # any subsequent re-open of the panel.
+        self._stack.set_visible_child_name("main")
 
         self.content.pack_start(self._stack, True, True, 0)
 
@@ -244,6 +252,19 @@ class Panel(ScreenPanel):
         sa = self._printer.data.get("autoloader", {})
         self._num_paths = sa.get("num_paths", 6)
         self._stack.set_visible_child_name("main")
+
+        # Belt-and-suspenders: force a fresh size negotiation from idle so
+        # any cached first-pass allocation (made before vhomogeneous took
+        # effect) is replaced with a correct second-pass measurement.
+        # Together with the visible-child pin in __init__, this makes
+        # post-restart first opens render identically to subsequent opens.
+        def _kick_resize():
+            self._stack.queue_resize()
+            parent = self.content.get_parent()
+            if parent is not None:
+                parent.queue_resize()
+            return False
+        GLib.idle_add(_kick_resize)
 
     def process_update(self, action, data):
         if action != "notify_status_update":
