@@ -85,8 +85,10 @@ class Panel(ScreenPanel):
         lbl.set_markup(
             '<span font_size="x-small" foreground="#9E9E9E" '
             'letter_spacing="2000">── %s ──</span>' % title)
-        lbl.set_margin_top(8)
-        lbl.set_margin_bottom(2)
+        # Margins tightened (8/2 → 3/0) to reclaim ~10 px per header so
+        # all 4 sections fit on a 480 px screen without scrolling.
+        lbl.set_margin_top(3)
+        lbl.set_margin_bottom(0)
         return lbl
 
     def _section_row(self, items, btn_h):
@@ -127,27 +129,30 @@ class Panel(ScreenPanel):
     # ── Main page ─────────────────────────────────────────────────────────
 
     def _build_main_page(self):
+        # Tight spacing/margin so 4 sections fit on a 480 px screen
+        # (content_height ≈ 396 px) without scrolling. Each section's
+        # header is followed directly by its button row with no extra
+        # spacing in between (`spacing=2` between siblings of the outer
+        # Box keeps headers visually attached to their rows).
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
-                        spacing=4, margin=8)
+                        spacing=2, margin=4)
 
-        # DAILY — biggest buttons; the daily-use commands deserve emphasis.
-        outer.pack_start(self._section_header("DAILY"),         False, False, 0)
-        outer.pack_start(self._section_row(_DAILY, btn_h=72),   False, False, 0)
+        # Heights step down section by section so the eye lands on
+        # DAILY first. Reduced from 72/64/56/64 → 60/50/42/52 to fit
+        # all 4 sections on screen with no scroll.
+        outer.pack_start(self._section_header("DAILY"),              False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=60),    False, False, 0)
 
-        # DIAGNOSTICS — medium buttons; same height, fewer items per row.
-        outer.pack_start(self._section_header("DIAGNOSTICS"),   False, False, 0)
-        outer.pack_start(self._section_row(_DIAG, btn_h=64),    False, False, 0)
+        outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=50),    False, False, 0)
 
-        # CALIBRATION — compact buttons; touched once per setup so they don't
-        # need the full real estate.
-        outer.pack_start(self._section_header("CALIBRATION"),   False, False, 0)
-        outer.pack_start(self._section_row(_CAL, btn_h=56),     False, False, 0)
+        outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=42),    False, False, 0)
 
-        # QUICK RE-CAL — three big buttons for one-tap re-runs of the most
-        # common no-tool-needed cal tasks. Placed AFTER the full CALIBRATION
-        # row per user request.
+        # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
+        # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=64),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=52),    False, False, 0)
 
         return outer
 
