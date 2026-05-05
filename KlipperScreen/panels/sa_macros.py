@@ -95,20 +95,26 @@ class Panel(ScreenPanel):
 
         self.content.pack_start(self._stack, True, True, 0)
 
-        # Pin self.content to KS's precomputed content_height. base_panel's
-        # action_bar has set_vexpand(True) AND set_size_request(_, full
-        # screen height) — without an equally explicit floor on self.content,
-        # GTK's first-pass grid allocation hands more vertical budget to
-        # action_bar than the content row, stretching the rail icons. By
-        # the second open, cached realized sizes shift the balance and the
-        # rail looks correct. This pin forces the content row to claim its
-        # full share on every allocation pass — first or subsequent.
+        # Override screen_panel.py's default vexpand=True on self.content
+        # AND pin its size_request to KS's precomputed content_height.
+        # Together these stop self.content from competing with the
+        # action_bar's vexpand=True for leftover vertical space — the
+        # content widget is exactly content_height tall on every
+        # allocation, so the grid has no leftover to distribute and the
+        # action_bar gets exactly the screen.height it requested.
         try:
             ch = int(getattr(self._gtk, 'content_height', 0))
         except Exception:
             ch = 0
         if ch > 0:
+            self.content.set_vexpand(False)
             self.content.set_size_request(-1, ch)
+            self._stack.set_size_request(-1, ch)
+
+        # Diagnostic logging — captures actual widget allocations so we can
+        # see what GTK does on first vs subsequent attaches without guessing.
+        # Will remove once first-vs-subsequent rendering is consistent.
+        GLib.idle_add(self._log_alloc, "init-idle")
 
     def _set_page(self, name):
         """Notebook equivalent of Stack.set_visible_child_name."""
@@ -275,6 +281,33 @@ class Panel(ScreenPanel):
             self._pending_cmd = None
         self._set_page("main")
 
+    # ── Diagnostic logging (temporary) ────────────────────────────────────
+
+    def _log_alloc(self, when):
+        try:
+            bp = self._screen.base_panel
+            ab = bp.action_bar
+            ab_visible = sum(1 for c in ab.get_children() if c.get_visible())
+            ab_req = ab.get_size_request()
+            tb = bp.titlebar
+            mg = bp.main_grid
+            logger.info(
+                "sa_macros[%s]: action_bar alloc=%dx%d req=%sx%s visible_icons=%d  "
+                "titlebar alloc=%dx%d  content alloc=%dx%d req=%s  "
+                "main_grid alloc=%dx%d",
+                when,
+                ab.get_allocated_width(), ab.get_allocated_height(),
+                ab_req[0], ab_req[1], ab_visible,
+                tb.get_allocated_width(), tb.get_allocated_height(),
+                self.content.get_allocated_width(),
+                self.content.get_allocated_height(),
+                self.content.get_size_request(),
+                mg.get_allocated_width(), mg.get_allocated_height(),
+            )
+        except Exception:
+            logger.exception("sa_macros: diagnostic log failed")
+        return False
+
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def activate(self):
@@ -288,6 +321,13 @@ class Panel(ScreenPanel):
         sa = self._printer.data.get("autoloader", {})
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
+
+        # Diagnostic logging at multiple points so we capture allocations
+        # before, during, and after first-allocation settling.
+        GLib.idle_add(self._log_alloc, "activate-idle")
+        GLib.timeout_add(100,  self._log_alloc, "activate+100ms")
+        GLib.timeout_add(500,  self._log_alloc, "activate+500ms")
+        GLib.timeout_add(1500, self._log_alloc, "activate+1500ms")
 
     def process_update(self, action, data):
         if action != "notify_status_update":
