@@ -1,6 +1,6 @@
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk
 import logging
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -175,10 +175,6 @@ class Panel(ScreenPanel):
             self.content.set_size_request(-1, ch)
             self._stack.set_size_request(-1, ch)
 
-        # Diagnostic logging — captures actual widget allocations so we can
-        # see what GTK does on first vs subsequent attaches without guessing.
-        # Will remove once first-vs-subsequent rendering is consistent.
-        GLib.idle_add(self._log_alloc, "init-idle")
 
     def _set_page(self, name):
         """Notebook equivalent of Stack.set_visible_child_name."""
@@ -202,7 +198,7 @@ class Panel(ScreenPanel):
         """
         lbl = Gtk.Label(halign=Gtk.Align.START, xalign=0.0)
         lbl.set_markup(
-            '<span font="8" foreground="#9E9E9E">── %s ──</span>' % title)
+            '<span font="11" foreground="#9E9E9E">── %s ──</span>' % title)
         lbl.get_style_context().add_class("sa-section-header")
         return lbl
 
@@ -244,30 +240,31 @@ class Panel(ScreenPanel):
     # ── Main page ─────────────────────────────────────────────────────────
 
     def _build_main_page(self):
-        # Tight spacing so 4 sections fit on a 480 px screen without
-        # scrolling.
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        outer.set_margin_top(6)
-        outer.set_margin_start(6)
-        outer.set_margin_end(6)
-        outer.set_margin_bottom(10)
+        # Sized to fill the available 444 px of content_height (480 -
+        # titlebar) with appealing breathing room — about 50 px of
+        # leftover that the vexpand spacer below absorbs evenly.
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        outer.set_margin_top(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+        outer.set_margin_bottom(14)
 
         # Heights step down section by section so the eye lands on
         # DAILY first.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=44),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=58),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=36),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=48),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=32),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=42),    False, False, 0)
 
-        # QUICK RE-CAL — three buttons sized to match DIAGNOSTICS so all
-        # rows render at their requested heights (single-line labels, no
-        # embedded newlines forcing extra vertical space).
+        # QUICK RE-CAL — slightly taller than CALIBRATION to telegraph
+        # "shortcut" prominence; fewer buttons (3 vs 5) so each is wider
+        # and a taller proportion still looks balanced.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=36),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=50),    False, False, 0)
 
         # vexpand spacer at the end — REQUIRED for first-render correctness.
         #
@@ -351,60 +348,6 @@ class Panel(ScreenPanel):
             self._pending_cmd = None
         self._set_page("main")
 
-    # ── Diagnostic logging (temporary) ────────────────────────────────────
-
-    def _log_alloc(self, when):
-        try:
-            bp = self._screen.base_panel
-            ab = bp.action_bar
-            ab_visible = sum(1 for c in ab.get_children() if c.get_visible())
-            ab_req = ab.get_size_request()
-            mg = bp.main_grid
-            kids = []
-            for c in ab.get_children():
-                # Try to find the image inside the button to log its size.
-                img_info = ""
-                try:
-                    if hasattr(c, 'get_image'):
-                        img = c.get_image()
-                        if img is not None:
-                            iw = img.get_allocated_width()
-                            ih = img.get_allocated_height()
-                            ireq = img.get_size_request()
-                            pixel = -1
-                            if hasattr(img, 'get_pixel_size'):
-                                pixel = img.get_pixel_size()
-                            pb_w = pb_h = -1
-                            try:
-                                pb = img.get_pixbuf()
-                                if pb is not None:
-                                    pb_w = pb.get_width()
-                                    pb_h = pb.get_height()
-                            except Exception:
-                                pass
-                            img_info = "img=%dx%d/min%sx%s/pix=%d/pb=%dx%d" % (
-                                iw, ih, ireq[0], ireq[1], pixel, pb_w, pb_h)
-                except Exception:
-                    pass
-                kids.append("%s=%dx%d/vis=%d/%s" % (
-                    c.get_name() or type(c).__name__,
-                    c.get_allocated_width(), c.get_allocated_height(),
-                    1 if c.get_visible() else 0,
-                    img_info,
-                ))
-            logger.info(
-                "sa_macros[%s]: main_grid=%dx%d action_bar=%dx%d req=%sx%s "
-                "visible_icons=%d\n  children=[%s]",
-                when,
-                mg.get_allocated_width(), mg.get_allocated_height(),
-                ab.get_allocated_width(), ab.get_allocated_height(),
-                ab_req[0], ab_req[1], ab_visible,
-                "\n  ".join(kids),
-            )
-        except Exception:
-            logger.exception("sa_macros: diagnostic log failed")
-        return False
-
     # ── Lifecycle ─────────────────────────────────────────────────────────
 
     def activate(self):
@@ -418,11 +361,6 @@ class Panel(ScreenPanel):
         sa = self._printer.data.get("autoloader", {})
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
-
-        # Keep diagnostic logging one more cycle to confirm the section-
-        # header CSS fix actually shrinks the content row on first attach.
-        GLib.idle_add(self._log_alloc, "activate-idle")
-        GLib.timeout_add(500, self._log_alloc, "activate+500ms")
 
     def process_update(self, action, data):
         if action != "notify_status_update":
