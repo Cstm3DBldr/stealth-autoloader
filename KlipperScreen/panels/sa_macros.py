@@ -133,22 +133,23 @@ class Panel(ScreenPanel):
         # (content_height ≈ 396 px) without scrolling. Each section's
         # header is followed directly by its button row with no extra
         # spacing in between (`spacing=2` between siblings of the outer
-        # Box keeps headers visually attached to their rows). Slightly
-        # bigger bottom margin so the QUICK RE-CAL row doesn't sit
-        # flush against the screen edge.
+        # Box keeps headers visually attached to their rows). Bottom
+        # margin is intentionally small — base_panel's left navigation
+        # rail is sized off this panel's overall height, and any extra
+        # bottom padding (margin or explicit spacer widget) pushes the
+        # rail's bottom icon (power) off the screen edge.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         outer.set_margin_top(4)
         outer.set_margin_start(4)
         outer.set_margin_end(4)
-        # Bumped well above the previous 8 px so the QUICK RE-CAL row has
-        # an obvious gap from the bottom edge instead of the previous
-        # barely-perceptible padding.
-        outer.set_margin_bottom(20)
+        # Keep this small — base_panel's left rail is sized to the overall
+        # panel height, and bumping margin_bottom or appending a spacer
+        # widget pushed the bottom rail icon (power) off the screen.
+        outer.set_margin_bottom(6)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Each row trimmed 2 px from the previous pass to
-        # make the freed space available for a noticeably bigger
-        # bottom margin (20 px) under QUICK RE-CAL.
+        # DAILY first. Total panel height has to stay under what the
+        # left rail can accommodate or the power icon clips off bottom.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
         outer.pack_start(self._section_row(_DAILY,     btn_h=44),    False, False, 0)
 
@@ -162,14 +163,6 @@ class Panel(ScreenPanel):
         # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
         outer.pack_start(self._section_row(_QUICK_CAL, btn_h=38),    False, False, 0)
-
-        # Hard bottom spacer — guarantees a visible gap below the QUICK
-        # RE-CAL row before the screen edge regardless of how GTK
-        # distributes leftover space inside the outer Box. The previous
-        # margin_bottom approach wasn't reliably visible.
-        bottom_pad = Gtk.Box()
-        bottom_pad.set_size_request(-1, 24)
-        outer.pack_start(bottom_pad, False, False, 0)
 
         return outer
 
