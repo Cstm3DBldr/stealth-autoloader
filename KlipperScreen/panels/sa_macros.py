@@ -85,9 +85,9 @@ class Panel(ScreenPanel):
         lbl.set_markup(
             '<span font_size="x-small" foreground="#9E9E9E" '
             'letter_spacing="2000">── %s ──</span>' % title)
-        # Margins tightened (8/2 → 3/0) to reclaim ~10 px per header so
-        # all 4 sections fit on a 480 px screen without scrolling.
-        lbl.set_margin_top(3)
+        # Tight headers — top margin minimized further so all 4 sections
+        # fit on a 480 px screen with no scroll on the QUICK RE-CAL row.
+        lbl.set_margin_top(1)
         lbl.set_margin_bottom(0)
         return lbl
 
@@ -138,21 +138,22 @@ class Panel(ScreenPanel):
                         spacing=2, margin=4)
 
         # Heights step down section by section so the eye lands on
-        # DAILY first. Reduced from 72/64/56/64 → 60/50/42/52 to fit
-        # all 4 sections on screen with no scroll.
+        # DAILY first. Trimmed further (60/50/42/52 → 54/44/38/48) so
+        # all 4 sections clear the bottom of a 480 px screen with no
+        # scroll, even after KS chrome takes its share.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=60),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=54),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=50),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=44),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=42),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=38),    False, False, 0)
 
         # QUICK RE-CAL — three buttons slightly taller than CALIBRATION
         # to telegraph "quick shortcut" while still fitting on screen.
         outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=52),    False, False, 0)
+        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=48),    False, False, 0)
 
         return outer
 
