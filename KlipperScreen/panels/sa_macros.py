@@ -203,8 +203,19 @@ class Panel(ScreenPanel):
         # action_bar's set_size_request is honored on every render.
         # sa_config and sa_load_unload already use this pattern.
         scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        # NEVER, AUTOMATIC matches sa_config — vertical policy NEVER turns out
+        # to make ScrolledWindow propagate the child's full natural height
+        # (defeating the whole point of the wrap), while AUTOMATIC reports a
+        # small minimum height to the parent and only shows a scrollbar if
+        # the content actually overflows. With the page tightened to fit on
+        # 480 px the scrollbar never appears in practice.
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
+        # Explicitly opt out of propagating the child's natural height so
+        # main_grid sees a small value during first allocation, no matter
+        # how many fixed-size buttons are inside the page.
+        scroll.set_propagate_natural_height(False)
+        scroll.set_propagate_natural_width(False)
         scroll.add(outer)
         return scroll
 
@@ -238,8 +249,19 @@ class Panel(ScreenPanel):
         # both pages of the Notebook so first-render and re-render
         # match.
         scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.NEVER)
+        # NEVER, AUTOMATIC matches sa_config — vertical policy NEVER turns out
+        # to make ScrolledWindow propagate the child's full natural height
+        # (defeating the whole point of the wrap), while AUTOMATIC reports a
+        # small minimum height to the parent and only shows a scrollbar if
+        # the content actually overflows. With the page tightened to fit on
+        # 480 px the scrollbar never appears in practice.
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_overlay_scrolling(False)
+        # Explicitly opt out of propagating the child's natural height so
+        # main_grid sees a small value during first allocation, no matter
+        # how many fixed-size buttons are inside the page.
+        scroll.set_propagate_natural_height(False)
+        scroll.set_propagate_natural_width(False)
         scroll.add(outer)
         return scroll
 
