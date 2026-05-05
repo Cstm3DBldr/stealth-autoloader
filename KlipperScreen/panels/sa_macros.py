@@ -289,20 +289,23 @@ class Panel(ScreenPanel):
             ab = bp.action_bar
             ab_visible = sum(1 for c in ab.get_children() if c.get_visible())
             ab_req = ab.get_size_request()
-            tb = bp.titlebar
             mg = bp.main_grid
+            kids = []
+            for c in ab.get_children():
+                kids.append("%s=%dx%d/min%dx%d/vis=%d" % (
+                    c.get_name() or type(c).__name__,
+                    c.get_allocated_width(), c.get_allocated_height(),
+                    c.get_size_request()[0], c.get_size_request()[1],
+                    1 if c.get_visible() else 0,
+                ))
             logger.info(
-                "sa_macros[%s]: action_bar alloc=%dx%d req=%sx%s visible_icons=%d  "
-                "titlebar alloc=%dx%d  content alloc=%dx%d req=%s  "
-                "main_grid alloc=%dx%d",
+                "sa_macros[%s]: main_grid=%dx%d action_bar=%dx%d req=%sx%s "
+                "visible_icons=%d  children=[%s]",
                 when,
+                mg.get_allocated_width(), mg.get_allocated_height(),
                 ab.get_allocated_width(), ab.get_allocated_height(),
                 ab_req[0], ab_req[1], ab_visible,
-                tb.get_allocated_width(), tb.get_allocated_height(),
-                self.content.get_allocated_width(),
-                self.content.get_allocated_height(),
-                self.content.get_size_request(),
-                mg.get_allocated_width(), mg.get_allocated_height(),
+                "  ".join(kids),
             )
         except Exception:
             logger.exception("sa_macros: diagnostic log failed")
@@ -322,23 +325,23 @@ class Panel(ScreenPanel):
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
 
-        # Cap base_panel's main_grid to the actual screen height. Diagnostic
-        # logging revealed that on first attach main_grid is allocated 800x496
-        # on a 480 px screen — the bottom 16 px of action_bar (where the power
-        # icon lives) falls off the visible area. Root cause: action_bar's 6
-        # icon buttons report a slightly larger natural height before their
-        # icon images have been realized; on reopen the icons are cached and
-        # the natural sum settles at the correct 480. Pinning a hard
-        # set_size_request on main_grid forces both first and subsequent
-        # allocations to the actual screen size regardless of what the
-        # children's pre-realization natural sizes total to.
+        # Trigger base_panel.reload_icons() — this re-creates each
+        # action_bar button's icon image at the correct pixel size.
+        # On first attach after KS startup the action_bar buttons report
+        # a slightly larger natural height (sum: 496 vs 480) than after
+        # icons settle, which overflows main_grid by 16 px and clips the
+        # bottom power icon off the screen. Running reload_icons()
+        # synchronously here forces that settling before our first
+        # allocation pass.
         try:
-            sw = int(getattr(self._screen, 'width',  0)) or 0
-            sh = int(getattr(self._screen, 'height', 0)) or 0
-            if sw > 0 and sh > 0:
-                self._screen.base_panel.main_grid.set_size_request(sw, sh)
+            self._screen.base_panel.reload_icons()
         except Exception:
-            logger.exception("sa_macros: failed to pin main_grid size_request")
+            logger.exception("sa_macros: reload_icons failed")
+
+        # Force a full size renegotiation cascade after the icon reload.
+        bp = self._screen.base_panel
+        bp.action_bar.queue_resize()
+        bp.main_grid.queue_resize()
 
         # Diagnostic logging — keep until user confirms first-load is fixed.
         GLib.idle_add(self._log_alloc, "activate-idle")
