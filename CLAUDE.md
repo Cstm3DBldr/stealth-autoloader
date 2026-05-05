@@ -109,9 +109,15 @@ asks for a different layout.
 - **Hero preview line:** `<span font_size="small" foreground="#BDBDBD">…</span>`,
   `set_max_width_chars(32)`, `set_ellipsize(3)`. Content driven by
   `_build_status_text()` and `_build_load_text()`:
-    - STATUS: `"N/M loaded · T0 mat · T1 mat"` (up to 2 loaded materials),
-      `"N / M paths loaded"` if no materials set, or `"Autoloader idle"` if
-      `total == 0`.
+    - STATUS: `"N/M loaded · T<active> <material>"` where `<active>` is
+      the currently-mounted extruder index (parsed from
+      `toolhead.extruder` via `_extruder_to_tool_idx()` — "extruder" → 0,
+      "extruderN" → N). Falls back to `"N/M loaded · T<active> active"`
+      if the active path has no material set, `"N / M paths loaded"`
+      if no extruder is detectable, or `"Autoloader idle"` if
+      `total == 0`. Loaded count uses `_effective_state()` (sensors +
+      stored state), NOT raw `path_states[i] == "loaded"` — sa_main
+      uses the same logic so both panels agree on the count.
     - LOAD/UNLOAD: `"Selector at TN"` (with `" · drive engaged"` when
       `servo_engaged`), or `"Selector unhomed"` when `current_path < 0`.
   Always escape dynamic text via `xml.sax.saxutils.escape` before passing

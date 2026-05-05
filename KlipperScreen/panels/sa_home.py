@@ -11,6 +11,26 @@ import sa_subscription as _sasub
 logger = logging.getLogger('klipperscreen.sa_home')
 
 
+def _extruder_to_tool_idx(name):
+    """Map a Klipper extruder name to its tool index.
+
+    "extruder"  -> 0    (the first/default extruder has no number suffix)
+    "extruder1" -> 1
+    "extruder2" -> 2
+    Anything else returns None.
+    """
+    if not name:
+        return None
+    if name == "extruder":
+        return 0
+    if name.startswith("extruder"):
+        try:
+            return int(name[len("extruder"):])
+        except ValueError:
+            pass
+    return None
+
+
 def _effective_state(i, states, entry, toolhead, extruder):
     """Combine stored path state with sensor readings to determine
     actual filament state. Mirrors sa_main._effective_state so both
@@ -197,13 +217,17 @@ class Panel(ScreenPanel):
                for i in range(total)]
         loaded = sum(1 for s in eff if s == "loaded")
 
-        # Up to 2 loaded paths' material names inline; otherwise just the count.
-        seen = []
-        for i, m in enumerate(materials):
-            if m and i < len(eff) and eff[i] == "loaded" and len(seen) < 2:
-                seen.append("T%d %s" % (i, m))
-        if seen:
-            return "%d/%d loaded · %s" % (loaded, total, " · ".join(seen))
+        # Show ONLY the active tool path (whichever extruder is currently
+        # mounted on the carriage) — not a list of every loaded path.
+        # toolhead.extruder is e.g. "extruder" / "extruder1" etc.
+        th_data = self._printer.data.get("toolhead", {}) or {}
+        active_idx = _extruder_to_tool_idx(th_data.get("extruder", ""))
+
+        if active_idx is not None and 0 <= active_idx < total:
+            m = materials[active_idx] if active_idx < len(materials) else ""
+            if m and eff[active_idx] == "loaded":
+                return "%d/%d loaded · T%d %s" % (loaded, total, active_idx, m)
+            return "%d/%d loaded · T%d active" % (loaded, total, active_idx)
         if total:
             return "%d / %d paths loaded" % (loaded, total)
         return "Autoloader idle"
