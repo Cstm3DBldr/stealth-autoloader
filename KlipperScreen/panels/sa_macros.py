@@ -346,20 +346,44 @@ class Panel(ScreenPanel):
             mg = bp.main_grid
             kids = []
             for c in ab.get_children():
-                kids.append("%s=%dx%d/min%dx%d/vis=%d" % (
+                # Try to find the image inside the button to log its size.
+                img_info = ""
+                try:
+                    if hasattr(c, 'get_image'):
+                        img = c.get_image()
+                        if img is not None:
+                            iw = img.get_allocated_width()
+                            ih = img.get_allocated_height()
+                            ireq = img.get_size_request()
+                            pixel = -1
+                            if hasattr(img, 'get_pixel_size'):
+                                pixel = img.get_pixel_size()
+                            pb_w = pb_h = -1
+                            try:
+                                pb = img.get_pixbuf()
+                                if pb is not None:
+                                    pb_w = pb.get_width()
+                                    pb_h = pb.get_height()
+                            except Exception:
+                                pass
+                            img_info = "img=%dx%d/min%sx%s/pix=%d/pb=%dx%d" % (
+                                iw, ih, ireq[0], ireq[1], pixel, pb_w, pb_h)
+                except Exception:
+                    pass
+                kids.append("%s=%dx%d/vis=%d/%s" % (
                     c.get_name() or type(c).__name__,
                     c.get_allocated_width(), c.get_allocated_height(),
-                    c.get_size_request()[0], c.get_size_request()[1],
                     1 if c.get_visible() else 0,
+                    img_info,
                 ))
             logger.info(
                 "sa_macros[%s]: main_grid=%dx%d action_bar=%dx%d req=%sx%s "
-                "visible_icons=%d  children=[%s]",
+                "visible_icons=%d\n  children=[%s]",
                 when,
                 mg.get_allocated_width(), mg.get_allocated_height(),
                 ab.get_allocated_width(), ab.get_allocated_height(),
                 ab_req[0], ab_req[1], ab_visible,
-                "  ".join(kids),
+                "\n  ".join(kids),
             )
         except Exception:
             logger.exception("sa_macros: diagnostic log failed")
@@ -378,6 +402,24 @@ class Panel(ScreenPanel):
         sa = self._printer.data.get("autoloader", {})
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
+
+        # Hard-clamp the screen window to its actual size so main_grid
+        # physically cannot allocate more than the visible 800x480 even
+        # when its natural size requests 800x496 on first attach.
+        try:
+            sw = int(getattr(self._screen, 'width',  0))
+            sh = int(getattr(self._screen, 'height', 0))
+            if sw > 0 and sh > 0:
+                hints = Gdk.Geometry()
+                hints.min_width  = sw
+                hints.min_height = sh
+                hints.max_width  = sw
+                hints.max_height = sh
+                self._screen.set_geometry_hints(
+                    None, hints,
+                    Gdk.WindowHints.MIN_SIZE | Gdk.WindowHints.MAX_SIZE)
+        except Exception:
+            logger.exception("sa_macros: failed to clamp window geometry")
 
         # Keep diagnostic logging until first-load is confirmed fixed.
         GLib.idle_add(self._log_alloc, "activate-idle")
