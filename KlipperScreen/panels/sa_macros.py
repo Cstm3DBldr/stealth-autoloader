@@ -1,12 +1,53 @@
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, Gdk, GLib
 import logging
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sa_button_style as _sbs
 import sa_subscription as _sasub
 from ks_includes.screen_panel import ScreenPanel
+
+
+# Module-level guard so the CSS provider is installed exactly once per
+# KlipperScreen session — adding it repeatedly would stack rules.
+_action_bar_css_installed = False
+
+
+def _install_action_bar_css():
+    """Inject explicit padding/margin on base_panel's action_bar buttons.
+
+    Per-child diagnostic showed each visible action_bar button reports
+    ~4 px more natural height on first attach (121/120) than after the
+    layout settles on subsequent attaches (117/116) — a 16 px overflow
+    on a 480-px screen that clips the bottom power icon. Root cause:
+    the default GTK button padding from base.css (margin: .2em;
+    padding: .25em) leaves the natural height dependent on font/em
+    measurement timing, which differs between first realize and later
+    layout passes.
+
+    Pinning padding/margin to fixed pixel values via a high-priority
+    CSS provider stabilizes each button's natural height across all
+    layout passes — first attach matches subsequent attach.
+    """
+    global _action_bar_css_installed
+    if _action_bar_css_installed:
+        return
+    try:
+        css = Gtk.CssProvider()
+        css.load_from_data(
+            b".action_bar > button {"
+            b"  margin: 1px;"
+            b"  padding: 4px;"
+            b"  min-height: 0;"
+            b"}"
+        )
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), css,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER + 100)
+        _action_bar_css_installed = True
+    except Exception:
+        logging.exception("sa_macros: failed to install action_bar CSS")
 
 logger = logging.getLogger('klipperscreen.sa_macros')
 
@@ -70,6 +111,9 @@ class Panel(ScreenPanel):
     def __init__(self, screen, title):
         super().__init__(screen, title or "SA Macros")
         _sbs.apply()
+        # Install CSS pinning action_bar button padding/margin to fixed
+        # pixel values. Idempotent across panels and panel re-creation.
+        _install_action_bar_css()
 
         self._num_paths   = 6
         self._pending_cmd = None   # gcode template waiting for tool selection
@@ -325,36 +369,7 @@ class Panel(ScreenPanel):
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
 
-        # Diagnostic per-child logging proved the bug: on first attach
-        # each visible action_bar button is 4 px taller (121/120 vs 117/116
-        # post-settling), totalling +16 px of action_bar height which
-        # overflows the 480 px screen. reload_icons() didn't fix it, so
-        # the size difference isn't the icon images — it's CSS padding
-        # timing. KlipperScreen's theme CSS is applied lazily during
-        # idle; on first attach the buttons render with bigger default
-        # padding before that idle pass runs.
-        #
-        # Process all pending GTK events SYNCHRONOUSLY before first
-        # allocation. Multiple passes because CSS application can
-        # trigger further events. Then call reload_icons + queue_resize
-        # so the whole sizing cascade re-runs with the now-applied CSS.
-        bp = self._screen.base_panel
-        for _ in range(8):
-            while Gtk.events_pending():
-                Gtk.main_iteration_do(False)
-        try:
-            bp.reload_icons()
-        except Exception:
-            logger.exception("sa_macros: reload_icons failed")
-        for c in bp.action_bar.get_children():
-            c.queue_resize()
-        bp.action_bar.queue_resize()
-        bp.main_grid.queue_resize()
-        for _ in range(4):
-            while Gtk.events_pending():
-                Gtk.main_iteration_do(False)
-
-        # Diagnostic logging — keep until user confirms first-load is fixed.
+        # Keep diagnostic logging until first-load is confirmed fixed.
         GLib.idle_add(self._log_alloc, "activate-idle")
         GLib.timeout_add(100,  self._log_alloc, "activate+100ms")
         GLib.timeout_add(500,  self._log_alloc, "activate+500ms")
