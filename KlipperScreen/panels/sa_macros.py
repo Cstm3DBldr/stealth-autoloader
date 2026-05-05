@@ -94,30 +94,13 @@ _DIAG = [
 ]
 
 _CAL = [
-    # CALIBRATION row labels intentionally drop the "CAL " prefix — the
-    # section header already says CALIBRATION, and shorter labels let the
-    # 5-up row fit on a 480 px display without ellipsizing or overflow.
-    ("SELECTOR",    "SA_CALIBRATE_SELECTOR",            False),
-    ("DRIVE",       "SA_CALIBRATE_DRIVE",               False),
-    ("ENC SPEED",   "SA_CALIBRATE_ENCODER_SPEED",       False),
-    ("ENCODER",     "SA_CALIBRATE_ENCODER TOOL={t}",    True),
-    ("BOWDEN",      "SA_CALIBRATE_BOWDEN TOOL={t}",     True),
-]
-
-# QUICK RE-CAL row — the three most-common cal tasks as one-tap
-# shortcuts. Same gcodes as the matching entries in _CAL, but presented
-# separately so a user who wants to touch up a single cal doesn't have
-# to scan the full 5-button strip.
-#
-# Labels are intentionally single-line and short. An embedded "\n"
-# forces the GTK label widget to render at 2-line natural height
-# regardless of btn_h, which inflates the row by ~14 px and pushes
-# the panel past what base_panel's left navigation rail can fit
-# without the bottom (power) icon clipping off the screen.
-_QUICK_CAL = [
-    ("Re-cal Sel",     "SA_CALIBRATE_SELECTOR",      False),
-    ("Re-cal Drive",   "SA_CALIBRATE_DRIVE",         False),
-    ("Re-cal Enc",     "SA_CALIBRATE_ENCODER_SPEED", False),
+    # Three most-common global calibrations. Per-tool calibrations
+    # (SA_CALIBRATE_ENCODER TOOL=N, SA_CALIBRATE_BOWDEN TOOL=N) live in
+    # the step-by-step Calibration Guide panel because they require a
+    # tool selection step.
+    ("Calibrate Selector",  "SA_CALIBRATE_SELECTOR",      False),
+    ("Calibrate Drive",     "SA_CALIBRATE_DRIVE",         False),
+    ("Calibrate Encoder",   "SA_CALIBRATE_ENCODER_SPEED", False),
 ]
 
 
@@ -241,10 +224,12 @@ class Panel(ScreenPanel):
 
     def _build_main_page(self):
         # Sized to fill the available 444 px of content_height (480 -
-        # titlebar) with appealing breathing room — about 50 px of
-        # leftover that the vexpand spacer below absorbs evenly.
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        outer.set_margin_top(8)
+        # titlebar) with appealing breathing room. With QUICK RE-CAL
+        # removed (its 3 buttons were duplicates of the first 3 in
+        # CALIBRATION), the remaining 3 sections grow to use the freed
+        # ~75 px.
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        outer.set_margin_top(10)
         outer.set_margin_start(8)
         outer.set_margin_end(8)
         outer.set_margin_bottom(14)
@@ -252,19 +237,13 @@ class Panel(ScreenPanel):
         # Heights step down section by section so the eye lands on
         # DAILY first.
         outer.pack_start(self._section_header("DAILY"),              False, False, 0)
-        outer.pack_start(self._section_row(_DAILY,     btn_h=58),    False, False, 0)
+        outer.pack_start(self._section_row(_DAILY,     btn_h=82),    False, False, 0)
 
         outer.pack_start(self._section_header("DIAGNOSTICS"),        False, False, 0)
-        outer.pack_start(self._section_row(_DIAG,      btn_h=48),    False, False, 0)
+        outer.pack_start(self._section_row(_DIAG,      btn_h=68),    False, False, 0)
 
         outer.pack_start(self._section_header("CALIBRATION"),        False, False, 0)
-        outer.pack_start(self._section_row(_CAL,       btn_h=42),    False, False, 0)
-
-        # QUICK RE-CAL — slightly taller than CALIBRATION to telegraph
-        # "shortcut" prominence; fewer buttons (3 vs 5) so each is wider
-        # and a taller proportion still looks balanced.
-        outer.pack_start(self._section_header("QUICK RE-CAL"),       False, False, 0)
-        outer.pack_start(self._section_row(_QUICK_CAL, btn_h=50),    False, False, 0)
+        outer.pack_start(self._section_row(_CAL,       btn_h=58),    False, False, 0)
 
         # vexpand spacer at the end — REQUIRED for first-render correctness.
         #

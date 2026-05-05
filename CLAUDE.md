@@ -132,20 +132,28 @@ asks for a different layout.
 
 ### KlipperScreen Macros menu (`KlipperScreen/panels/sa_macros.py`)
 
-User-confirmed canonical look (commit `083940b`). If a future edit
-changes any of this, restore it to match unless the user explicitly asks
-for a different layout. The first-render-bug history that produced
-these constraints is preserved in commits `0079f41` → `d48e0f2`.
+User-confirmed canonical look. If a future edit changes any of this,
+restore it to match unless the user explicitly asks for a different
+layout. The first-render-bug history that produced these constraints
+is preserved in commits `0079f41` → `d48e0f2`.
 
-- **Four sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
-  CALIBRATION (5) → QUICK RE-CAL (3). Order is "frequency of use,
-  highest first." Don't reorder.
-- **Button heights:** DAILY=58, DIAGNOSTICS=48, CALIBRATION=42,
-  QUICK_RECAL=50 px. Height hierarchy intentionally puts the eye on
-  DAILY first; QUICK RE-CAL is taller than CALIBRATION to telegraph
-  shortcut prominence even though it sits lower.
-- **Outer Box:** `Gtk.Box(VERTICAL, spacing=4)`, margins
-  `top=8, start=8, end=8, bottom=14`. The trailing **vexpand=True
+- **Three sections, top→bottom:** DAILY (4 buttons) → DIAGNOSTICS (3) →
+  CALIBRATION (3). Order is "frequency of use, highest first." Don't
+  reorder. An earlier "QUICK RE-CAL" 4th section was removed because
+  its 3 buttons (Re-cal Sel / Drive / Enc) were exact duplicates of
+  the first 3 CALIBRATION buttons — same gcodes, just different
+  labels. Don't add it back.
+- **CALIBRATION buttons** are the 3 global calibrations only —
+  per-tool ones (`SA_CALIBRATE_ENCODER TOOL=N`, `SA_CALIBRATE_BOWDEN
+  TOOL=N`) live in the step-by-step Calibration Guide panel because
+  they require a tool selection step. Labels use the full
+  `Calibrate <thing>` form ("Calibrate Selector" / "Calibrate Drive"
+  / "Calibrate Encoder") — the section header doesn't carry the
+  word "Calibrate" alone since the buttons themselves do.
+- **Button heights:** DAILY=82, DIAGNOSTICS=68, CALIBRATION=58 px.
+  Height hierarchy puts the eye on DAILY first.
+- **Outer Box:** `Gtk.Box(VERTICAL, spacing=6)`, margins
+  `top=10, start=8, end=8, bottom=14`. The trailing **vexpand=True
   spacer** Box at the end of `_build_main_page` is REQUIRED — without
   at least one expanding child, the page's natural height = sum of
   fixed children, and base_panel's spanning vexpand action_bar grabs
@@ -175,10 +183,10 @@ these constraints is preserved in commits `0079f41` → `d48e0f2`.
   `__init__` to override screen_panel.py's default `vexpand=True`,
   so the content widget claims exactly its slice of the grid row
   (no fight with action_bar's vexpand for leftover space).
-- **QUICK RE-CAL labels:** `"Re-cal Sel" / "Re-cal Drive" /
-  "Re-cal Enc"` — short, single-line. NEVER use embedded `\n` to
-  stack words; that forces the GTK label to render at 2-line
-  natural height regardless of `btn_h` and adds ~14 px to the row.
+- **Section row labels:** keep them single-line — NEVER use embedded
+  `\n` to stack words. That forces the GTK label to render at 2-line
+  natural height regardless of `btn_h` and adds ~14 px to the row,
+  which can stretch the page past base_panel's left rail height.
 - **Section row buttons:** `set_homogeneous(True)` for equal width;
   Pango wrap settings (`set_line_wrap(WORD_CHAR)`, `set_lines(2)`)
   let "HOME SELECTOR" stack to two lines instead of ellipsizing.
