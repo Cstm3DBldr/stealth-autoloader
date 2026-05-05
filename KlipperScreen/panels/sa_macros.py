@@ -325,23 +325,34 @@ class Panel(ScreenPanel):
         self._num_paths = sa.get("num_paths", 6)
         self._set_page("main")
 
-        # Trigger base_panel.reload_icons() — this re-creates each
-        # action_bar button's icon image at the correct pixel size.
-        # On first attach after KS startup the action_bar buttons report
-        # a slightly larger natural height (sum: 496 vs 480) than after
-        # icons settle, which overflows main_grid by 16 px and clips the
-        # bottom power icon off the screen. Running reload_icons()
-        # synchronously here forces that settling before our first
-        # allocation pass.
+        # Diagnostic per-child logging proved the bug: on first attach
+        # each visible action_bar button is 4 px taller (121/120 vs 117/116
+        # post-settling), totalling +16 px of action_bar height which
+        # overflows the 480 px screen. reload_icons() didn't fix it, so
+        # the size difference isn't the icon images — it's CSS padding
+        # timing. KlipperScreen's theme CSS is applied lazily during
+        # idle; on first attach the buttons render with bigger default
+        # padding before that idle pass runs.
+        #
+        # Process all pending GTK events SYNCHRONOUSLY before first
+        # allocation. Multiple passes because CSS application can
+        # trigger further events. Then call reload_icons + queue_resize
+        # so the whole sizing cascade re-runs with the now-applied CSS.
+        bp = self._screen.base_panel
+        for _ in range(8):
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
         try:
-            self._screen.base_panel.reload_icons()
+            bp.reload_icons()
         except Exception:
             logger.exception("sa_macros: reload_icons failed")
-
-        # Force a full size renegotiation cascade after the icon reload.
-        bp = self._screen.base_panel
+        for c in bp.action_bar.get_children():
+            c.queue_resize()
         bp.action_bar.queue_resize()
         bp.main_grid.queue_resize()
+        for _ in range(4):
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
 
         # Diagnostic logging — keep until user confirms first-load is fixed.
         GLib.idle_add(self._log_alloc, "activate-idle")
