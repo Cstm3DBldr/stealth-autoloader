@@ -58,11 +58,26 @@ class SaLedAnimator:
         # Discover et0_leds .. et7_leds (one per toolhead). chain_count
         # of 3 is the StealthBurner standard; INDEX=3 is the logo on
         # this build (verified via _SA_LED_TEST_T0).
+        #
+        # We grab each neopixel's `led_helper` directly. Driving LEDs
+        # via run_script_from_command("SET_LED ...") from a reactor
+        # timer fails silently — that gcode helper is only safe to
+        # call from inside another gcode command's handler, where the
+        # gcode mutex is held. The led_helper's _set_color +
+        # _check_transmit pair is the documented internal path that
+        # other animation extras use from reactor callbacks.
         for i in range(8):
             obj = self.printer.lookup_object('neopixel et%d_leds' % i, None)
-            if obj is not None:
-                self._led_chains.append((i, 'et%d_leds' % i))
-                self._current[i] = 0.0
+            if obj is None:
+                continue
+            led_helper = getattr(obj, 'led_helper', None)
+            if led_helper is None:
+                logging.info(
+                    "sa_led_animator: neopixel et%d_leds has no "
+                    "led_helper attribute; skipping", i)
+                continue
+            self._led_chains.append((i, 'et%d_leds' % i, led_helper))
+            self._current[i] = 0.0
 
         if not self._led_chains:
             logging.info("sa_led_animator: no et*_leds chains found; "
@@ -124,7 +139,7 @@ class SaLedAnimator:
         #    suppress the breathing — the path is conceptually empty
         #    until a load actually completes. 'loaded' and 'partial'
         #    paths are left to _SA_LED_PARKED / _SA_LED_FROM_STATE.
-        for tool_n, led_name in self._led_chains:
+        for tool_n, led_name, led_helper in self._led_chains:
             # Active mounted tool: leave alone (other macros handle it)
             if tool_n == active_tool:
                 self._current[tool_n] = 0.0
@@ -149,7 +164,7 @@ class SaLedAnimator:
             smoothed = current + (target - current) * self.smoothing
             self._current[tool_n] = smoothed
 
-            self._emit(led_name, smoothed)
+            self._emit(led_helper, smoothed)
 
     # ──────────────────────────────────────────────────────────────────
     # Helpers
@@ -175,24 +190,28 @@ class SaLedAnimator:
         except Exception:
             return -1
 
-    def _emit(self, led_name, brightness):
-        """Push one logo-LED update via SET_LED gcode.
+    def _emit(self, led_helper, brightness):
+        """Push one logo-LED update via the neopixel's led_helper directly.
 
-        Safe to call from the reactor timer because run_script_from_command
-        serializes through Klipper's gcode mutex internally — at our
-        5 Hz rate × 6 chains = 30 calls/sec, well under the threshold
-        that would cause buffer pressure.
+        Bypasses the gcode dispatcher entirely. Safe to call from a
+        reactor timer because led_helper._check_transmit registers a
+        reactor callback (with mutex) for the actual chip transmit —
+        we just stage the new color in led_state.
+
+        Logo is INDEX=3 in user-space (1-based), which maps to the
+        same 1-based index passed to _set_color.
         """
         b = max(0.0, min(1.0, brightness))
-        cmd = ("SET_LED LED=%s INDEX=3 RED=%.3f GREEN=%.3f BLUE=%.3f "
-               "WHITE=%.3f TRANSMIT=1"
-               % (led_name, b, b, b, b))
         try:
-            self.gcode.run_script_from_command(cmd)
+            led_helper._set_color(3, (b, b, b, b))
+            led_helper._check_transmit()
         except Exception:
-            # Don't spam logs — a single tick failure isn't worth
-            # surfacing. The next tick will try again.
-            pass
+            # Log once at warning level on first failure, then suppress
+            # to avoid log spam from a recurring issue.
+            if not getattr(self, '_emit_failed_logged', False):
+                logging.exception("sa_led_animator: _emit failed "
+                                  "(further failures suppressed)")
+                self._emit_failed_logged = True
 
 
 def load_config(config):
