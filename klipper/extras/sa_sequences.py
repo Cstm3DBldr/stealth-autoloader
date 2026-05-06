@@ -987,6 +987,12 @@ class SASequences:
 
         owner.path_states[path] = 'loaded'
 
+        # Refresh this toolhead's status LEDs now that it's loaded —
+        # _SA_LED_FROM_STATE picks ACTIVE/PARKED/UNLOADED based on
+        # whether this path is currently mounted, has a color set, etc.
+        owner.gcode.run_script_from_command(
+            "_SA_LED_FROM_STATE TOOL=%d" % path)
+
         # Set up purge confirmation — _restore_state is deferred until user responds
         owner._cal_state = 'load_purge'
         owner._cal_data  = {'path': path, 'is_printing': is_printing}
@@ -1245,6 +1251,13 @@ class SASequences:
                 "SA: Filament parked at drive gear — path %d. "
                 "Pull from roll end to remove." % path)
 
+            # Path is empty — force LEDs to UNLOADED (dim white logo,
+            # nozzle off) regardless of any stale color still set in
+            # the autoloader status object. sa_load_unload's UI clears
+            # the color via SA_SET_MATERIAL on its next status update.
+            owner.gcode.run_script_from_command(
+                "_SA_LED_UNLOADED TOOL=%d" % path)
+
             if is_printing:
                 gcmd.respond_info("SA: Resuming print...")
                 owner.gcode.run_script_from_command("RESUME")
@@ -1319,6 +1332,11 @@ class SASequences:
         gcmd.respond_info(
             "SA: Drive retract complete — path %d (%.1fmm retracted)."
             % (path, abs(enc.get_distance())))
+
+        # Path is empty — force LEDs to UNLOADED. Same rationale as the
+        # Branch A path above.
+        owner.gcode.run_script_from_command(
+            "_SA_LED_UNLOADED TOOL=%d" % path)
 
         if is_printing:
             gcmd.respond_info("SA: Resuming print...")

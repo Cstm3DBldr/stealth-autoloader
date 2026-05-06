@@ -27,6 +27,22 @@ selector that moves to filament. No color changes mid-print on a single toolhead
 - Branch: main
 - Commit and push after any change that works on the printer
 
+## One-Time Manual Edits Made Outside the Repo
+
+These printer-side edits live OUTSIDE `~/autoloader/` and are not
+synced by `post_update.sh`. They're documented here so a fresh install
+on a new printer (or a `git stash` / restore of `~/printer_data/config/`)
+knows what manual hooks to reapply.
+
+- **`~/printer_data/config/Toolchanger/toolchanger.cfg`** — at the end
+  of `[toolchanger] after_change_gcode:`, added:
+  ```
+  _SA_LEDS_INIT_ALL ACTIVE={tool.tool_number}
+  ```
+  This refreshes every toolhead's status LEDs after each toolchange.
+  The macro is defined in `autoloader/leds.cfg`. The pre-edit file
+  is preserved on the printer as `toolchanger.cfg.bak.<epoch>`.
+
 ## Operational Permissions (set by user)
 Claude has full autonomous control of this printer and repository. No need to ask
 before deploying or pushing — just do it and report the result.
@@ -235,6 +251,7 @@ is preserved in commits `0079f41` → `d48e0f2`.
 | `autoloader/hardware.cfg` | ONLY hardware sections: [mcu], [tmc5160], [manual_stepper], [servo], [sa_encoder], [filament_switch_sensor], [gcode_button selector_stall] |
 | `autoloader/parameters.cfg` | The single `[autoloader]` section — all user-tunable values (servo angles, speeds, tip-form, park, selector cal, bowden lengths, sensor/encoder/extruder/stepper references). Klipper requires the section in one file |
 | `autoloader/macros.cfg` | Thin gcode wrappers around Python backend commands |
+| `autoloader/leds.cfg` | Toolhead Voron logo + nozzle LED status macros. State-driven (PARKED / UNLOADED / ACTIVE / LOADING / ERROR), reads filament color from `printer["autoloader"].path_color_hexes`. Triggered from toolchanger hooks and autoloader load/unload completion |
 | `klipper/extras/autoloader.py` | Main controller — config parsing, GCode registration, status object |
 | `klipper/extras/sa_motion.py` | Motion primitives (servo, selector, drive, idle timeouts) |
 | `klipper/extras/sa_sequences.py` | Load and unload sequences |
