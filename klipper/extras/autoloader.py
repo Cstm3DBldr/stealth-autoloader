@@ -127,6 +127,15 @@ class Autoloader:
         self.sensor_delay            = config.getfloat('sensor_polling_delay',      0.2)
         self.servo_move_delay        = config.getfloat('servo_move_delay',          0.3)
         self.stepper_timeout         = config.getfloat('stepper_timeout',         120.0)
+        # Time the entry sensor must stay *inactive* before we mark a
+        # previously-loaded path as empty. Filters out brief sensor
+        # flicker (vibration, cable noise) without delaying real
+        # runout detection meaningfully. Filament *appearing* at the
+        # sensor (path was empty -> sees filament) transitions
+        # immediately, no debounce — that's the user inserting a
+        # spool and we want the LED to react instantly.
+        self.runout_timeout_seconds  = config.getfloat('runout_timeout',           10.0,
+                                                       minval=0.5, maxval=120.0)
         self.selector_max_travel     = config.getfloat('selector_max_travel',     200.0)
         self.selector_homing_speed   = config.getfloat('selector_homing_speed',    50.0)
         self.selector_homing_backoff = config.getfloat('selector_homing_backoff',   5.0)
@@ -245,6 +254,18 @@ class Autoloader:
     def _init_hardware(self, eventtime):
         self.motion.on_ready()
         self._restore_material_profiles()
+        # For paths that are still STATE_UNKNOWN after restore (i.e. no
+        # explicit sa_state_<N> in save_variables), use the entry sensor
+        # to make a best-effort guess: filament present at sensor ->
+        # loaded, sensor clear -> empty. The result is also persisted
+        # so subsequent boots use the saved value rather than re-guessing.
+        # This handles the common "user set a material profile and
+        # physically loaded filament without ever running SA_LOAD" case.
+        self._initialize_states_from_sensors()
+        # Start the runout monitor — periodically reconciles path_states
+        # against the entry sensors with a debounce window so a brief
+        # sensor flicker doesn't accidentally mark a path empty.
+        self._start_state_monitor()
 
         # Push restored colors to every toolhead's status LEDs as soon as
         # we're ready. The [delayed_gcode] _SA_LEDS_STARTUP in leds.cfg
@@ -268,6 +289,107 @@ class Autoloader:
             self.gcode.run_script_from_command(
                 "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\""
                 % (path, self.path_states[path]))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # State-from-sensor inference + runout monitor
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _initialize_states_from_sensors(self):
+        """For paths still STATE_UNKNOWN after _restore_material_profiles
+        (no `sa_state_<N>` saved), use the entry sensor to make a best
+        guess and persist it. Skips paths that already have a known
+        state — those have an explicit save and shouldn't be overridden
+        on boot just because the sensor disagrees momentarily.
+        """
+        for i in range(self.num_paths):
+            if self.path_states[i] != self.STATE_UNKNOWN:
+                continue
+            try:
+                active = self._entry_sensor_active(i)
+            except Exception:
+                continue
+            new_state = self.STATE_LOADED if active else self.STATE_EMPTY
+            self.path_states[i] = new_state
+            try:
+                self.gcode.run_script_from_command(
+                    "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\""
+                    % (i, new_state))
+            except Exception:
+                logging.exception(
+                    "Autoloader: could not persist inferred state for path %d", i)
+            logging.info("Autoloader: path %d state inferred from "
+                         "entry sensor: %s", i, new_state)
+
+    def _start_state_monitor(self):
+        """Reactor timer that reconciles path_states with the entry
+        sensors once per second. Empty -> Loaded transitions are
+        immediate (someone just inserted a spool). Loaded -> Empty
+        transitions debounce for `runout_timeout_seconds` so a brief
+        sensor flicker doesn't accidentally mark a path empty.
+        """
+        # eventtime of the last "filament present" reading per path.
+        # Used as the debounce reference point.
+        self._sensor_last_active_time = {}
+        now = self.reactor.monotonic()
+        for i in range(self.num_paths):
+            try:
+                if self._entry_sensor_active(i):
+                    self._sensor_last_active_time[i] = now
+            except Exception:
+                pass
+        self._state_monitor_timer = self.reactor.register_timer(
+            self._state_monitor_tick, now + 2.0)
+
+    def _state_monitor_tick(self, eventtime):
+        try:
+            for i in range(self.num_paths):
+                try:
+                    active = self._entry_sensor_active(i)
+                except Exception:
+                    continue
+                if active:
+                    self._sensor_last_active_time[i] = eventtime
+                    if self.path_states[i] == self.STATE_EMPTY:
+                        # Filament just appeared on a path that was
+                        # marked empty — react immediately.
+                        self._set_state_persist(i, self.STATE_LOADED,
+                                                "entry sensor saw filament")
+                else:
+                    if self.path_states[i] == self.STATE_LOADED:
+                        # Sensor inactive on a "loaded" path — could be
+                        # real runout or could be a flicker. Debounce
+                        # against runout_timeout_seconds.
+                        last_active = self._sensor_last_active_time.get(
+                            i, eventtime - self.runout_timeout_seconds)
+                        if (eventtime - last_active
+                                >= self.runout_timeout_seconds):
+                            self._set_state_persist(
+                                i, self.STATE_EMPTY,
+                                "entry sensor clear for %.1fs (runout)"
+                                % self.runout_timeout_seconds)
+        except Exception:
+            logging.exception(
+                "Autoloader: state monitor tick failed (suppressed)")
+        # 1 Hz check — runout detection latency is dominated by
+        # runout_timeout_seconds anyway, so polling faster doesn't help.
+        return eventtime + 1.0
+
+    def _set_state_persist(self, path, new_state, reason=""):
+        """Internal helper — update path_states[path] and persist."""
+        if self.path_states[path] == new_state:
+            return
+        old = self.path_states[path]
+        self.path_states[path] = new_state
+        try:
+            self.gcode.run_script_from_command(
+                "SAVE_VARIABLE VARIABLE=sa_state_%d VALUE=\"'%s'\""
+                % (path, new_state))
+        except Exception:
+            logging.exception(
+                "Autoloader: could not persist new state for path %d", path)
+        logging.info("Autoloader: path %d state %s -> %s%s",
+                     path, old, new_state,
+                     (" (%s)" % reason) if reason else "")
 
     def _restore_material_profiles(self):
         """Read per-path calibration and material/color fields from save_variables on boot."""
