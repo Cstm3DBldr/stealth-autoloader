@@ -14,7 +14,7 @@ KS_PATH="${HOME}/KlipperScreen"
 if [ "${1:-}" = "--uninstall" ]; then
     echo "[UNINSTALL] Removing Autoloader..."
     # Klipper extras symlinks
-    for f in autoloader.py sa_motion.py sa_sequences.py sa_calibration.py sa_encoder.py; do
+    for f in autoloader.py sa_motion.py sa_sequences.py sa_calibration.py sa_encoder.py sa_led_animator.py; do
         rm -f "${KLIPPER_PATH}/klippy/extras/${f}"
     done
     # Moonraker component symlink
