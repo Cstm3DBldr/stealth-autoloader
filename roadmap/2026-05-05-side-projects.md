@@ -140,8 +140,15 @@ deployed):**
 | `_SA_LED_PARKED TOOL=N COLOR=#xxxxxx` | Logo = filament color, nozzle off | Tool docks on cooling pad / parking position |
 | `_SA_LED_UNLOADED TOOL=N` | Logo = dim white (~10%), nozzle off | Path state transitions to `empty` |
 | `_SA_LED_ACTIVE TOOL=N` | All 3 LEDs full white | Tool picked up by toolchanger carriage |
-| `_SA_LED_LOADING TOOL=N COLOR=#xxxxxx` | Logo pulses filament color, nozzle off | During SA_LOAD sequence |
 | `_SA_LED_ERROR TOOL=N` | Logo solid red | Slip detected, sensor mismatch, etc. |
+
+(`_SA_LED_LOADING` was originally drafted here but removed 2026-05-06.
+The toolchanger swap that drives the load gives us nozzle-white +
+STATUS_HEATING orange on the active tool, and the pre-load empty-path
+breathing-pulse fades to dark when `cal_state` becomes non-empty —
+together those provide enough visual feedback for a load in progress.
+The KlipperScreen Load/Unload panel carries the rich progress info
+that a pulsing logo would have duplicated.)
 
 **Integration points:**
 - `autoloader.py` already passes color through `SA_SET_MATERIAL`
@@ -284,6 +291,41 @@ the official Prusa-supported way to do exactly this.
 
 **Effort:** 2 days for the Moonraker endpoint + vendor.ini
 generator + testing. Mostly code in `moonraker/sa_moonraker.py`.
+
+### 2.5 Code-wide dead-weight cleanup pass
+
+**When:** Once all the major features (LED status, runout monitor,
+pressure-advance DB, slicer sync, respooler, sa_config rework) have
+landed and stabilized — likely 4–6 weeks out. Premature cleanup risks
+deleting "unused" code that's about to be wired in by the next feature.
+
+**Scope:** sweep every file in the project for:
+- Macros / functions defined but never called (e.g. how `_SA_LED_LOADING`
+  was sitting in `leds.cfg` for weeks, removed 2026-05-06 once we
+  confirmed the toolchanger flow + screen replaced its purpose)
+- Config parameters declared in `[autoloader]` but not read anywhere
+- Unused imports in Python extras
+- Dead branches in jinja templates (e.g. fallback paths for params no
+  longer set)
+- Stale TODO / FIXME comments referencing fixed work
+- Commented-out code blocks left "for reference" — either commit them
+  to git history and delete, or extract to a `drafts/` file
+- KlipperScreen panel handlers wired to buttons that no longer exist
+- `delayed_gcode` fallback timers that double up with Python event
+  handlers (we have a few of these — `_SA_LEDS_STARTUP` is the
+  intentional belt-and-suspenders case; others may not be)
+
+**Method:** dedicated session, run a check across all files. Don't
+batch with feature work — the temptation to "fix this while I'm here"
+will inflate the diff. One commit per file or per concern.
+
+**Verification:** every removal needs a follow-up search to confirm
+there are no callers anywhere (including KlipperScreen panels, web UIs,
+PrusaSlicer macros, runtime console). Run `scripts/verify.sh` after each
+batch — it's the cheapest sanity check.
+
+**Effort:** half-day to a full day depending on what surfaces. Mostly
+mechanical once the candidate list is built.
 
 ---
 

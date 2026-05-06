@@ -120,8 +120,8 @@ class SaLedAnimator:
 
         # Pause animation entirely while a print is running OR while the
         # autoloader has any operation in flight. Both are short windows
-        # but stomping on _SA_LED_LOADING / _SA_LED_PARKED transitions
-        # would look wrong.
+        # but stomping on the load/unload's own _SA_LED_PARKED transition
+        # at the end would look wrong.
         paused = (idle_state == 'printing') or bool(cal_state)
 
         # 2. Compute the ideal brightness for this tick from a sine
