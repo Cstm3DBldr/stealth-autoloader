@@ -99,9 +99,9 @@ class SaLedAnimator:
         if sa is None:
             return  # autoloader not loaded — nothing to animate
 
-        cal_state         = getattr(sa, '_cal_state', '') or ''
-        path_color_hexes  = list(getattr(sa, 'path_color_hexes', []) or [])
-        active_tool       = self._active_tool_number()
+        cal_state    = getattr(sa, '_cal_state', '') or ''
+        path_states  = list(getattr(sa, 'path_states', []) or [])
+        active_tool  = self._active_tool_number()
 
         # Pause animation entirely while a print is running OR while the
         # autoloader has any operation in flight. Both are short windows
@@ -116,25 +116,27 @@ class SaLedAnimator:
         ideal = self.min_brightness + wave * (
             self.max_brightness - self.min_brightness)
 
-        # 3. Apply per-toolhead, gated by "no color stored" not state ──
-        # We key on path_color_hexes rather than path_states because
-        # state defaults to 'unknown' on fresh Klipper boot and only
-        # becomes 'empty' after a successful SA_UNLOAD. Color hex is
-        # the cleaner "this path has a known filament loaded" signal.
+        # 3. Per-toolhead. Animate any path whose state is "no filament
+        #    here" — that means either explicit 'empty' (after a
+        #    successful SA_UNLOAD) OR 'unknown' (the default after
+        #    Klipper boot, before SA_LOAD/SA_UNLOAD has run on this
+        #    path). Stale color hex from a prior session does NOT
+        #    suppress the breathing — the path is conceptually empty
+        #    until a load actually completes. 'loaded' and 'partial'
+        #    paths are left to _SA_LED_PARKED / _SA_LED_FROM_STATE.
         for tool_n, led_name in self._led_chains:
             # Active mounted tool: leave alone (other macros handle it)
             if tool_n == active_tool:
                 self._current[tool_n] = 0.0
                 continue
 
-            hex_c = ''
-            if tool_n < len(path_color_hexes):
-                hex_c = (path_color_hexes[tool_n] or '').strip()
-            has_color = bool(hex_c)
+            state = (path_states[tool_n]
+                     if tool_n < len(path_states)
+                     else 'unknown')
 
-            if has_color:
-                # Path has a stored filament color — _SA_LED_PARKED is
-                # the right driver. Animator stays out.
+            if state not in ('empty', 'unknown'):
+                # 'loaded', 'partial', or anything else — let the
+                # existing macros drive the logo
                 self._current[tool_n] = 0.0
                 continue
 
