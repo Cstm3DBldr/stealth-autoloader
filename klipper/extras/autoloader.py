@@ -246,6 +246,21 @@ class Autoloader:
         self.motion.on_ready()
         self._restore_material_profiles()
 
+        # Push restored colors to every toolhead's status LEDs as soon as
+        # we're ready. The [delayed_gcode] _SA_LEDS_STARTUP in leds.cfg
+        # is still kept as a belt-and-suspenders fallback for the case
+        # where the LED macros aren't loaded yet at this point in
+        # startup, but in normal operation this immediate refresh wins
+        # — saves the user staring at blank-white toolheads for 5 sec
+        # after every Klipper restart.
+        try:
+            self.gcode.run_script_from_command("_SA_LEDS_INIT_ALL")
+        except Exception:
+            logging.info(
+                "SA: immediate LED init skipped (will retry via "
+                "[delayed_gcode] _SA_LEDS_STARTUP); reason: %s",
+                __import__('traceback').format_exc().splitlines()[-1])
+
     def save_path_state(self, path):
         """Persist path_states[path] to save_variables."""
         sv = self.printer.lookup_object('save_variables', None)
@@ -763,6 +778,19 @@ class Autoloader:
             % (path, brand, product_line, material,
                color_name, color_hex,
                load_temp, unload_temp, purge_length))
+
+        # Push the new color to the toolhead's status LEDs immediately.
+        # _SA_LED_FROM_STATE picks ACTIVE / PARKED-with-color / UNLOADED
+        # based on whether the path is the mounted tool, has a color set,
+        # or is empty. So saving a profile with a color makes that
+        # toolhead's logo light up the new color right away — no
+        # toolchange or restart needed.
+        try:
+            self.gcode.run_script_from_command(
+                "_SA_LED_FROM_STATE TOOL=%d" % path)
+        except Exception:
+            logging.exception(
+                "SA: SA_SET_MATERIAL LED refresh failed (non-fatal)")
 
     def _cmd_set_config(self, gcmd):
         """SA_SET_CONFIG PARAM=name VALUE=val — stage a config value for SAVE_CONFIG."""
