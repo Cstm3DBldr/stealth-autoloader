@@ -197,20 +197,24 @@ class SaLedAnimator:
 
         # 4. Active-tool nozzle: temp-aware safety indicator.
         # ─────────────────────────────────────────────────────────
-        # When the printer is NOT actively printing (i.e. idle,
-        # ready, or paused mid-print), the active tool's nozzle pair
+        # When the printer is NOT actively printing (i.e. standby,
+        # paused, complete, error), the active tool's nozzle pair
         # reflects hotend warmth: red-orange "still warm" while the
         # heater_fan is on (extruder >= 50 C, the threshold Klipper
-        # already manages), dim blue once it has cooled below the
-        # fan's off-threshold.
+        # already manages), dim blue once it has cooled.
         #
-        # During an actual print (idle_state == 'printing' AND not
-        # paused), STATUS_PRINTING / STATUS_HEATING / etc. control
-        # the nozzle and we yield. The same is true during any
-        # autoloader operation (cal_state non-empty) — the load /
-        # unload sequence may want a different nozzle treatment.
-        is_paused = self._is_paused(eventtime)
-        actively_printing = (idle_state == 'printing') and not is_paused
+        # Use print_stats.state (NOT idle_timeout.state) as the
+        # "actually printing" signal — idle_timeout transitions to
+        # 'Printing' on ANY gcode activity (including a one-line
+        # SET_LED from the console), which would briefly flip
+        # animator_owns_nozzle to False and clear our cache. The
+        # cache clear lets a stale 'parked_cold' value re-emit on
+        # the next tick, wiping any STATUS_HOMING / STATUS_LEVELING
+        # / etc. green/purple that an explicit macro just set.
+        # print_stats.state only flips to 'printing' on a real
+        # virtual_sdcard / Moonraker job, so brief gcode commands
+        # during eval don't disturb the cache.
+        actively_printing = self._is_actively_printing(eventtime)
         animator_owns_nozzle = (not actively_printing
                                 and not bool(cal_state)
                                 and active_tool >= 0)
@@ -292,13 +296,24 @@ class SaLedAnimator:
                                   "(further failures suppressed)")
                 self._nozzle_emit_failed_logged = True
 
-    def _is_paused(self, eventtime):
-        """True if PAUSE / M600 is currently in effect."""
-        pr = self.printer.lookup_object('pause_resume', None)
-        if pr is None:
+    def _is_actively_printing(self, eventtime):
+        """True if a real print job is currently advancing.
+
+        Reads `print_stats.state` (set by virtual_sdcard / Moonraker job
+        runner). Values are 'standby', 'printing', 'paused', 'complete',
+        'error', 'cancelled'. Only 'printing' counts as "actively
+        printing"; the rest mean the animator should own the nozzle.
+
+        Why not idle_timeout.state == 'Printing'? That transitions on
+        ANY gcode activity (including a one-line SET_LED from the
+        console), which is too coarse and would clear our cache during
+        brief manual macro fires.
+        """
+        ps = self.printer.lookup_object('print_stats', None)
+        if ps is None:
             return False
         try:
-            return bool(pr.get_status(eventtime).get('is_paused', False))
+            return ps.get_status(eventtime).get('state') == 'printing'
         except Exception:
             return False
 
