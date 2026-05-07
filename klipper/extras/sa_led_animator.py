@@ -140,9 +140,10 @@ class SaLedAnimator:
         if sa is None:
             return  # autoloader not loaded — nothing to animate
 
-        cal_state    = getattr(sa, '_cal_state', '') or ''
-        path_states  = list(getattr(sa, 'path_states', []) or [])
-        active_tool  = self._active_tool_number()
+        cal_state         = getattr(sa, '_cal_state', '') or ''
+        path_states       = list(getattr(sa, 'path_states', []) or [])
+        path_color_hexes  = list(getattr(sa, 'path_color_hexes', []) or [])
+        active_tool       = self._active_tool_number()
 
         # Pause animation entirely while a print is running OR while the
         # autoloader has any operation in flight. Both are short windows
@@ -157,14 +158,29 @@ class SaLedAnimator:
         ideal = self.min_brightness + wave * (
             self.max_brightness - self.min_brightness)
 
-        # 3. Per-toolhead. Animate any path whose state is "no filament
-        #    here" — that means either explicit 'empty' (after a
-        #    successful SA_UNLOAD) OR 'unknown' (the default after
-        #    Klipper boot, before SA_LOAD/SA_UNLOAD has run on this
-        #    path). Stale color hex from a prior session does NOT
-        #    suppress the breathing — the path is conceptually empty
-        #    until a load actually completes. 'loaded' and 'partial'
-        #    paths are left to _SA_LED_PARKED / _SA_LED_FROM_STATE.
+        # 3. Per-toolhead. Breathing pulse runs on paths that have
+        #    NEITHER filament physically loaded NOR a saved color
+        #    profile. Two release conditions:
+        #
+        #    (a) state in ('loaded', 'partial', anything-not-empty-or-
+        #        unknown) — filament is in this path, the existing
+        #        macros (_SA_LED_PARKED / _SA_LED_FROM_STATE) own the
+        #        logo and we let it sit.
+        #    (b) state is 'empty' / 'unknown' BUT path_color_hexes[i]
+        #        has a non-blank value — user saved a profile but the
+        #        path isn't physically loaded yet. Show the saved color
+        #        as a "ready to load this filament" preview rather than
+        #        keep pulsing white. Pulsing despite a stored color was
+        #        the prior behavior; users found it confusing because
+        #        SA_SET_MATERIAL fires _SA_LED_PARKED to paint the
+        #        color, but the next animator tick (~70ms) overwrote
+        #        it back to the breathing pulse — making it look like
+        #        the save didn't take.
+        #
+        #    Pulse only when state is empty/unknown AND no stored
+        #    color — that's the genuinely "nothing here, nothing
+        #    planned" case where the breathing white pulse is the
+        #    right signal.
         for tool_n, led_name, led_helper in self._led_chains:
             # Active mounted tool: leave alone (other macros handle it)
             if tool_n == active_tool:
@@ -174,10 +190,16 @@ class SaLedAnimator:
             state = (path_states[tool_n]
                      if tool_n < len(path_states)
                      else 'unknown')
+            hex_c = (path_color_hexes[tool_n]
+                     if tool_n < len(path_color_hexes)
+                     else '') or ''
 
-            if state not in ('empty', 'unknown'):
-                # 'loaded', 'partial', or anything else — let the
-                # existing macros drive the logo
+            empty_state = state in ('empty', 'unknown')
+            has_color   = bool(hex_c.strip())
+
+            if not empty_state or has_color:
+                # 'loaded'/'partial' OR empty-but-has-stored-color —
+                # let the existing macros drive the logo
                 self._current[tool_n] = 0.0
                 continue
 
