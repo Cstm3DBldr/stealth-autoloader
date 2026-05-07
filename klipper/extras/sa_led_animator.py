@@ -69,9 +69,6 @@ class SaLedAnimator:
         self._tick_interval = 1.0 / self.update_rate_hz
         self._current = {}   # tool_n -> last emitted brightness
         self._led_chains = []
-        # tool_n -> last (r,g,b,w) emitted to nozzle pair, used to
-        # avoid retransmitting the same color tick after tick.
-        self._nozzle_last = {}
         self.printer.register_event_handler('klippy:ready', self._handle_ready)
 
     def _handle_ready(self):
@@ -225,16 +222,29 @@ class SaLedAnimator:
             if color is not None:
                 for tool_n, _, helper in self._led_chains:
                     if tool_n == active_tool:
-                        if self._nozzle_last.get(tool_n) != color:
+                        # Compare against the LED's ACTUAL current
+                        # state (read from led_helper.led_state) rather
+                        # than against an in-memory cache of what we
+                        # last emitted. The in-memory cache went stale
+                        # when other macros (e.g. _SA_LED_ACTIVE,
+                        # STATUS_OFF, _SA_LEDS_INIT_ALL) wrote to the
+                        # nozzle without animator's knowledge —
+                        # animator would think "I last emitted blue,
+                        # target is blue, skip" while the actual LED
+                        # was white from a stale macro call. Reading
+                        # the real state self-heals from any external
+                        # writer at the cost of "STATUS_HOMING /
+                        # _LEVELING / etc. fired manually outside a
+                        # print won't stick" (animator immediately
+                        # restores the temp-aware color). Inside
+                        # PRINT_START print_stats.state == 'printing'
+                        # so animator yields and STATUS_* still sticks
+                        # there — which is the only place those
+                        # macros need to stick during real operation.
+                        actual = self._read_nozzle_state(helper)
+                        if actual != color:
                             self._emit_nozzle(helper, color)
-                            self._nozzle_last[tool_n] = color
                         break
-        else:
-            # If we previously owned a tool's nozzle and now don't,
-            # forget the cached value so the next animator-owned
-            # tick will retransmit (handles cases where some other
-            # macro changed the nozzle while we were yielded).
-            self._nozzle_last.pop(active_tool, None)
 
     # ──────────────────────────────────────────────────────────────────
     # Helpers
@@ -295,6 +305,22 @@ class SaLedAnimator:
                 logging.exception("sa_led_animator: _emit_nozzle failed "
                                   "(further failures suppressed)")
                 self._nozzle_emit_failed_logged = True
+
+    def _read_nozzle_state(self, led_helper):
+        """Read the actual current state of the nozzle's LED pair as
+        a 4-tuple (r,g,b,w). Returns None on any access error.
+
+        Reads led_helper.led_state directly — that's the in-memory
+        record of what was last sent to the chip (Klipper's own
+        bookkeeping, used by _set_color to deduplicate). 0-indexed
+        in the helper's list, 1-based in user-space; nozzle pair is
+        user-indexes 1 and 2 → list indexes 0 and 1. They're always
+        kept in sync by _emit_nozzle so reading either is sufficient.
+        """
+        try:
+            return tuple(led_helper.led_state[0])
+        except Exception:
+            return None
 
     def _is_actively_printing(self, eventtime):
         """True if a real print job is currently advancing.
