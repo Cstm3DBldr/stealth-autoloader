@@ -485,6 +485,21 @@ ssh pi@192.168.1.214 "cd ~/autoloader && git pull && ./post_update.sh && \
 It runs automatically after every Update Manager pull and copies the .cfg/.html,
 KlipperScreen panels, and `sa_klipperscreen.conf` into their live locations.
 
+**Important — `FIRMWARE_RESTART` does NOT reload Python extras.** It only
+re-parses `printer.cfg` (and any `[include]`'d cfgs) and resets the MCU.
+The running klippy process keeps the in-memory copy of every Python module
+it imported at startup. So a change to `klipper/extras/*.py` only takes
+effect after an actual service restart:
+
+- `sudo systemctl restart klipper` (needs sudo password), OR
+- `bash ~/autoloader/scripts/klipper_service_restart.sh` — uses
+  Moonraker's `/machine/services/restart` endpoint, which is wired
+  to passwordless `sudo systemctl restart klipper` via PolicyKit on
+  this build. **Use this for every change to `klipper/extras/*.py`
+  or `moonraker/sa_moonraker.py`.**
+
+For .cfg-only changes, `FIRMWARE_RESTART` is fine and faster.
+
 **First-time install** on a new printer:
 
 ```bash

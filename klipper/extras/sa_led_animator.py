@@ -111,8 +111,14 @@ class SaLedAnimator:
         # _SA_LEDS_STARTUP fallback timing — gives the autoloader
         # extra a moment to restore path_color_hexes from
         # save_variables before we start checking path_states.
-        self._timer = self.reactor.register_timer(
-            self._animate, self.reactor.monotonic() + 5.0)
+        # NOTE: register_timer + update_timer (rather than passing the
+        # waketime to register_timer directly). Some Klipper versions
+        # register the timer as NEVER until update_timer is called, even
+        # if a waketime is passed; the two-step call is the safe pattern
+        # used by other extras and reliably gets the timer firing.
+        self._timer = self.reactor.register_timer(self._animate)
+        self.reactor.update_timer(
+            self._timer, self.reactor.monotonic() + 5.0)
         logging.info(
             "sa_led_animator: started — %d chain(s), period=%.1fs, "
             "max_brightness=%.2f, rate=%.1fHz, smoothing=%.2f",
