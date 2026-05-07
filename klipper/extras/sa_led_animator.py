@@ -1,15 +1,26 @@
-# Background LED animator for the autoloader's empty-path indicator.
+# Background LED animator for the autoloader's toolhead LEDs.
 #
-# Klipper Python extra. Drives a slow "breathing" white pulse on each
-# unloaded toolhead's logo LED (chain INDEX=3) while the printer is
-# idle. Pauses cleanly when:
+# Klipper Python extra. Two responsibilities, both running off one
+# reactor timer in Klipper's main thread:
 #
-#   * idle_timeout reports state == "Printing"
-#   * autoloader is in any cal_state (load / unload / calibration)
+#   1. Empty-path breathing pulse — slow white sine wave on the logo
+#      LED (INDEX=3) of each unloaded toolhead while idle. Pauses
+#      cleanly when actively printing or during any autoloader op.
 #
-# When pause begins, the brightness LERPs toward zero across a few
-# ticks (smooth fade-out, no abrupt transition). When idle resumes,
-# the breathing waveform picks up smoothly from wherever the LED
+#   2. Temp-aware active-tool nozzle — when the printer is NOT
+#      actively printing (idle, ready, or paused), the active tool's
+#      nozzle pair (INDEX=1,2) reflects hotend warmth as a safety
+#      indicator: red-orange while still warm, dim blue once cooled.
+#      The "warm" signal is read from the toolhead's heater_fan state
+#      (which Klipper already manages with a >= 50 C threshold) so we
+#      don't duplicate the threshold logic. This keeps the nozzle's
+#      hot/cold state up to date as the hotend cools after a pause
+#      times out, without any external poll loop or state-machine
+#      logic in macros.
+#
+# When pause begins, the breathing brightness LERPs toward zero
+# across a few ticks (smooth fade-out, no abrupt transition). When
+# idle resumes, the waveform picks up smoothly from wherever the LED
 # currently is.
 #
 # Why a Python extra rather than a [delayed_gcode] / jinja loop:
@@ -18,6 +29,7 @@
 #   - smooth interpolation needs floating-point math the gcode
 #     parser can't easily express across many channels
 #   - one place to coordinate state across all 6 toolheads
+#   - cheap to poll heater_fan state every tick (<1ms across 6 tools)
 #
 # Configuration (auto-loaded from a [sa_led_animator] block in cfg):
 #
@@ -28,6 +40,12 @@
 #   #update_rate_hz: 5.0        # ticks per second
 #   #smoothing_factor: 0.30     # LERP step toward target each tick
 #                               # (1.0 = snap, 0.1 = very slow easing)
+#   #hotend_fan_template: "heater_fan T%d_hotend_fan"
+#                               # printf-style template resolving each
+#                               # tool number to its hotend heater_fan
+#                               # name. Override if the toolchanger
+#                               # config uses a different naming
+#                               # convention.
 
 import logging
 import math
@@ -46,9 +64,14 @@ class SaLedAnimator:
             'update_rate_hz', 5.0, above=0.5, maxval=60.0)
         self.smoothing = config.getfloat(
             'smoothing_factor', 0.30, above=0.01, maxval=1.0)
+        self.hotend_fan_template = config.get(
+            'hotend_fan_template', 'heater_fan T%d_hotend_fan')
         self._tick_interval = 1.0 / self.update_rate_hz
         self._current = {}   # tool_n -> last emitted brightness
         self._led_chains = []
+        # tool_n -> last (r,g,b,w) emitted to nozzle pair, used to
+        # avoid retransmitting the same color tick after tick.
+        self._nozzle_last = {}
         self.printer.register_event_handler('klippy:ready', self._handle_ready)
 
     def _handle_ready(self):
@@ -166,6 +189,43 @@ class SaLedAnimator:
 
             self._emit(led_helper, smoothed)
 
+        # 4. Active-tool nozzle: temp-aware safety indicator.
+        # ─────────────────────────────────────────────────────────
+        # When the printer is NOT actively printing (i.e. idle,
+        # ready, or paused mid-print), the active tool's nozzle pair
+        # reflects hotend warmth: red-orange "still warm" while the
+        # heater_fan is on (extruder >= 50 C, the threshold Klipper
+        # already manages), dim blue once it has cooled below the
+        # fan's off-threshold.
+        #
+        # During an actual print (idle_state == 'printing' AND not
+        # paused), STATUS_PRINTING / STATUS_HEATING / etc. control
+        # the nozzle and we yield. The same is true during any
+        # autoloader operation (cal_state non-empty) — the load /
+        # unload sequence may want a different nozzle treatment.
+        is_paused = self._is_paused(eventtime)
+        actively_printing = (idle_state == 'printing') and not is_paused
+        animator_owns_nozzle = (not actively_printing
+                                and not bool(cal_state)
+                                and active_tool >= 0)
+        if animator_owns_nozzle:
+            warm = self._is_tool_warm(active_tool, eventtime)
+            color = self._get_nozzle_color(
+                'heating' if warm else 'parked_cold')
+            if color is not None:
+                for tool_n, _, helper in self._led_chains:
+                    if tool_n == active_tool:
+                        if self._nozzle_last.get(tool_n) != color:
+                            self._emit_nozzle(helper, color)
+                            self._nozzle_last[tool_n] = color
+                        break
+        else:
+            # If we previously owned a tool's nozzle and now don't,
+            # forget the cached value so the next animator-owned
+            # tick will retransmit (handles cases where some other
+            # macro changed the nozzle while we were yielded).
+            self._nozzle_last.pop(active_tool, None)
+
     # ──────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────
@@ -212,6 +272,71 @@ class SaLedAnimator:
                 logging.exception("sa_led_animator: _emit failed "
                                   "(further failures suppressed)")
                 self._emit_failed_logged = True
+
+    def _emit_nozzle(self, led_helper, color):
+        """Push one nozzle-pair update (INDEX=1 and INDEX=2)."""
+        r, g, b, w = color
+        try:
+            led_helper._set_color(1, (r, g, b, w))
+            led_helper._set_color(2, (r, g, b, w))
+            led_helper._check_transmit()
+        except Exception:
+            if not getattr(self, '_nozzle_emit_failed_logged', False):
+                logging.exception("sa_led_animator: _emit_nozzle failed "
+                                  "(further failures suppressed)")
+                self._nozzle_emit_failed_logged = True
+
+    def _is_paused(self, eventtime):
+        """True if PAUSE / M600 is currently in effect."""
+        pr = self.printer.lookup_object('pause_resume', None)
+        if pr is None:
+            return False
+        try:
+            return bool(pr.get_status(eventtime).get('is_paused', False))
+        except Exception:
+            return False
+
+    def _is_tool_warm(self, tool_n, eventtime):
+        """True if tool N's hotend heater_fan is running.
+
+        Reading the fan's speed is cheaper and more authoritative than
+        polling extruder temp + duplicating the threshold — Klipper
+        already manages the >= 50 C threshold via the heater_fan's
+        heater_temp config (Voron StealthChanger default). When the
+        fan is on, the hotend is at or above that threshold; when
+        off, below.
+        """
+        name = self.hotend_fan_template % tool_n
+        fan = self.printer.lookup_object(name, None)
+        if fan is None:
+            return False
+        try:
+            return float(fan.get_status(eventtime).get('speed', 0.0)) > 0.0
+        except Exception:
+            return False
+
+    def _get_nozzle_color(self, state_name):
+        """Look up an (r,g,b,w) tuple from _sa_led_vars.colors.nozzle.
+
+        Reading from the leds.cfg variable bag means the canonical
+        color values stay in one place — adjusting a state's RGB in
+        leds.cfg automatically updates what the animator emits.
+        Returns None if the macro / state isn't found (caller should
+        skip the emit in that case rather than guess).
+        """
+        macro = self.printer.lookup_object(
+            'gcode_macro _sa_led_vars', None)
+        if macro is None or not hasattr(macro, 'variables'):
+            return None
+        try:
+            colors = macro.variables.get('colors', {})
+            c = colors.get('nozzle', {}).get(state_name)
+            if c is None:
+                return None
+            return (float(c.get('r', 0.0)), float(c.get('g', 0.0)),
+                    float(c.get('b', 0.0)), float(c.get('w', 0.0)))
+        except Exception:
+            return None
 
 
 def load_config(config):
